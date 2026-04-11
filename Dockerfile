@@ -6,7 +6,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN npm install --legacy-peer-deps
+# Skip postinstall (which tries to generate SQLite client) and install deps
+RUN npm install --legacy-peer-deps --ignore-scripts
 
 COPY . .
 
