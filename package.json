@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "vercel-build": "prisma generate --schema prisma/schema.prisma && next build",
     "start": "next start",
     "launch": "npm run db:generate && npm run setup:local && npm run db:push && npm run dev",
     "lint": "eslint",
