@@ -1,0 +1,139 @@
+{
+  "name": "StockPilot Website Order Prep",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "stockpilot-website-order-prep",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "2e5710de-1704-4cf1-a05a-0a2fdff6d201",
+      "name": "Website Order Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "stockpilot-website-order-prep",
+      "position": [
+        -760,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $json.body ?? $json;\nconst task = payload.task ?? payload;\nconst taskInput = task.input ?? {};\nconst taskId = String(task.taskId ?? '').trim();\nconst callbackUrl = String(task.callbackUrl ?? '').trim();\nconst reviewUrl = String(task.reviewUrl ?? '').trim();\nconst supplierName = String(task.supplierName ?? '').trim();\nif (!taskId) {\n  throw new Error('Missing taskId.');\n}\nif (!callbackUrl) {\n  throw new Error('Missing callbackUrl.');\n}\nif (!supplierName) {\n  throw new Error('Missing supplierName.');\n}\nreturn [{ json: { event: payload.event ?? null, occurredAt: payload.occurredAt ?? null, taskId, callbackUrl, callbackSecret: typeof task.callbackSecret === 'string' ? task.callbackSecret : null, reviewUrl, supplierName, website: typeof task.website === 'string' ? task.website : null, orderNumber: typeof task.orderNumber === 'string' ? task.orderNumber : null, purchaseOrderId: typeof task.purchaseOrderId === 'string' ? task.purchaseOrderId : null, requiresApproval: task.requiresApproval !== false, input: taskInput, receivedAt: new Date().toISOString() } }];"
+      },
+      "id": "6452f148-f143-47bc-b0af-a7991296d202",
+      "name": "Validate Website Order Task",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -470,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const taskInput = $json.input ?? {};\nconst requestedLines = Array.isArray(taskInput.lines) ? taskInput.lines : [];\nconst steps = Array.isArray(taskInput.steps) ? taskInput.steps : [];\nconst evidenceChecklist = Array.isArray(taskInput.evidenceChecklist) ? taskInput.evidenceChecklist : [];\nconst runId = `n8n-web-order-${Date.now()}`;\nconst summary = `Website-order prep is ready for manager review for ${$json.supplierName}.`;\nreturn [{ json: { ...$json, runId, callbackPayload: { taskId: $json.taskId, status: 'READY_FOR_REVIEW', summary, externalRunId: runId, externalUrl: $json.reviewUrl || $json.website || null, output: { provider: 'n8n', supplierName: $json.supplierName, website: $json.website, reviewUrl: $json.reviewUrl, orderNumber: $json.orderNumber, purchaseOrderId: $json.purchaseOrderId, requestedLines, steps, evidenceChecklist, approvalGate: taskInput.approvalGate ?? 'Final supplier checkout remains manager-approved in v1.', nextStep: $json.website ? 'Open the supplier portal, prepare the cart, capture totals, and stop before final checkout.' : 'Review the StockPilot task and enrich supplier portal details before checkout.', receivedAt: $json.receivedAt } }, responseBody: { accepted: true, message: `n8n accepted website-order prep for ${$json.supplierName}.`, runId, dispatchState: 'pending', reviewUrl: $json.reviewUrl || null, receivedAt: $json.receivedAt } } }];"
+      },
+      "id": "f0df5f32-5276-45ec-8a83-178eb2c2d203",
+      "name": "Build Website Review Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.callbackUrl}}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.callbackSecret ? { 'X-StockPilot-Webhook-Secret': $json.callbackSecret } : {}) }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callbackPayload) }}",
+        "options": {}
+      },
+      "id": "ee8f1311-8521-4f2f-b405-5e581aa5d204",
+      "name": "Post Automation Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        150,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "f1374d89-16f8-4e14-8bdc-2277f12ad203",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        180
+      ]
+    }
+  ],
+  "connections": {
+    "Website Order Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Website Order Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Website Order Task": {
+      "main": [
+        [
+          {
+            "node": "Build Website Review Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Website Review Output": {
+      "main": [
+        [
+          {
+            "node": "Post Automation Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Automation Callback": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {},
+  "staticData": null,
+  "meta": null,
+  "active": true,
+  "versionId": "a4078568-3035-4611-bd90-cffd0a7062f0",
+  "id": "stockpilot-website-order-prep",
+  "tags": []
+}

@@ -1,0 +1,7 @@
+node_modules
+runtime
+exports
+*.log
+*.png
+n8n-home*.png
+n8n-signin.png

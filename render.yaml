@@ -1,0 +1,93 @@
+services:
+  - type: web
+    name: stockpilot-app
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run db:generate && npm run build
+    startCommand: npm run start
+    healthCheckPath: /login
+    envVars:
+      - fromGroup: stockpilot-shared
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DEFAULT_POS_PROVIDER
+        value: fake-square
+      - key: DEFAULT_AI_PROVIDER
+        value: mock
+      - key: DEFAULT_EMAIL_PROVIDER
+        value: console
+      - key: DEFAULT_AUTOMATION_PROVIDER
+        value: n8n
+      - key: BOT_LLM_PROVIDER
+        value: cloudflare
+      - key: CLOUDFLARE_BOT_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_BOT_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_BOT_MODEL
+        value: "@cf/meta/llama-3.1-8b-instruct-fast"
+      - key: N8N_BASE_URL
+        fromService:
+          name: stockpilot-n8n
+          type: web
+          envVarKey: N8N_EDITOR_BASE_URL
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        sync: false
+
+  - type: web
+    name: stockpilot-n8n
+    runtime: docker
+    rootDir: n8n
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    envVars:
+      - fromGroup: stockpilot-shared
+      - key: N8N_USER_FOLDER
+        value: /data
+      - key: N8N_HOST
+        value: 0.0.0.0
+      - key: N8N_PORT
+        value: "5678"
+      - key: N8N_PROTOCOL
+        value: https
+      - key: WEBHOOK_URL
+        sync: false
+      - key: N8N_EDITOR_BASE_URL
+        sync: false
+      - key: N8N_ENCRYPTION_KEY
+        generateValue: true
+      - key: N8N_BASIC_AUTH_ACTIVE
+        value: "true"
+      - key: N8N_BASIC_AUTH_USER
+        sync: false
+      - key: N8N_BASIC_AUTH_PASSWORD
+        sync: false
+      - key: STOCKPILOT_REVIEW_BASE_URL
+        fromService:
+          name: stockpilot-app
+          type: web
+          envVarKey: APP_URL
+    disk:
+      name: stockpilot-n8n-data
+      mountPath: /data
+      sizeGB: 1
+
+envVarGroups:
+  - name: stockpilot-shared
+    envVars:
+      - key: GENERIC_TIMEZONE
+        value: America/Toronto
+      - key: N8N_WEBHOOK_SECRET
+        generateValue: true

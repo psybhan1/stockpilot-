@@ -1,0 +1,139 @@
+{
+  "name": "StockPilot Notification Dispatch",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "stockpilot-notification-dispatch",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a640d1a8-1a0a-4d41-9f5a-1f87b3c6e101",
+      "name": "Notification Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "stockpilot-notification-dispatch",
+      "position": [
+        -760,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $json.body ?? $json;\nconst notification = payload.notification ?? payload;\nconst notificationId = String(notification.notificationId ?? '').trim();\nconst callbackUrl = String(notification.callbackUrl ?? '').trim();\nconst recipient = String(notification.recipient ?? '').trim();\nconst channel = String(notification.channel ?? 'EMAIL').trim().toUpperCase();\nconst body = typeof notification.body === 'string' ? notification.body : '';\nif (!notificationId) {\n  throw new Error('Missing notificationId.');\n}\nif (!callbackUrl) {\n  throw new Error('Missing callbackUrl.');\n}\nif (!recipient) {\n  throw new Error('Missing recipient.');\n}\nreturn [{ json: { event: payload.event ?? null, occurredAt: payload.occurredAt ?? null, notificationId, callbackUrl, callbackSecret: typeof notification.callbackSecret === 'string' ? notification.callbackSecret : null, recipient, channel, subject: typeof notification.subject === 'string' ? notification.subject : null, body, providerMessageId: `n8n-${channel.toLowerCase()}-${Date.now()}`, receivedAt: new Date().toISOString() } }];"
+      },
+      "id": "e0ed52fd-01cc-4df4-b8c2-f80cb0d3e102",
+      "name": "Validate Notification Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -470,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const bodyPreview = typeof $json.body === 'string' ? $json.body.slice(0, 160) : null;\nreturn [{ json: { ...$json, callbackPayload: { notificationId: $json.notificationId, status: 'SENT', providerMessageId: $json.providerMessageId, summary: `n8n completed ${$json.channel.toLowerCase()} delivery for ${$json.recipient}.`, deliveredAt: new Date().toISOString(), metadata: { channel: $json.channel, recipient: $json.recipient, subject: $json.subject, bodyPreview, workflow: 'stockpilot-notification-dispatch', receivedAt: $json.receivedAt } }, responseBody: { accepted: true, message: `n8n queued ${$json.channel.toLowerCase()} delivery for ${$json.recipient}.`, providerMessageId: $json.providerMessageId, deliveryState: 'queued', receivedAt: $json.receivedAt } } }];"
+      },
+      "id": "d5e2fd23-9058-403e-87f9-88c32364e104",
+      "name": "Build Notification Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.callbackUrl}}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.callbackSecret ? { 'X-StockPilot-Webhook-Secret': $json.callbackSecret } : {}) }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callbackPayload) }}",
+        "options": {}
+      },
+      "id": "c74ec8e7-c5bd-4ad6-bfd2-b5c60c65e105",
+      "name": "Post Notification Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        150,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "8b6b4d5f-8de5-457a-9bc2-77f5d215e103",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        180
+      ]
+    }
+  ],
+  "connections": {
+    "Notification Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Notification Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Notification Request": {
+      "main": [
+        [
+          {
+            "node": "Build Notification Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notification Callback": {
+      "main": [
+        [
+          {
+            "node": "Post Notification Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Notification Callback": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {},
+  "staticData": null,
+  "meta": null,
+  "active": true,
+  "versionId": "b3f18ab9-38f7-46cf-b2e9-a8480dc1f901",
+  "id": "stockpilot-notification-dispatch",
+  "tags": []
+}

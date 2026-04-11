@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="stockpilotGradient" x1="84" x2="428" y1="64" y2="448" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7c2d12" />
+      <stop offset="1" stop-color="#d97706" />
+    </linearGradient>
+    <radialGradient id="stockpilotGlow" cx="0" cy="0" r="1" gradientTransform="translate(168 124) rotate(49.55) scale(204 181)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.46" />
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="124" fill="url(#stockpilotGradient)" />
+  <rect width="512" height="512" rx="124" fill="url(#stockpilotGlow)" />
+  <circle cx="256" cy="256" r="132" fill="#fff7ed" fill-opacity="0.18" stroke="#ffffff" stroke-opacity="0.28" stroke-width="8" />
+  <circle cx="256" cy="256" r="84" fill="#ffffff" />
+  <circle cx="256" cy="256" r="34" fill="#7c2d12" />
+  <rect x="250" y="150" width="12" height="212" rx="6" fill="#f59e0b" />
+  <rect x="150" y="250" width="212" height="12" rx="6" fill="#f59e0b" />
+  <circle cx="348" cy="164" r="22" fill="#ffffff" fill-opacity="0.94" />
+  <path d="M348 148l4.6 10.2 11.2 1-8.4 7.3 2.6 11-10-5.8-10 5.8 2.6-11-8.4-7.3 11.2-1L348 148z" fill="#d97706" />
+</svg>

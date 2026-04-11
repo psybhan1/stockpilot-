@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+/.test-build
 
 # next.js
 /.next/
@@ -32,6 +33,23 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!/.env.example
+
+# local sqlite
+prisma/*.db
+prisma/*.db-*
+n8n/.n8n/
+n8n/runtime/
+n8n/node_modules/
+n8n/*.log
+n8n/tools/
+n8n/*.png
+
+# temp files
+.localtunnel*.log
+.tmp-*.png
+.claude/worktrees/
+test-results/
 
 # vercel
 .vercel
@@ -39,3 +57,4 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+src/generated/

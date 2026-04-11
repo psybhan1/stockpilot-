@@ -1,0 +1,35 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".test-build",
+    "rootDir": ".",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "declaration": false,
+    "emitDeclarationOnly": false,
+    "sourceMap": false
+  },
+  "include": [
+    "src/modules/inventory/units.ts",
+    "src/modules/inventory/units.test.ts",
+    "src/modules/forecast/forecast.ts",
+    "src/modules/forecast/forecast.test.ts",
+    "src/modules/forecast/anomalies.ts",
+    "src/modules/forecast/anomalies.test.ts",
+    "src/modules/notifications/channels.ts",
+    "src/modules/notifications/channels.test.ts",
+    "src/modules/operator-bot/order.ts",
+    "src/modules/operator-bot/order.test.ts",
+    "src/modules/operator-bot/parser.ts",
+    "src/modules/operator-bot/parser.test.ts",
+    "src/modules/operator-bot/bot-language.test.ts",
+    "src/modules/purchasing/reorder.ts",
+    "src/modules/purchasing/reorder.test.ts",
+    "src/modules/purchasing/lifecycle.ts",
+    "src/modules/purchasing/lifecycle.test.ts",
+    "src/providers/contracts.ts",
+    "src/providers/bot-language/local-bot-language.ts",
+    "src/providers/bot-language/n8n-bot-language.ts"
+  ]
+}

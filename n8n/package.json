@@ -1,0 +1,17 @@
+{
+  "name": "stockpilot-n8n",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "start": "n8n start",
+    "start:hosted": "node scripts/hosted-start.mjs",
+    "dev": "n8n start",
+    "import:workflows": "n8n import:workflow --separate --input=./workflows",
+    "bootstrap:workflows": "node scripts/bootstrap-workflows.mjs",
+    "setup": "npm run import:workflows && npm run bootstrap:workflows",
+    "export:workflows": "n8n export:workflow --backup --output=./exports"
+  },
+  "dependencies": {
+    "n8n": "2.15.0"
+  }
+}

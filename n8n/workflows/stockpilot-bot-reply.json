@@ -1,0 +1,165 @@
+{
+  "name": "StockPilot Bot Reply",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "stockpilot-bot-reply",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "d2e3fa1f-0b4c-4c13-ae06-111111111111",
+      "name": "Bot Reply Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "stockpilot-bot-reply",
+      "position": [
+        -760,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $json.body ?? $json;\nconst request = payload.request ?? payload;\nconst fallbackReply = String(request.fallbackReply ?? '').trim();\nconst rawLlm = payload.llm && typeof payload.llm === 'object' ? payload.llm : {};\nconst llmProvider = rawLlm.provider === 'cloudflare' ? 'cloudflare' : 'ollama';\nconst llm = {\n  provider: llmProvider,\n  url: typeof rawLlm.url === 'string' && rawLlm.url.trim() ? rawLlm.url.trim() : 'http://127.0.0.1:11434/api/chat',\n  model: typeof rawLlm.model === 'string' && rawLlm.model.trim() ? rawLlm.model.trim() : 'qwen2.5:3b',\n  headers: rawLlm.headers && typeof rawLlm.headers === 'object' ? rawLlm.headers : { 'Content-Type': 'application/json' },\n};\nconst conversationHistory = Array.isArray(request.conversationHistory)\n  ? request.conversationHistory\n      .filter((t) => t && typeof t.role === 'string' && typeof t.text === 'string')\n      .slice(-8)\n      .map((t) => ({ role: String(t.role), text: String(t.text).slice(0, 500) }))\n  : [];\nif (!fallbackReply) {\n  throw new Error('Missing fallbackReply.');\n}\nreturn [{ json: { channel: String(request.channel ?? 'UNKNOWN').trim().toUpperCase(), managerText: String(request.managerText ?? '').trim(), scenario: String(request.scenario ?? 'default').trim(), fallbackReply, facts: request.facts && typeof request.facts === 'object' ? request.facts : {}, conversationHistory, llm, receivedAt: new Date().toISOString() } }];"
+      },
+      "id": "d2e3fa1f-0b4c-4c13-ae06-222222222222",
+      "name": "Validate Bot Reply Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const factsJson = JSON.stringify($json.facts ?? {}, null, 2);\nconst responseSchema = {\n  type: 'object',\n  properties: {\n    reply: {\n      type: 'string',\n    },\n  },\n  required: ['reply'],\n  additionalProperties: false,\n};\nconst system = [\n  'You are StockPilot, a trustworthy inventory and purchasing bot for cafe managers.',\n  'Rewrite the fallback reply so it sounds natural and confident in WhatsApp or Telegram.',\n  'Do not change any numbers, quantities, item names, supplier names, order numbers, or operational facts.',\n  'Do not add promises or actions that did not actually happen.',\n  'For GREETING or HELP scenarios, keep the answer warm, short, and do not volunteer unrelated stock warnings.',\n  'For reorder or stock scenarios, be direct and operational, not chatty.',\n  'Keep the answer concise, practical, and human.',\n  'If conversation history is provided, use it to make your reply feel connected and natural — do not repeat what was already said.',\n  'Return JSON only with one field called reply.',\n].join(' ');\nlet historySection = '';\nif ($json.conversationHistory && $json.conversationHistory.length > 0) {\n  const lines = $json.conversationHistory\n    .map((t) => `[${t.role === 'manager' ? 'Manager' : 'StockPilot'}]: ${t.text}`)\n    .join('\\n');\n  historySection = `\\nConversation history:\\n${lines}\\n`;\n}\nconst user = `Channel: ${$json.channel}\\nScenario: ${$json.scenario}\\nManager message: ${$json.managerText || '(none)'}${historySection}\\nStructured facts:\\n${factsJson}\\n\\nFallback reply:\\n${$json.fallbackReply}`;\nconst messages = [\n  { role: 'system', content: system },\n  { role: 'user', content: `${user}\\n\\nReturn valid JSON only.` },\n];\nconst llmRequest = $json.llm.provider === 'cloudflare'\n  ? {\n      model: $json.llm.model,\n      messages,\n      temperature: 0.25,\n      max_tokens: 300,\n      response_format: {\n        type: 'json_schema',\n        json_schema: responseSchema,\n      },\n    }\n  : {\n      model: $json.llm.model,\n      stream: false,\n      format: 'json',\n      options: {\n        temperature: 0.25,\n      },\n      messages,\n    };\nreturn [{ json: { llm: $json.llm, llmRequest } }];"
+      },
+      "id": "d2e3fa1f-0b4c-4c13-ae06-333333333333",
+      "name": "Prepare Reply Prompt (LLM)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.llm.url }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.llm.headers || { \"Content-Type\": \"application/json\" }) }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.llmRequest) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "d2e3fa1f-0b4c-4c13-ae06-444444444444",
+      "name": "Draft Bot Reply (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        40,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function extractRawText(payload) {\n  const openAiContent = payload?.choices?.[0]?.message?.content;\n  if (typeof openAiContent === 'string' && openAiContent.trim()) {\n    return openAiContent.trim();\n  }\n  if (Array.isArray(openAiContent)) {\n    const textPart = openAiContent.find(\n      (part) => part && part.type === 'text' && typeof part.text === 'string' && part.text.trim()\n    );\n    if (textPart?.text) {\n      return textPart.text.trim();\n    }\n  }\n  if (openAiContent && typeof openAiContent === 'object') {\n    return JSON.stringify(openAiContent);\n  }\n  const ollamaContent = typeof payload?.message?.content === 'string' ? payload.message.content.trim() : '';\n  return ollamaContent;\n}\n\nconst rawText = extractRawText($json);\nif (!rawText) {\n  throw new Error('The LLM did not return usable message content.');\n}\n\nlet parsed;\ntry {\n  parsed = JSON.parse(rawText);\n} catch (error) {\n  throw new Error(`The LLM returned invalid JSON: ${rawText}`);\n}\n\nconst reply = typeof parsed.reply === 'string' && parsed.reply.trim() ? parsed.reply.trim() : null;\nif (!reply) {\n  throw new Error('The LLM reply payload did not include a usable reply string.');\n}\n\nreturn [{\n  json: {\n    accepted: true,\n    provider: Array.isArray($json.choices) ? 'n8n-cloudflare' : 'n8n-ollama',\n    reply,\n    metadata: {\n      rawLlmText: rawText,\n    },\n  },\n}];"
+      },
+      "id": "d2e3fa1f-0b4c-4c13-ae06-555555555555",
+      "name": "Normalize Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "d2e3fa1f-0b4c-4c13-ae06-666666666666",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        600,
+        180
+      ]
+    }
+  ],
+  "connections": {
+    "Bot Reply Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Bot Reply Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Bot Reply Request": {
+      "main": [
+        [
+          {
+            "node": "Prepare Reply Prompt (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Reply Prompt (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Draft Bot Reply (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Bot Reply (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {},
+  "staticData": null,
+  "meta": null,
+  "active": true,
+  "versionId": "d2e3fa1f-0b4c-4c13-ae06-777777777777",
+  "id": "stockpilot-bot-reply",
+  "tags": []
+}

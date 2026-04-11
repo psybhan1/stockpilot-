@@ -1,0 +1,874 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma-sqlite"
+}
+
+datasource db {
+  provider     = "sqlite"
+  relationMode = "prisma"
+  url          = env("DATABASE_URL")
+}
+
+enum Role {
+  MANAGER
+  SUPERVISOR
+  STAFF
+}
+
+enum InventoryCategory {
+  COFFEE
+  DAIRY
+  ALT_DAIRY
+  SYRUP
+  BAKERY_INGREDIENT
+  PACKAGING
+  CLEANING
+  PAPER_GOODS
+  RETAIL
+  SEASONAL
+  SUPPLY
+}
+
+enum BaseUnit {
+  GRAM
+  MILLILITER
+  COUNT
+}
+
+enum MeasurementUnit {
+  GRAM
+  KILOGRAM
+  MILLILITER
+  LITER
+  COUNT
+  CASE
+  BOTTLE
+  BAG
+  BOX
+}
+
+enum MovementType {
+  RECEIVING
+  POS_DEPLETION
+  MANUAL_COUNT_ADJUSTMENT
+  WASTE
+  BREAKAGE
+  TRANSFER
+  RETURN
+  CORRECTION
+}
+
+enum CountSessionStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum CountSessionMode {
+  TABLE
+  SWIPE
+}
+
+enum CountEntryDisposition {
+  CONFIRMED
+  ADJUSTED
+  LOW
+  OUT
+  WASTE
+  SKIPPED
+}
+
+enum SupplierOrderingMode {
+  EMAIL
+  WEBSITE
+  MANUAL
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  AWAITING_APPROVAL
+  APPROVED
+  SENT
+  ACKNOWLEDGED
+  DELIVERED
+  CANCELLED
+  FAILED
+}
+
+enum RecommendationStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  DEFERRED
+  CONVERTED
+}
+
+enum PosProviderType {
+  SQUARE
+}
+
+enum IntegrationStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  FAILED
+}
+
+enum PosSyncType {
+  CATALOG
+  ORDERS
+  WEBHOOK
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum ServiceMode {
+  TO_GO
+  DINE_IN
+}
+
+enum MappingStatus {
+  UNMAPPED
+  RECIPE_DRAFT
+  READY
+  NEEDS_REVIEW
+}
+
+enum RecipeStatus {
+  DRAFT
+  APPROVED
+  ARCHIVED
+}
+
+enum RecipeComponentType {
+  INGREDIENT
+  PACKAGING
+}
+
+enum SaleProcessingStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+enum AlertType {
+  LOW_STOCK
+  IMMINENT_STOCKOUT
+  HIGH_USAGE
+  MISSING_COUNT
+  RECIPE_GAP
+  ORDER_APPROVAL
+  SYNC_FAILURE
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  PUSH
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+enum AgentTaskType {
+  WEBSITE_ORDER_PREP
+  SUPPLIER_RESEARCH
+  ORDER_DRAFTING
+  RISK_EXPLANATION
+}
+
+enum AgentTaskStatus {
+  PENDING
+  READY_FOR_REVIEW
+  COMPLETED
+  FAILED
+}
+
+enum CommunicationDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum CommunicationStatus {
+  DRAFT
+  SENT
+  FAILED
+}
+
+enum JobType {
+  SYNC_CATALOG
+  SYNC_SALES
+  REFRESH_FORECAST
+  EVALUATE_ALERTS
+  GENERATE_REORDERS
+  SEND_EMAIL
+  PREPARE_WEBSITE_ORDER
+}
+
+enum BotChannel {
+  WHATSAPP
+  TELEGRAM
+}
+
+model User {
+  id                          String                  @id @default(cuid())
+  email                       String                  @unique
+  name                        String
+  phoneNumber                 String?
+  telegramChatId              String?
+  telegramUsername            String?
+  passwordHash                String
+  createdAt                   DateTime                @default(now())
+  updatedAt                   DateTime                @updatedAt
+  sessions                    Session[]
+  roles                       UserLocationRole[]
+  auditLogs                   AuditLog[]
+  approvedRecipes             Recipe[]                @relation("RecipeApprovedBy")
+  approvedOrders              PurchaseOrder[]         @relation("PurchaseOrderApprovedBy")
+  placedOrders                PurchaseOrder[]         @relation("PurchaseOrderPlacedBy")
+  approvedRecommendations     ReorderRecommendation[] @relation("RecommendationApprovedBy")
+  countSessions               StockCountSession[]     @relation("CountSessionCreatedBy")
+  countEntries                StockCountEntry[]       @relation("CountEntryCreatedBy")
+  botConnectRequests          BotConnectRequest[]
+  botMessageReceipts          BotMessageReceipt[]
+}
+
+model Business {
+  id        String     @id @default(cuid())
+  name      String
+  slug      String     @unique
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  locations Location[]
+}
+
+model Location {
+  id                    String                  @id @default(cuid())
+  businessId            String
+  name                  String
+  timezone              String
+  isPrimary             Boolean                 @default(true)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  business              Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  roles                 UserLocationRole[]
+  inventoryItems        InventoryItem[]
+  inventorySnapshots    InventorySnapshot[]
+  stockMovements        StockMovement[]
+  stockCountSessions    StockCountSession[]
+  suppliers             Supplier[]
+  purchaseOrders        PurchaseOrder[]
+  reorderRecommendations ReorderRecommendation[]
+  menuItems             MenuItem[]
+  posIntegrations       PosIntegration[]
+  posVariationMappings  PosVariationMapping[]
+  posSaleEvents         PosSaleEvent[]
+  alerts                Alert[]
+  notifications         Notification[]
+  agentTasks            AgentTask[]
+  jobRuns               JobRun[]
+  recipes               Recipe[]
+  auditLogs             AuditLog[]
+  botConnectRequests    BotConnectRequest[]
+  botMessageReceipts    BotMessageReceipt[]
+}
+
+model UserLocationRole {
+  id         String   @id @default(cuid())
+  userId     String
+  locationId String
+  role       Role
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, locationId])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id         String    @id @default(cuid())
+  locationId String?
+  userId     String?
+  action     String
+  entityType String
+  entityId   String
+  details    Json?
+  createdAt  DateTime  @default(now())
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model InventoryItem {
+  id                      String                  @id @default(cuid())
+  locationId              String
+  primarySupplierId       String?
+  name                    String
+  sku                     String                  @unique
+  category                InventoryCategory
+  imageUrl                String?
+  baseUnit                BaseUnit
+  countUnit               MeasurementUnit
+  displayUnit             MeasurementUnit
+  purchaseUnit            MeasurementUnit
+  stockOnHandBase         Int                     @default(0)
+  parLevelBase            Int
+  lowStockThresholdBase   Int
+  safetyStockBase         Int
+  storageLocation         String?
+  sublocation             String?
+  leadTimeDays            Int                     @default(0)
+  deliveryDays            Json?
+  minimumOrderQuantity    Int                     @default(1)
+  packSizeBase            Int                     @default(1)
+  latestCostNote          String?
+  notes                   String?
+  confidenceScore         Float                   @default(0.8)
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+  location                Location                @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  primarySupplier         Supplier?               @relation("PrimarySupplierInventory", fields: [primarySupplierId], references: [id], onDelete: SetNull)
+  conversions             InventoryUnitConversion[]
+  snapshot                InventorySnapshot?
+  stockMovements          StockMovement[]
+  stockCountEntries       StockCountEntry[]
+  supplierItems           SupplierItem[]
+  recipeComponents        RecipeComponent[]
+  reorderRecommendations  ReorderRecommendation[]
+  purchaseOrderLines      PurchaseOrderLine[]
+  alerts                  Alert[]
+}
+
+model InventoryUnitConversion {
+  id              String          @id @default(cuid())
+  inventoryItemId String
+  fromUnit        MeasurementUnit
+  toUnit          MeasurementUnit
+  numerator       Int
+  denominator     Int             @default(1)
+  inventoryItem   InventoryItem   @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@unique([inventoryItemId, fromUnit, toUnit])
+}
+
+model InventorySnapshot {
+  id                    String        @id @default(cuid())
+  locationId            String
+  inventoryItemId       String        @unique
+  stockOnHandBase       Int
+  averageDailyUsageBase Float         @default(0)
+  daysLeft              Float?
+  projectedRunoutAt     DateTime?
+  urgency               AlertSeverity @default(INFO)
+  confidenceScore       Float         @default(0.8)
+  lastCalculatedAt      DateTime      @default(now())
+  location              Location      @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  inventoryItem         InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+}
+
+model StockMovement {
+  id                String        @id @default(cuid())
+  locationId        String
+  inventoryItemId   String
+  userId            String?
+  movementType      MovementType
+  quantityDeltaBase Int
+  beforeBalanceBase Int
+  afterBalanceBase  Int
+  sourceType        String
+  sourceId          String
+  notes             String?
+  metadata          Json?
+  performedAt       DateTime      @default(now())
+  createdAt         DateTime      @default(now())
+  location          Location      @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  inventoryItem     InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+}
+
+model StockCountSession {
+  id          String             @id @default(cuid())
+  locationId  String
+  createdById String
+  status      CountSessionStatus
+  mode        CountSessionMode
+  notes       String?
+  startedAt   DateTime           @default(now())
+  completedAt DateTime?
+  location    Location           @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  createdBy   User               @relation("CountSessionCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  entries     StockCountEntry[]
+}
+
+model StockCountEntry {
+  id              String                @id @default(cuid())
+  sessionId       String
+  inventoryItemId String
+  createdById     String
+  expectedBase    Int
+  countedBase     Int?
+  adjustmentBase  Int?
+  notes           String?
+  disposition     CountEntryDisposition
+  createdAt       DateTime              @default(now())
+  session         StockCountSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  inventoryItem   InventoryItem         @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  createdBy       User                  @relation("CountEntryCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+}
+
+model Supplier {
+  id                     String                  @id @default(cuid())
+  locationId             String
+  name                   String
+  contactName            String?
+  email                  String?
+  phone                  String?
+  website                String?
+  orderingMode           SupplierOrderingMode
+  leadTimeDays           Int                     @default(0)
+  deliveryDays           Json?
+  minimumOrderQuantity   Int                     @default(1)
+  notes                  String?
+  credentialsConfigured  Boolean                 @default(false)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  location               Location                @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  primaryInventoryItems  InventoryItem[]         @relation("PrimarySupplierInventory")
+  supplierItems          SupplierItem[]
+  purchaseOrders         PurchaseOrder[]
+  reorderRecommendations ReorderRecommendation[]
+  communications         SupplierCommunication[]
+  agentTasks             AgentTask[]
+}
+
+model SupplierItem {
+  id                   String        @id @default(cuid())
+  supplierId           String
+  inventoryItemId      String
+  supplierSku          String?
+  packSizeBase         Int
+  minimumOrderQuantity Int           @default(1)
+  lastUnitCostCents    Int?
+  priceNotes           String?
+  preferred            Boolean       @default(true)
+  leadTimeDays         Int?
+  deliveryDays         Json?
+  supplier             Supplier      @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  inventoryItem        InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, inventoryItemId])
+}
+
+model PurchaseOrder {
+  id               String                @id @default(cuid())
+  locationId       String
+  supplierId       String
+  recommendationId String?               @unique
+  orderNumber      String                @unique
+  status           PurchaseOrderStatus
+  totalLines       Int                   @default(0)
+  notes            String?
+  approvalNotes    String?
+  placedById       String?
+  approvedById     String?
+  metadata         Json?
+  createdAt        DateTime              @default(now())
+  approvedAt       DateTime?
+  sentAt           DateTime?
+  deliveredAt      DateTime?
+  location         Location              @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  supplier         Supplier              @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  placedBy         User?                 @relation("PurchaseOrderPlacedBy", fields: [placedById], references: [id], onDelete: SetNull)
+  approvedBy       User?                 @relation("PurchaseOrderApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  recommendation   ReorderRecommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  lines            PurchaseOrderLine[]
+  communications   SupplierCommunication[]
+  agentTasks       AgentTask[]
+}
+
+model PurchaseOrderLine {
+  id                   String          @id @default(cuid())
+  purchaseOrderId      String
+  inventoryItemId      String
+  description          String
+  quantityOrdered      Int
+  expectedQuantityBase Int
+  purchaseUnit         MeasurementUnit
+  packSizeBase         Int
+  notes                String?
+  latestCostCents      Int?
+  purchaseOrder        PurchaseOrder   @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  inventoryItem        InventoryItem   @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+}
+
+model MenuItem {
+  id         String          @id @default(cuid())
+  locationId String
+  name       String
+  category   String?
+  imageUrl   String?
+  source     PosProviderType
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  location   Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  variants   MenuItemVariant[]
+}
+
+model MenuItemVariant {
+  id             String              @id @default(cuid())
+  menuItemId     String
+  name           String
+  serviceMode    ServiceMode?
+  sizeLabel      String?
+  externalSku    String?
+  sortOrder      Int                 @default(0)
+  active         Boolean             @default(true)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  menuItem       MenuItem            @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  recipeVersions Recipe[]
+  mappings       PosVariationMapping[]
+  saleLines      PosSaleLine[]
+}
+
+model Recipe {
+  id                String               @id @default(cuid())
+  locationId        String
+  menuItemVariantId String
+  version           Int
+  status            RecipeStatus
+  aiSuggestedBy     String?
+  aiSummary         String?
+  approvedById      String?
+  approvedAt        DateTime?
+  completenessScore Float                @default(0)
+  confidenceScore   Float                @default(0)
+  notes             String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  location          Location             @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  menuItemVariant   MenuItemVariant      @relation(fields: [menuItemVariantId], references: [id], onDelete: Cascade)
+  approvedBy        User?                @relation("RecipeApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  components        RecipeComponent[]
+  mappings          PosVariationMapping[]
+
+  @@unique([menuItemVariantId, version])
+}
+
+model RecipeComponent {
+  id                   String              @id @default(cuid())
+  recipeId             String
+  inventoryItemId      String
+  componentType        RecipeComponentType
+  quantityBase         Int
+  displayUnit          MeasurementUnit
+  suggestedMinBase     Int?
+  suggestedMaxBase     Int?
+  confidenceScore      Float               @default(0.8)
+  conditionServiceMode ServiceMode?
+  modifierKey          String?
+  optional             Boolean             @default(false)
+  notes                String?
+  recipe               Recipe              @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  inventoryItem        InventoryItem       @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+}
+
+model PosIntegration {
+  id                    String           @id @default(cuid())
+  locationId            String
+  provider              PosProviderType
+  status                IntegrationStatus
+  externalMerchantId    String?
+  externalLocationId    String?
+  accessTokenEncrypted  String?
+  refreshTokenEncrypted String?
+  sandbox               Boolean          @default(true)
+  settings              Json?
+  lastSyncedAt          DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  location              Location         @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  syncRuns              PosSyncRun[]
+  catalogItems          PosCatalogItem[]
+  saleEvents            PosSaleEvent[]
+}
+
+model PosSyncRun {
+  id               String         @id @default(cuid())
+  integrationId    String
+  syncType         PosSyncType
+  status           JobStatus
+  recordsProcessed Int            @default(0)
+  details          Json?
+  startedAt        DateTime       @default(now())
+  completedAt      DateTime?
+  integration      PosIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+}
+
+model PosCatalogItem {
+  id            String               @id @default(cuid())
+  integrationId String
+  externalId    String
+  name          String
+  category      String?
+  imageUrl      String?
+  rawData       Json?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  integration   PosIntegration       @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  variations    PosCatalogVariation[]
+
+  @@unique([integrationId, externalId])
+}
+
+model PosCatalogVariation {
+  id            String              @id @default(cuid())
+  catalogItemId String
+  externalId    String
+  name          String
+  externalSku   String?
+  priceCents    Int?
+  serviceMode   ServiceMode?
+  sizeLabel     String?
+  rawData       Json?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  catalogItem   PosCatalogItem      @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+  mappings      PosVariationMapping[]
+  saleLines     PosSaleLine[]
+
+  @@unique([catalogItemId, externalId])
+}
+
+model PosVariationMapping {
+  id                String             @id @default(cuid())
+  locationId        String
+  posVariationId    String             @unique
+  menuItemVariantId String
+  recipeId          String?
+  mappingStatus     MappingStatus
+  packagingMode     ServiceMode?
+  notes             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  location          Location           @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  posVariation      PosCatalogVariation @relation(fields: [posVariationId], references: [id], onDelete: Cascade)
+  menuItemVariant   MenuItemVariant    @relation(fields: [menuItemVariantId], references: [id], onDelete: Cascade)
+  recipe            Recipe?            @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+}
+
+model PosSaleEvent {
+  id               String               @id @default(cuid())
+  locationId       String
+  integrationId    String?
+  externalOrderId  String?              @unique
+  status           String
+  source           PosProviderType
+  serviceMode      ServiceMode?
+  rawData          Json?
+  processingStatus SaleProcessingStatus @default(PENDING)
+  occurredAt       DateTime
+  processedAt      DateTime?
+  createdAt        DateTime             @default(now())
+  location         Location             @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  integration      PosIntegration?      @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+  lines            PosSaleLine[]
+}
+
+model PosSaleLine {
+  id                String              @id @default(cuid())
+  saleEventId       String
+  externalLineId    String
+  posVariationId    String?
+  menuItemVariantId String?
+  quantity          Int
+  unitPriceCents    Int?
+  serviceMode       ServiceMode?
+  modifierKeys      Json?
+  rawData           Json?
+  saleEvent         PosSaleEvent        @relation(fields: [saleEventId], references: [id], onDelete: Cascade)
+  posVariation      PosCatalogVariation? @relation(fields: [posVariationId], references: [id], onDelete: SetNull)
+  menuItemVariant   MenuItemVariant?    @relation(fields: [menuItemVariantId], references: [id], onDelete: SetNull)
+
+  @@unique([saleEventId, externalLineId])
+}
+
+model Alert {
+  id              String         @id @default(cuid())
+  locationId      String
+  inventoryItemId String?
+  userId          String?
+  type            AlertType
+  severity        AlertSeverity
+  title           String
+  message         String
+  status          AlertStatus    @default(OPEN)
+  metadata        Json?
+  createdAt       DateTime       @default(now())
+  resolvedAt      DateTime?
+  location        Location       @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  notifications   Notification[]
+}
+
+model Notification {
+  id                String             @id @default(cuid())
+  locationId        String
+  alertId           String?
+  channel           NotificationChannel
+  recipient         String
+  status            NotificationStatus @default(QUEUED)
+  subject           String?
+  body              String
+  providerMessageId String?
+  metadata          Json?
+  createdAt         DateTime           @default(now())
+  sentAt            DateTime?
+  location          Location           @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  alert             Alert?             @relation(fields: [alertId], references: [id], onDelete: SetNull)
+}
+
+model ReorderRecommendation {
+  id                          String                @id @default(cuid())
+  locationId                  String
+  inventoryItemId             String
+  supplierId                  String
+  status                      RecommendationStatus
+  recommendedOrderQuantityBase Int
+  recommendedPurchaseUnit     MeasurementUnit
+  recommendedPackCount        Int                   @default(1)
+  projectedStockoutAt         DateTime?
+  urgency                     AlertSeverity         @default(INFO)
+  rationale                   String
+  createdAt                   DateTime              @default(now())
+  approvedById                String?
+  approvedAt                  DateTime?
+  dismissedAt                 DateTime?
+  location                    Location              @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  inventoryItem               InventoryItem         @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  supplier                    Supplier              @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  approvedBy                  User?                 @relation("RecommendationApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  purchaseOrder               PurchaseOrder?
+}
+
+model SupplierCommunication {
+  id                String                 @id @default(cuid())
+  supplierId        String
+  purchaseOrderId   String?
+  channel           SupplierOrderingMode
+  direction         CommunicationDirection
+  subject           String?
+  body              String
+  status            CommunicationStatus
+  providerMessageId String?
+  metadata          Json?
+  createdAt         DateTime               @default(now())
+  sentAt            DateTime?
+  supplier          Supplier               @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  purchaseOrder     PurchaseOrder?         @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+}
+
+model AgentTask {
+  id               String          @id @default(cuid())
+  locationId       String
+  supplierId       String?
+  purchaseOrderId  String?
+  type             AgentTaskType
+  status           AgentTaskStatus
+  title            String
+  description      String
+  input            Json?
+  output           Json?
+  requiresApproval Boolean         @default(true)
+  lastAttemptAt    DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  location         Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  supplier         Supplier?       @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  purchaseOrder    PurchaseOrder?  @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+}
+
+model JobRun {
+  id          String    @id @default(cuid())
+  locationId  String?
+  type        JobType
+  status      JobStatus @default(PENDING)
+  payload     Json?
+  lockedAt    DateTime?
+  availableAt DateTime  @default(now())
+  attempts    Int       @default(0)
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  location    Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+}
+
+model BotConnectRequest {
+  id         String     @id @default(cuid())
+  locationId String
+  userId     String
+  channel    BotChannel
+  tokenHash  String     @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime   @default(now())
+  location   Location   @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, channel, consumedAt])
+  @@index([locationId, channel, createdAt])
+}
+
+model BotMessageReceipt {
+  id                String     @id @default(cuid())
+  locationId        String?
+  userId            String?
+  channel           BotChannel
+  externalMessageId String
+  senderId          String
+  senderDisplayName String?
+  inboundText       String
+  replyText         String?
+  status            String     @default("RECEIVED")
+  purchaseOrderId   String?
+  orderNumber       String?
+  metadata          Json?
+  rawPayload        Json?
+  processedAt       DateTime?
+  createdAt         DateTime   @default(now())
+  location          Location?  @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  user              User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([channel, externalMessageId])
+  @@index([senderId, channel, createdAt])
+}
