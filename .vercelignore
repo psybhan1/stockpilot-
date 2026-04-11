@@ -1,0 +1,6 @@
+n8n/
+scripts/
+prisma/schema.sqlite.prisma
+prisma/migrations-sqlite/
+.claude/
+playwright.config.ts
