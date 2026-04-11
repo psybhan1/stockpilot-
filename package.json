@@ -24,7 +24,7 @@
     "worker": "tsx src/jobs/worker.ts",
     "worker:dev": "tsx watch src/jobs/worker.ts",
     "worker:once": "tsx src/jobs/worker.ts --once",
-    "postinstall": "npm run db:generate"
+    "postinstall": "node -e \"if(!process.env.VERCEL){require('child_process').execSync('npm run db:generate',{stdio:'inherit'})}else{require('child_process').execSync('npm run db:generate:postgres',{stdio:'inherit'})}\""
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
