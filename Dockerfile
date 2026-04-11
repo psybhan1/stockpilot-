@@ -2,17 +2,20 @@ FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Install OpenSSL for Prisma
-RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+# Install system deps: OpenSSL for Prisma, build tools for better-sqlite3
+RUN apt-get update && apt-get install -y openssl python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-# Skip postinstall (which tries to generate SQLite client) and install deps
-RUN npm install --legacy-peer-deps --ignore-scripts
+# Install deps - skip postinstall (tries dual Prisma generate before schemas are available)
+# Then rebuild native modules (better-sqlite3 needs compilation)
+RUN npm install --legacy-peer-deps --ignore-scripts && \
+    npm rebuild better-sqlite3 --ignore-scripts=false
 
 COPY . .
 
-# Generate only Postgres Prisma client
+# Generate both Prisma clients (sqlite client needed at compile time for type imports)
 RUN npx prisma generate --schema prisma/schema.prisma
+RUN npx prisma generate --schema prisma/schema.sqlite.prisma
 
 # Build Next.js (standalone output)
 RUN npm run build
