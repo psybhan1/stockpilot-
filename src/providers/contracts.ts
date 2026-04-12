@@ -65,7 +65,12 @@ export type BotLanguageIntent =
   | "STOCK_STATUS"
   | "GREETING"
   | "HELP"
-  | "UNKNOWN";
+  | "UNKNOWN"
+  | "ADD_INVENTORY_ITEM"
+  | "ADD_SUPPLIER"
+  | "ADD_RECIPE"
+  | "UPDATE_ITEM"
+  | "UPDATE_STOCK_COUNT";
 
 export type BotInventoryChoice = {
   id: string;
@@ -96,6 +101,12 @@ export type BotMessageInterpretation = {
   needsClarification: boolean;
   clarificationQuestion?: string | null;
   summary?: string | null;
+  // For ADD_INVENTORY_ITEM: the name of the new item
+  newItemName?: string | null;
+  // For ADD_SUPPLIER: the supplier name
+  supplierName?: string | null;
+  // For ADD_RECIPE: the dish/drink name
+  dishName?: string | null;
   metadata?: Record<string, unknown>;
 };
 

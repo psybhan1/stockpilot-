@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Role } from "@/lib/domain-enums";
-import { NotificationChannel, MovementType, SupplierOrderingMode } from "@/lib/prisma";
+import { ChannelType, NotificationChannel, MovementType, SupplierOrderingMode } from "@/lib/prisma";
 
 import { createAuditLogTx } from "@/lib/audit";
 import { db } from "@/lib/db";
@@ -40,6 +40,12 @@ import {
   getTelegramBotUsername,
   isPublicAppUrl,
 } from "@/modules/operator-bot/connect";
+import {
+  startTelegramChannelPairing,
+  disconnectTelegramChannel,
+  connectSmtpEmailChannel,
+  disconnectEmailChannel,
+} from "@/modules/channels/service";
 import {
   buildTelegramOidcAuthorizationUrl,
   createTelegramOidcSession,
@@ -1253,5 +1259,66 @@ function normalizeTelegramUsername(value: string | null) {
   }
 
   return value.startsWith("@") ? value : `@${value}`;
+}
+
+// ---------------------------------------------------------------------------
+// Location channel actions
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates a 15-min Telegram pairing code for the current location.
+ * Redirects back to /settings with the code in the URL for display.
+ */
+export async function generateTelegramChannelCodeAction() {
+  const session = await requireSession(Role.MANAGER);
+  const { code, expiresAt } = await startTelegramChannelPairing(session.locationId);
+  redirect(
+    `/settings?channelCode=${encodeURIComponent(code)}&channelCodeExpiry=${encodeURIComponent(expiresAt.toISOString())}&channel=telegram`
+  );
+}
+
+export async function disconnectTelegramChannelAction() {
+  const session = await requireSession(Role.MANAGER);
+  await disconnectTelegramChannel(session.locationId);
+  revalidateOperations();
+  redirect("/settings?channelConnect=disconnected&channelType=telegram");
+}
+
+export async function connectSmtpEmailChannelAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+
+  const host = String(formData.get("smtp_host") ?? "").trim();
+  const port = Number(formData.get("smtp_port") ?? 587);
+  const user = String(formData.get("smtp_user") ?? "").trim();
+  const pass = String(formData.get("smtp_pass") ?? "").trim();
+  const fromName = String(formData.get("smtp_from_name") ?? "").trim();
+  const fromEmail = String(formData.get("smtp_from_email") ?? "").trim();
+
+  if (!host || !user || !pass || !fromEmail) {
+    redirect("/settings?channelConnect=error&channelType=email&channelDetail=Missing+required+SMTP+fields");
+    return;
+  }
+
+  await connectSmtpEmailChannel(session.locationId, {
+    host,
+    port: Number.isFinite(port) && port > 0 ? port : 587,
+    secure: port === 465,
+    user,
+    pass,
+    fromName: fromName || fromEmail,
+    fromEmail,
+  });
+
+  revalidateOperations();
+  redirect(`/settings?channelConnect=connected&channelType=email&channelDetail=${encodeURIComponent(fromEmail)}`);
+}
+
+export async function disconnectEmailChannelAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const provider = String(formData.get("provider") ?? "smtp");
+  const channel = provider === "gmail" ? ChannelType.EMAIL_GMAIL : ChannelType.EMAIL_SMTP;
+  await disconnectEmailChannel(session.locationId, channel);
+  revalidateOperations();
+  redirect("/settings?channelConnect=disconnected&channelType=email");
 }
 

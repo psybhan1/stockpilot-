@@ -26,7 +26,7 @@ type TelegramWebhookResult =
       reason: string;
     };
 
-const TELEGRAM_ALLOWED_UPDATES = ["message"];
+const TELEGRAM_ALLOWED_UPDATES = ["message"]; // includes text + voice messages
 
 export function isValidTelegramWebhook(request: Request) {
   const expectedSecret = getTelegramWebhookSecret();

@@ -1,0 +1,130 @@
+{
+  "name": "03 - Supplier Email",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "supplier-email",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Supplier Email Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }",
+        "options": {}
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [480, 180]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.STOCKBUDDY_BASE_URL }}/api/n8n/purchase-order/{{ $json.body.purchaseOrderId ?? $json.purchaseOrderId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-StockPilot-Webhook-Secret", "value": "={{ $env.STOCKBUDDY_WEBHOOK_SECRET }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-po",
+      "name": "Fetch Purchase Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [480, 380]
+    },
+    {
+      "parameters": {
+        "jsCode": "const po = $input.first().json.purchaseOrder;\nconst lines = po.lines.map(l => `- ${l.quantity} ${l.unit} of ${l.description}`).join('\\n');\n\nconst subject = `Purchase Order ${po.orderNumber} from ${po.locationName}`;\nconst body = `Dear ${po.supplier.contactName ?? po.supplier.name},\\n\\nPlease find below our purchase order ${po.orderNumber}:\\n\\n${lines}\\n\\nKindly confirm receipt and expected delivery date.\\n\\nThank you,\\n${po.locationName}`;\n\nreturn [{ json: { subject, body, to: po.supplier.email, supplierName: po.supplier.name, orderNumber: po.orderNumber, chatId: $env.MANAGER_TELEGRAM_CHAT_ID, poId: po.id } }];"
+      },
+      "id": "format-email",
+      "name": "Format Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 380]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.EMAIL_FROM ?? 'orders@stockbuddy.app' }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "text": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Send Supplier Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [960, 380]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.STOCKBUDDY_BASE_URL }}/api/automation/n8n/callback",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-StockPilot-Webhook-Secret", "value": "={{ $env.STOCKBUDDY_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"taskId\": \"{{ $('Format Email').first().json.poId }}\", \"status\": \"COMPLETED\", \"summary\": \"Email sent to {{ $('Format Email').first().json.supplierName }}\" }",
+        "options": {}
+      },
+      "id": "callback-sent",
+      "name": "Mark as Sent (Callback)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "credentials",
+        "chatId": "={{ $('Format Email').first().json.chatId }}",
+        "text": "📧 Order *{{ $('Format Email').first().json.orderNumber }}* emailed to *{{ $('Format Email').first().json.supplierName }}*!",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "notify-manager",
+      "name": "Notify Manager",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1200, 460]
+    }
+  ],
+  "connections": {
+    "Supplier Email Webhook": {
+      "main": [
+        [
+          { "node": "Respond OK", "type": "main", "index": 0 },
+          { "node": "Fetch Purchase Order", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Purchase Order": {
+      "main": [[{ "node": "Format Email", "type": "main", "index": 0 }]]
+    },
+    "Format Email": {
+      "main": [[{ "node": "Send Supplier Email", "type": "main", "index": 0 }]]
+    },
+    "Send Supplier Email": {
+      "main": [
+        [{ "node": "Mark as Sent (Callback)", "type": "main", "index": 0 }],
+        [{ "node": "Notify Manager", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "stockbuddy" }]
+}

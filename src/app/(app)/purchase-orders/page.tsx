@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, PackageCheck, Send, ShieldCheck } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
 import {
   approveRecommendationAction,
@@ -8,7 +8,6 @@ import {
 } from "@/app/actions/operations";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Role } from "@/lib/domain-enums";
 import { formatDateTime } from "@/lib/format";
@@ -29,210 +28,137 @@ export default async function PurchaseOrdersPage() {
   const deliveredOrders = purchaseOrders.filter((order) => order.status === "DELIVERED");
 
   return (
-    <div className="flex flex-col gap-6">
-      <Card className="overflow-hidden border-border/60 bg-[linear-gradient(135deg,rgba(41,37,36,0.98),rgba(87,83,78,0.96))] text-white shadow-2xl shadow-black/10">
-        <CardContent className="flex flex-col gap-6 p-6">
-          <div className="max-w-3xl">
-            <p className="text-sm uppercase tracking-[0.22em] text-white/60">Orders</p>
-            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-              Review what to buy, then track every order without the spreadsheet feeling.
-            </h1>
-            <p className="mt-3 text-base text-white/70 sm:text-lg">
-              Recommendations stay explainable and editable. Once approved, every supplier step
-              still leaves a clean internal record.
-            </p>
-          </div>
+    <div className="space-y-10">
+      {/* Header */}
+      <section>
+        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          Orders
+        </p>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+          Purchase orders
+        </h1>
+        <p className="mt-2 text-muted-foreground">
+          Review recommendations and track supplier orders.
+        </p>
+      </section>
 
-          <div className="grid gap-3 md:grid-cols-3">
-            <MetricCard label="Needs approval" value={pendingRecommendations.length} />
-            <MetricCard label="In progress" value={activeOrders.length} />
-            <MetricCard label="Delivered" value={deliveredOrders.length} />
-          </div>
+      {/* Metrics */}
+      <section className="grid grid-cols-3 gap-3">
+        <MetricCard label="Needs approval" value={pendingRecommendations.length} />
+        <MetricCard label="In progress" value={activeOrders.length} />
+        <MetricCard label="Delivered" value={deliveredOrders.length} />
+      </section>
 
-          <div className="grid gap-3 md:grid-cols-3">
-            <TipCard
-              icon={ShieldCheck}
-              title="Approve with context"
-              description="Each suggestion shows the supplier, quantity, and reason."
-            />
-            <TipCard
-              icon={Send}
-              title="Keep it review-first"
-              description="Nothing critical goes out without a human approval step."
-            />
-            <TipCard
-              icon={PackageCheck}
-              title="Track the full lifecycle"
-              description="Sent, acknowledged, delivered, and received all stay attached to the same PO."
-            />
-          </div>
-        </CardContent>
-      </Card>
-
+      {/* Pending approvals */}
       <section className="space-y-4">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Waiting for approval</h2>
-          <p className="mt-1 text-muted-foreground">
-            Start here when you need to decide what gets ordered next.
-          </p>
+          <h2 className="text-lg font-semibold">Waiting for approval</h2>
+          <p className="text-sm text-muted-foreground">Recommendations that need a decision</p>
         </div>
 
         {pendingRecommendations.length ? (
-          <div className="grid gap-4 xl:grid-cols-2">
-            {pendingRecommendations.map((recommendation) => (
-              <Card
-                key={recommendation.id}
-                className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5"
+          <div className="grid gap-3 xl:grid-cols-2">
+            {pendingRecommendations.map((rec) => (
+              <div
+                key={rec.id}
+                className="rounded-xl border border-border/50 bg-card p-5 space-y-4"
               >
-                <CardContent className="space-y-4 p-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-lg font-semibold">{recommendation.inventoryItem.name}</p>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {recommendation.supplier.name}
-                      </p>
-                    </div>
-                    <StatusBadge
-                      label={
-                        recommendation.urgency === "CRITICAL"
-                          ? "Urgent"
-                          : recommendation.urgency === "WARNING"
-                            ? "Watch"
-                            : "Info"
-                      }
-                      tone={
-                        recommendation.urgency === "CRITICAL"
-                          ? "critical"
-                          : recommendation.urgency === "WARNING"
-                            ? "warning"
-                            : "info"
-                      }
-                    />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{rec.inventoryItem.name}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{rec.supplier.name}</p>
                   </div>
+                  <StatusBadge
+                    label={rec.urgency === "CRITICAL" ? "Urgent" : rec.urgency === "WARNING" ? "Watch" : "Info"}
+                    tone={rec.urgency === "CRITICAL" ? "critical" : rec.urgency === "WARNING" ? "warning" : "info"}
+                  />
+                </div>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <InfoPill
-                      label="Suggested quantity"
-                      value={`${recommendation.recommendedPackCount} ${recommendation.recommendedPurchaseUnit.toLowerCase()}`}
-                    />
-                    <InfoPill label="Status" value="Waiting for manager" />
+                <div className="flex gap-3 text-sm">
+                  <div className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2">
+                    <p className="text-xs text-muted-foreground">Qty</p>
+                    <p className="font-medium">{rec.recommendedPackCount} {rec.recommendedPurchaseUnit.toLowerCase()}</p>
                   </div>
-
-                  <div className="rounded-[24px] border border-border/60 bg-background/80 p-4 text-sm text-muted-foreground">
-                    {recommendation.rationale}
+                  <div className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2 flex-1">
+                    <p className="text-xs text-muted-foreground">Reason</p>
+                    <p className="text-muted-foreground line-clamp-1">{rec.rationale}</p>
                   </div>
+                </div>
 
-                  {session.role === Role.MANAGER ? (
-                    <div className="space-y-3 rounded-[24px] border border-border/60 bg-background/75 p-4">
-                      <form
-                        action={approveRecommendationAction}
-                        className="grid gap-3 sm:grid-cols-[120px_auto]"
-                      >
-                        <input
-                          type="hidden"
-                          name="recommendationId"
-                          value={recommendation.id}
-                        />
-                        <Input
-                          name="recommendedPackCount"
-                          type="number"
-                          min={1}
-                          defaultValue={recommendation.recommendedPackCount}
-                          className="h-11 rounded-2xl"
-                        />
-                        <Button type="submit" className="h-11 rounded-2xl">
-                          Approve and create PO
+                {session.role === Role.MANAGER ? (
+                  <div className="space-y-2">
+                    <form action={approveRecommendationAction} className="flex items-center gap-2">
+                      <input type="hidden" name="recommendationId" value={rec.id} />
+                      <Input
+                        name="recommendedPackCount"
+                        type="number"
+                        min={1}
+                        defaultValue={rec.recommendedPackCount}
+                        className="h-9 w-24 text-sm"
+                      />
+                      <Button type="submit" size="sm" className="h-9 text-xs">
+                        Approve
+                      </Button>
+                    </form>
+                    <div className="flex gap-2">
+                      <form action={deferRecommendationAction}>
+                        <input type="hidden" name="recommendationId" value={rec.id} />
+                        <Button type="submit" variant="outline" size="sm" className="h-8 text-xs">
+                          Later
                         </Button>
                       </form>
-
-                      <div className="flex flex-wrap gap-2">
-                        <form action={deferRecommendationAction}>
-                          <input
-                            type="hidden"
-                            name="recommendationId"
-                            value={recommendation.id}
-                          />
-                          <Button type="submit" variant="outline" size="sm" className="rounded-full">
-                            Later
-                          </Button>
-                        </form>
-                        <form action={rejectRecommendationAction}>
-                          <input
-                            type="hidden"
-                            name="recommendationId"
-                            value={recommendation.id}
-                          />
-                          <Button type="submit" variant="ghost" size="sm" className="rounded-full">
-                            Reject
-                          </Button>
-                        </form>
-                      </div>
+                      <form action={rejectRecommendationAction}>
+                        <input type="hidden" name="recommendationId" value={rec.id} />
+                        <Button type="submit" variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
+                          Reject
+                        </Button>
+                      </form>
                     </div>
-                  ) : (
-                    <div className="rounded-[24px] border border-border/60 bg-background/75 p-4 text-sm text-muted-foreground">
-                      A manager still needs to approve this recommendation.
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Waiting for manager approval</p>
+                )}
+              </div>
             ))}
           </div>
         ) : (
-          <EmptyState
-            title="No approvals waiting"
-            description="New reorder recommendations will show up here as inventory risk increases."
-          />
+          <EmptyState text="No approvals waiting" />
         )}
       </section>
 
+      {/* Order history */}
       <section className="space-y-4">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Order history</h2>
-          <p className="mt-1 text-muted-foreground">
-            Open any order to see communications, receiving, automation tasks, and audit history.
-          </p>
+          <h2 className="text-lg font-semibold">Order history</h2>
+          <p className="text-sm text-muted-foreground">Track every order from creation to delivery</p>
         </div>
 
         {purchaseOrders.length ? (
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-3 lg:grid-cols-2">
             {purchaseOrders.map((order) => (
               <Link
                 key={order.id}
                 href={`/purchase-orders/${order.id}`}
-                className="rounded-[28px] border border-border/60 bg-card/88 p-5 shadow-lg shadow-black/5 transition-all hover:-translate-y-0.5 hover:border-primary/30"
+                className="group flex items-center justify-between gap-4 rounded-xl border border-border/50 bg-card p-4 transition-colors hover:bg-muted/30"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-lg font-semibold">{order.orderNumber}</p>
-                    <p className="mt-1 text-sm text-muted-foreground">{order.supplier.name}</p>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium">{order.orderNumber}</p>
+                    <StatusBadge
+                      label={order.status}
+                      tone={getPurchaseOrderStatusTone(order.status)}
+                    />
                   </div>
-                  <StatusBadge
-                    label={order.status}
-                    tone={getPurchaseOrderStatusTone(order.status)}
-                  />
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {order.supplier.name} · {order.lines.length} line{order.lines.length !== 1 ? "s" : ""} · {formatDateTime(order.createdAt)}
+                  </p>
                 </div>
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <InfoPill label="Lines" value={String(order.lines.length)} />
-                  <InfoPill label="Created" value={formatDateTime(order.createdAt)} />
-                  <InfoPill
-                    label="Supplier mode"
-                    value={order.supplier.orderingMode.toLowerCase()}
-                  />
-                </div>
-
-                <div className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                  Open order
-                  <ArrowRight className="size-4" />
-                </div>
+                <ArrowRight className="size-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
               </Link>
             ))}
           </div>
         ) : (
-          <EmptyState
-            title="No purchase orders yet"
-            description="Approved recommendations will turn into trackable orders here."
-          />
+          <EmptyState text="No purchase orders yet" />
         )}
       </section>
     </div>
@@ -241,47 +167,17 @@ export default async function PurchaseOrdersPage() {
 
 function MetricCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-[24px] border border-white/10 bg-white/5 p-4">
-      <p className="text-sm text-white/65">{label}</p>
-      <p className="mt-3 text-4xl font-semibold">{value}</p>
+    <div className="rounded-xl border border-border/50 bg-card p-4">
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
     </div>
   );
 }
 
-function TipCard({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: typeof ShieldCheck;
-  title: string;
-  description: string;
-}) {
+function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-[24px] border border-white/10 bg-white/5 p-4">
-      <Icon className="size-5 text-amber-300" />
-      <p className="mt-4 font-semibold">{title}</p>
-      <p className="mt-2 text-sm text-white/70">{description}</p>
+    <div className="rounded-xl border border-dashed border-border/50 px-4 py-8 text-center">
+      <p className="text-sm text-muted-foreground">{text}</p>
     </div>
-  );
-}
-
-function InfoPill({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-border/60 bg-background/80 px-3 py-3">
-      <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-      <p className="mt-1 font-medium">{value}</p>
-    </div>
-  );
-}
-
-function EmptyState({ title, description }: { title: string; description: string }) {
-  return (
-    <Card className="rounded-[28px] border-dashed border-border/60 bg-card/70">
-      <CardContent className="px-6 py-10 text-center">
-        <p className="font-medium">{title}</p>
-        <p className="mt-2 text-sm text-muted-foreground">{description}</p>
-      </CardContent>
-    </Card>
   );
 }

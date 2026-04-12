@@ -1,0 +1,95 @@
+{
+  "name": "02 - Daily Stock Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 8 * * *" }]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every Day 8am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.STOCKBUDDY_BASE_URL }}/api/n8n/low-stock-report",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-StockPilot-Webhook-Secret", "value": "={{ $env.STOCKBUDDY_WEBHOOK_SECRET }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-low-stock",
+      "name": "Fetch Low Stock Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "has-items",
+              "leftValue": "={{ $json.totalLowStock }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ]
+        }
+      },
+      "id": "has-low-stock",
+      "name": "Any Low Stock?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst items = data.items ?? [];\n\nconst critical = items.filter(i => i.urgency === 'CRITICAL');\nconst warning = items.filter(i => i.urgency === 'WARNING');\n\nconst lines = [];\n\nif (critical.length > 0) {\n  lines.push('🔴 *CRITICAL — Order Now:*');\n  for (const i of critical) {\n    const days = i.daysLeft != null ? ` (${Math.round(i.daysLeft)}d left)` : '';\n    lines.push(`  • ${i.name}: ${i.onHand}/${i.par} ${i.unit}${days}`);\n  }\n  lines.push('');\n}\n\nif (warning.length > 0) {\n  lines.push('🟡 *LOW — Order Soon:*');\n  for (const i of warning) {\n    lines.push(`  • ${i.name}: ${i.onHand}/${i.par} ${i.unit}`);\n  }\n}\n\nconst message = `📊 *Daily Stock Report — ${data.locationName}*\\n\\n${lines.join('\\n')}\\n\\nTell me to restock anything: \"Oat milk 3 left, order more\"`;\n\nreturn [{ json: { message } }];"
+      },
+      "id": "format-report",
+      "name": "Format Report Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "credentials",
+        "chatId": "={{ $env.MANAGER_TELEGRAM_CHAT_ID }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "send-report",
+      "name": "Send Report to Manager",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1200, 200]
+    }
+  ],
+  "connections": {
+    "Every Day 8am": {
+      "main": [[{ "node": "Fetch Low Stock Report", "type": "main", "index": 0 }]]
+    },
+    "Fetch Low Stock Report": {
+      "main": [[{ "node": "Any Low Stock?", "type": "main", "index": 0 }]]
+    },
+    "Any Low Stock?": {
+      "main": [
+        [{ "node": "Format Report Message", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Format Report Message": {
+      "main": [[{ "node": "Send Report to Manager", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "stockbuddy" }]
+}

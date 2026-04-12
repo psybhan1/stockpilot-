@@ -106,6 +106,7 @@ enum RecommendationStatus {
 
 enum PosProviderType {
   SQUARE
+  MANUAL
 }
 
 enum IntegrationStatus {
@@ -232,6 +233,13 @@ enum BotChannel {
   TELEGRAM
 }
 
+enum ChannelType {
+  TELEGRAM
+  WHATSAPP
+  EMAIL_SMTP
+  EMAIL_GMAIL
+}
+
 model User {
   id                          String                  @id @default(cuid())
   email                       String                  @unique
@@ -293,6 +301,8 @@ model Location {
   auditLogs             AuditLog[]
   botConnectRequests    BotConnectRequest[]
   botMessageReceipts    BotMessageReceipt[]
+  botConversationStates BotConversationState[]
+  locationChannels      LocationChannel[]
 }
 
 model UserLocationRole {
@@ -871,4 +881,44 @@ model BotMessageReceipt {
 
   @@unique([channel, externalMessageId])
   @@index([senderId, channel, createdAt])
+}
+
+model BotConversationState {
+  id         String     @id @default(cuid())
+  locationId String
+  userId     String
+  senderId   String
+  channel    BotChannel
+  workflow   String
+  step       String
+  data       Json       @default("{}")
+  expiresAt  DateTime
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  location   Location   @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, senderId, channel])
+  @@index([senderId, channel, expiresAt])
+}
+
+/// Per-tenant, per-channel notification & bot connection record.
+/// Credentials are stored AES-256-GCM encrypted in credentialsEncrypted.
+model LocationChannel {
+  id                   String      @id @default(cuid())
+  locationId           String
+  channel              ChannelType
+  enabled              Boolean     @default(false)
+  telegramChatId       String?
+  whatsappPhone        String?
+  emailAddress         String?
+  emailProvider        String?
+  credentialsEncrypted String?
+  pairingCode          String?
+  pairingExpiresAt     DateTime?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  location             Location    @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, channel])
+  @@index([pairingCode])
 }

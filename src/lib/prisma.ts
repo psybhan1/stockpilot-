@@ -9,6 +9,7 @@ export {
   AlertStatus,
   AlertType,
   BotChannel,
+  ChannelType,
   CommunicationDirection,
   CommunicationStatus,
   CountSessionMode,

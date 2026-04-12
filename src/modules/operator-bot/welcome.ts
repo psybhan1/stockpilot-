@@ -26,9 +26,9 @@ export async function sendManagerBotWelcomeMessages(input: {
 
 function buildWelcomeMessage(userName: string) {
   return [
-    `StockPilot bot is now connected for ${userName}.`,
-    `You can send: "Whole milk 2 left, order more."`,
-    `I will log the count, fill back to par, and route the order using your supplier workflow.`,
+    `StockBuddy is now connected for ${userName}! 👋`,
+    `Send a text or voice message like: "Whole milk 2 left, order more."`,
+    `I'll log the count, restock to par, and route the order — all automatically.`,
   ].join("\n");
 }
 

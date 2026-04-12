@@ -1,10 +1,9 @@
 import Link from "next/link";
-import { Globe, Mail, Package, Truck } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
 import { upsertSupplierAction } from "@/app/actions/operations";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Role } from "@/lib/domain-enums";
@@ -16,163 +15,106 @@ export default async function SuppliersPage() {
   const session = await requireSession(Role.MANAGER);
   const suppliers = await getSuppliersPageData(session.locationId);
 
-  const emailSuppliers = suppliers.filter((supplier) => supplier.orderingMode === "EMAIL").length;
-  const websiteSuppliers = suppliers.filter(
-    (supplier) => supplier.orderingMode === "WEBSITE"
-  ).length;
-  const manualSuppliers = suppliers.filter((supplier) => supplier.orderingMode === "MANUAL").length;
-
   return (
-    <div className="flex flex-col gap-6">
-      <Card className="overflow-hidden border-border/60 bg-[linear-gradient(135deg,rgba(255,251,235,0.96),rgba(255,255,255,0.92))] shadow-xl shadow-black/5 dark:bg-[linear-gradient(135deg,rgba(68,64,60,0.98),rgba(28,25,23,0.94))]">
-        <CardContent className="flex flex-col gap-6 p-6">
-          <div className="max-w-3xl">
-            <p className="text-sm uppercase tracking-[0.22em] text-amber-600 dark:text-amber-300">
-              Suppliers
-            </p>
-            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-              Keep supplier relationships easy to scan and even easier to act on.
-            </h1>
-            <p className="mt-3 text-base text-muted-foreground sm:text-lg">
-              Every supplier keeps its own ordering mode, lead time, delivery cadence, and order
-              history so the team knows what to expect without digging.
-            </p>
+    <div className="space-y-10">
+      {/* Header */}
+      <section>
+        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          Suppliers
+        </p>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+          {suppliers.length} supplier{suppliers.length !== 1 ? "s" : ""}
+        </h1>
+        <p className="mt-2 text-muted-foreground">
+          Manage contacts, lead times, and delivery schedules.
+        </p>
+      </section>
+
+      {/* Add supplier form */}
+      <section className="rounded-xl border border-border/50 bg-card p-5 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Add supplier</h2>
+          <p className="text-sm text-muted-foreground">Set up ordering mode, contacts, and delivery rhythm</p>
+        </div>
+
+        <form action={upsertSupplierAction} className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Input name="name" placeholder="Supplier name" className="h-9 text-sm" required />
+            <Input name="contactName" placeholder="Contact name" className="h-9 text-sm" />
+            <Input name="email" type="email" placeholder="orders@supplier.com" className="h-9 text-sm" />
+            <Input name="phone" placeholder="Phone" className="h-9 text-sm" />
+            <Input name="website" placeholder="https://supplier.com" className="h-9 text-sm sm:col-span-2" />
+            <select
+              name="orderingMode"
+              defaultValue="EMAIL"
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="EMAIL">Email</option>
+              <option value="WEBSITE">Website</option>
+              <option value="MANUAL">Manual</option>
+            </select>
+            <Input name="leadTimeDays" type="number" min="0" placeholder="Lead time (days)" className="h-9 text-sm" />
+            <Input name="minimumOrderQuantity" type="number" min="1" defaultValue={1} placeholder="MOQ" className="h-9 text-sm" />
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
-            <MetricCard label="Email suppliers" value={emailSuppliers} />
-            <MetricCard label="Website suppliers" value={websiteSuppliers} />
-            <MetricCard label="Manual suppliers" value={manualSuppliers} />
+          <div className="flex flex-wrap gap-2">
+            {weekdayOptions.map((day) => (
+              <label key={day.value} className="inline-flex items-center gap-1.5 rounded-md border border-border/50 px-2.5 py-1.5 text-xs">
+                <input type="checkbox" name="deliveryDay" value={day.value} className="size-3.5" />
+                {day.label}
+              </label>
+            ))}
           </div>
 
-          <form action={upsertSupplierAction} className="rounded-[28px] border border-border/60 bg-background/80 p-5">
-            <div className="flex flex-col gap-4">
-              <div>
-                <p className="text-lg font-semibold">Add a supplier</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Keep supplier setup lightweight: capture the ordering mode, contact path, and delivery rhythm.
-                </p>
-              </div>
+          <Textarea name="notes" placeholder="Ordering notes or preferences" className="min-h-20 text-sm" />
 
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Input name="name" placeholder="Supplier name" className="h-11 rounded-2xl" />
-                <Input name="contactName" placeholder="Contact name" className="h-11 rounded-2xl" />
-                <Input name="email" type="email" placeholder="orders@supplier.com" className="h-11 rounded-2xl" />
-                <Input name="phone" placeholder="Phone" className="h-11 rounded-2xl" />
-                <Input name="website" placeholder="https://supplier.com" className="h-11 rounded-2xl md:col-span-2" />
-                <select
-                  name="orderingMode"
-                  defaultValue="EMAIL"
-                  className="h-11 rounded-2xl border border-input bg-background px-3 text-sm"
-                >
-                  <option value="EMAIL">Email orders</option>
-                  <option value="WEBSITE">Website ordering</option>
-                  <option value="MANUAL">Manual / internal workflow</option>
-                </select>
-                <Input name="leadTimeDays" type="number" min="0" placeholder="Lead time (days)" className="h-11 rounded-2xl" />
-                <Input
-                  name="minimumOrderQuantity"
-                  type="number"
-                  min="1"
-                  defaultValue={1}
-                  placeholder="MOQ"
-                  className="h-11 rounded-2xl"
-                />
-              </div>
+          <Button type="submit" size="sm" className="h-8 text-xs">
+            Save supplier
+          </Button>
+        </form>
+      </section>
 
-              <div className="flex flex-wrap gap-2">
-                {weekdayOptions.map((day) => (
-                  <label
-                    key={day.value}
-                    className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background px-3 py-2 text-sm"
-                  >
-                    <input type="checkbox" name="deliveryDay" value={day.value} className="size-4" />
-                    {day.label}
-                  </label>
-                ))}
-                <label className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background px-3 py-2 text-sm">
-                  <input type="checkbox" name="credentialsConfigured" className="size-4" />
-                  Credentials configured
-                </label>
-              </div>
-
-              <Textarea
-                name="notes"
-                placeholder="Ordering notes, website quirks, or contact preferences"
-                className="min-h-24 rounded-[24px]"
-              />
-
-              <div className="flex justify-end">
-                <Button type="submit" className="rounded-2xl">
-                  Save supplier
-                </Button>
-              </div>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 xl:grid-cols-2">
+      {/* Supplier list */}
+      <section className="grid gap-3 lg:grid-cols-2">
         {suppliers.map((supplier) => (
           <Link
             key={supplier.id}
             href={`/suppliers/${supplier.id}`}
-            className="rounded-[28px] border border-border/60 bg-card/88 p-5 shadow-lg shadow-black/5 transition-all hover:-translate-y-0.5 hover:border-primary/30"
+            className="group rounded-xl border border-border/50 bg-card p-4 transition-colors hover:bg-muted/30"
           >
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-lg font-semibold">{supplier.name}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {supplier.contactName ?? "No primary contact yet"}
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{supplier.name}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {supplier.contactName ?? "No contact"}
                 </p>
               </div>
               <StatusBadge
-                label={
-                  supplier.orderingMode === "WEBSITE"
-                    ? "Website"
-                    : supplier.orderingMode === "EMAIL"
-                      ? "Email"
-                      : "Manual"
-                }
+                label={supplier.orderingMode === "WEBSITE" ? "Website" : supplier.orderingMode === "EMAIL" ? "Email" : "Manual"}
                 tone={supplier.orderingMode === "WEBSITE" ? "info" : "neutral"}
               />
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <InfoRow icon={Truck} label="Lead time" value={`${supplier.leadTimeDays} days`} />
-              <InfoRow
-                icon={Package}
-                label="Tracked items"
-                value={String(supplier.supplierItems.length)}
-              />
-              <InfoRow
-                icon={Mail}
-                label="Contact"
-                value={supplier.email ?? supplier.phone ?? "No contact info"}
-              />
-              <InfoRow
-                icon={Globe}
-                label="Delivery days"
-                value={formatDeliveryDays(supplier.deliveryDays)}
-              />
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span>{supplier.leadTimeDays}d lead time</span>
+              <span>{supplier.supplierItems.length} item{supplier.supplierItems.length !== 1 ? "s" : ""}</span>
+              <span>{supplier.email ?? supplier.phone ?? "No contact info"}</span>
+              <span>{formatDeliveryDays(supplier.deliveryDays)}</span>
             </div>
 
-            <div className="mt-4 rounded-[24px] border border-border/60 bg-background/80 p-4">
-              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                Recent order activity
+            {supplier.purchaseOrders.length > 0 && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {supplier.purchaseOrders.length} recent order{supplier.purchaseOrders.length !== 1 ? "s" : ""}
               </p>
-              <p className="mt-2 font-medium">
-                {supplier.purchaseOrders.length
-                  ? `${supplier.purchaseOrders.length} recent order${supplier.purchaseOrders.length === 1 ? "" : "s"}`
-                  : "No recent purchase orders"}
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {supplier.notes?.trim() || "Open the supplier to review its catalog, communications, and tasks."}
-              </p>
+            )}
+
+            <div className="mt-3 flex items-center gap-1 text-xs font-medium text-muted-foreground">
+              View supplier
+              <ArrowRight className="size-3 opacity-0 transition-opacity group-hover:opacity-100" />
             </div>
           </Link>
         ))}
-      </div>
+      </section>
     </div>
   );
 }
@@ -186,32 +128,3 @@ const weekdayOptions = [
   { label: "Fri", value: 5 },
   { label: "Sat", value: 6 },
 ];
-
-function MetricCard({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-[24px] border border-border/60 bg-background/85 p-4 shadow-lg shadow-black/5">
-      <p className="text-sm text-muted-foreground">{label}</p>
-      <p className="mt-3 text-3xl font-semibold tracking-tight">{value}</p>
-    </div>
-  );
-}
-
-function InfoRow({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Truck;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-border/60 bg-background/80 p-3">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Icon className="size-4" />
-        <p className="text-xs uppercase tracking-[0.16em]">{label}</p>
-      </div>
-      <p className="mt-2 font-medium">{value}</p>
-    </div>
-  );
-}

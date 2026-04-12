@@ -86,5 +86,11 @@ export const env = {
   N8N_BOT_REPLY_WEBHOOK_URL:
     process.env.N8N_BOT_REPLY_WEBHOOK_URL ??
     buildN8nWebhookUrl(n8nBaseUrl, "stockpilot-bot-reply"),
+  N8N_ORDER_APPROVAL_WEBHOOK_URL:
+    process.env.N8N_ORDER_APPROVAL_WEBHOOK_URL ??
+    buildN8nWebhookUrl(n8nBaseUrl, "order-approval"),
+  N8N_POS_SALE_WEBHOOK_URL:
+    process.env.N8N_POS_SALE_WEBHOOK_URL ??
+    buildN8nWebhookUrl(n8nBaseUrl, "pos-sale"),
   N8N_WEBHOOK_SECRET: process.env.N8N_WEBHOOK_SECRET,
 };

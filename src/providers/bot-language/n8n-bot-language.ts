@@ -40,6 +40,11 @@ const INTENTS: BotLanguageIntent[] = [
   "GREETING",
   "HELP",
   "UNKNOWN",
+  "ADD_INVENTORY_ITEM",
+  "ADD_SUPPLIER",
+  "ADD_RECIPE",
+  "UPDATE_ITEM",
+  "UPDATE_STOCK_COUNT",
 ];
 
 export class N8nBotLanguageProvider implements BotLanguageProvider {
@@ -187,6 +192,12 @@ function normalizeInterpretation(
         Boolean(clarificationQuestion)));
   const summary =
     typeof raw?.summary === "string" && raw.summary.trim() ? raw.summary.trim() : null;
+  const newItemName =
+    typeof raw?.newItemName === "string" && raw.newItemName.trim() ? raw.newItemName.trim() : null;
+  const supplierName =
+    typeof raw?.supplierName === "string" && raw.supplierName.trim() ? raw.supplierName.trim() : null;
+  const dishName =
+    typeof raw?.dishName === "string" && raw.dishName.trim() ? raw.dishName.trim() : null;
 
   return {
     intent,
@@ -197,6 +208,9 @@ function normalizeInterpretation(
     needsClarification,
     clarificationQuestion,
     summary,
+    newItemName,
+    supplierName,
+    dishName,
     metadata:
       raw && Object.keys(raw).length > 0
         ? {
@@ -228,9 +242,19 @@ function applyGuardrails(
     },
   });
 
+  // Only prefer conversational fallback when Groq is NOT detecting a workflow intent.
+  // Never override ADD_INVENTORY_ITEM, ADD_SUPPLIER, ADD_RECIPE, UPDATE_ITEM, UPDATE_STOCK_COUNT.
+  const workflowIntents = new Set([
+    "ADD_INVENTORY_ITEM",
+    "ADD_SUPPLIER",
+    "ADD_RECIPE",
+    "UPDATE_ITEM",
+    "UPDATE_STOCK_COUNT",
+  ]);
   if (
     (fallback.intent === "GREETING" || fallback.intent === "HELP") &&
-    primary.intent !== fallback.intent
+    primary.intent !== fallback.intent &&
+    !workflowIntents.has(primary.intent)
   ) {
     return withGuardrailMetadata(fallback, "prefer_conversational_fallback");
   }
@@ -278,26 +302,11 @@ function applyReplyGuardrails(
   reply: string,
   providerName: string
 ) {
-  const scenario = input.scenario.trim().toLowerCase();
   const normalizedReply = reply.trim();
   const normalizedFallback = input.fallbackReply.trim();
 
-  if (
-    scenario === "greeting" &&
-    (normalizedReply.length > Math.max(normalizedFallback.length + 20, 110) ||
-      /inventory needs|anything else|assist with your inventory/i.test(normalizedReply))
-  ) {
-    return {
-      provider: "n8n+local-guardrail",
-      reply: normalizedFallback,
-    };
-  }
-
-  if (
-    scenario === "help" &&
-    (normalizedReply.length > Math.max(normalizedFallback.length + 35, 180) ||
-      /anything else|feel free|inventory needs/i.test(normalizedReply))
-  ) {
+  // Only reject if the reply is extremely long (likely hallucination) — trust Groq otherwise
+  if (normalizedReply.length > 450) {
     return {
       provider: "n8n+local-guardrail",
       reply: normalizedFallback,

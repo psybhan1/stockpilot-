@@ -28,9 +28,20 @@ import {
   failBotMessageReceipt,
   reserveBotMessageReceipt,
 } from "@/modules/operator-bot/receipts";
+import {
+  advanceActiveWorkflow,
+  clearWorkflowState,
+  getActiveWorkflow,
+  saveWorkflowState,
+} from "@/modules/operator-bot/workflows/engine";
+import { startAddItem } from "@/modules/operator-bot/workflows/add-item";
+import { startAddSupplier } from "@/modules/operator-bot/workflows/add-supplier";
+import { startAddRecipe } from "@/modules/operator-bot/workflows/add-recipe";
+import { startUpdateItem } from "@/modules/operator-bot/workflows/update-item";
 import { getAiProvider } from "@/providers/ai-provider";
 import { getBotLanguageProvider } from "@/providers/bot-language-provider";
 import { getSupplierOrderProvider } from "@/providers/supplier-order-provider";
+import { env } from "@/lib/env";
 
 export type ManagerBotChannel = "WHATSAPP" | "TELEGRAM";
 
@@ -91,7 +102,7 @@ export async function handleInboundManagerBotMessage(
       const result = {
         ok: false,
         reply:
-          "I couldn't match this sender to a manager account yet. Open StockPilot settings and use the Connect WhatsApp or Connect Telegram button first.",
+          "I couldn't match this sender to a manager account yet. Open StockBuddy settings and use the Connect WhatsApp or Connect Telegram button first.",
         replyScenario: "unlinked",
       } satisfies BotHandlingResult;
 
@@ -137,19 +148,59 @@ export async function handleInboundManagerBotMessage(
       },
     });
 
-    const inventoryChoices = await db.inventoryItem.findMany({
-      where: {
+    // ── Load inventory and suppliers (shared by workflow engine and LLM) ────────
+    const [inventoryChoices, suppliersForWorkflow] = await Promise.all([
+      db.inventoryItem.findMany({
+        where: { locationId: managerContext.locationId },
+        select: { id: true, name: true, sku: true },
+        orderBy: { name: "asc" },
+      }),
+      db.supplier.findMany({
+        where: { locationId: managerContext.locationId },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      }),
+    ]);
+
+    const workflowContext = {
+      locationId: managerContext.locationId,
+      userId: managerContext.userId,
+      channel: toBotChannel(input.channel),
+      inventoryItems: inventoryChoices.map((i) => ({ id: i.id, name: i.name, sku: i.sku ?? "" })),
+      suppliers: suppliersForWorkflow,
+    };
+
+    // ── Check for an active multi-turn workflow ────────────────────────────────
+    const activeWorkflow = await getActiveWorkflow(
+      managerContext.locationId,
+      input.senderId,
+      toBotChannel(input.channel)
+    );
+
+    if (activeWorkflow) {
+      const workflowResult = await advanceActiveWorkflow(activeWorkflow, input.text, workflowContext);
+
+      await completeBotMessageReceipt({
+        receiptId,
         locationId: managerContext.locationId,
-      },
-      select: {
-        id: true,
-        name: true,
-        sku: true,
-      },
-      orderBy: {
-        name: "asc",
-      },
-    });
+        userId: managerContext.userId,
+        reply: workflowResult.reply,
+        metadata: toInputJsonValue({
+          channel: input.channel,
+          replyScenario: "workflow",
+          workflow: activeWorkflow.workflow,
+          workflowStep: activeWorkflow.step,
+          workflowDone: workflowResult.done,
+          sourceMessageId: input.sourceMessageId ?? null,
+          senderId: input.senderId,
+        }),
+      });
+
+      return {
+        ok: true,
+        reply: workflowResult.reply,
+      };
+    }
 
     const recentReceipts = await db.botMessageReceipt.findMany({
       where: {
@@ -197,7 +248,7 @@ export async function handleInboundManagerBotMessage(
           result = {
             ok: true,
             reply:
-              "Hey. I'm here and ready to help with stock. You can ask what's low, check an item, or say something like 'Whole milk 2 left, order more.'",
+              "Hey! I'm StockBuddy, your inventory assistant. You can text or send a voice message — try something like 'Oat milk 3 left, order more.'",
             replyScenario: "greeting",
             replyFacts: {
               interpretation,
@@ -208,7 +259,7 @@ export async function handleInboundManagerBotMessage(
           result = {
             ok: true,
             reply:
-              "I can check stock, explain what's low, and create a reorder to par from chat. Try 'How much oat milk do we have?' or 'Whole milk 2 left, order more.'",
+              "Here's what I can do:\n\n📦 *Stock* — 'How much oat milk do we have?' / 'What are we low on?'\n🔁 *Restock* — 'Whole milk 2 left, order more'\n✏️ *Correct stock* — 'We actually have 30 bananas'\n➕ *Add item* — 'We now have bananas'\n🏪 *Add supplier* — 'Add supplier FreshCo'\n🍽️ *Add recipe* — 'Banana smoothie uses 2 bananas and 200ml oat milk'\n⚙️ *Update item* — 'Change banana par to 50'\n\nYou can also send voice messages!",
             replyScenario: "help",
             replyFacts: {
               interpretation,
@@ -247,6 +298,127 @@ export async function handleInboundManagerBotMessage(
             reportedOnHandDisplay: interpretation.reportedOnHand,
           });
           break;
+
+        case "ADD_INVENTORY_ITEM": {
+          const itemName = interpretation.newItemName || interpretation.inventoryItemName || null;
+          if (!itemName) {
+            result = {
+              ok: false,
+              reply: "What's the name of the item you want to add?",
+              replyScenario: "clarification",
+              replyFacts: { interpretation },
+            };
+            break;
+          }
+          const { reply: firstQ, initialData } = startAddItem(itemName);
+          await saveWorkflowState({
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            senderId: input.senderId,
+            channel: toBotChannel(input.channel),
+            workflow: "ADD_ITEM",
+            step: "init",
+            data: initialData,
+          });
+          result = { ok: true, reply: firstQ, replyScenario: "workflow_add_item" };
+          break;
+        }
+
+        case "ADD_SUPPLIER": {
+          const supplierName = interpretation.supplierName || null;
+          if (!supplierName) {
+            result = {
+              ok: false,
+              reply: "What's the name of the supplier you want to add?",
+              replyScenario: "clarification",
+              replyFacts: { interpretation },
+            };
+            break;
+          }
+          const { reply: firstQ, initialData } = startAddSupplier(supplierName);
+          await saveWorkflowState({
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            senderId: input.senderId,
+            channel: toBotChannel(input.channel),
+            workflow: "ADD_SUPPLIER",
+            step: "init",
+            data: initialData,
+          });
+          result = { ok: true, reply: firstQ, replyScenario: "workflow_add_supplier" };
+          break;
+        }
+
+        case "ADD_RECIPE": {
+          const dishName = interpretation.dishName || interpretation.inventoryItemName || null;
+          if (!dishName) {
+            result = {
+              ok: false,
+              reply: "What dish or drink do you want to set up a recipe for?",
+              replyScenario: "clarification",
+              replyFacts: { interpretation },
+            };
+            break;
+          }
+          const { reply: firstQ, initialData } = startAddRecipe(dishName);
+          await saveWorkflowState({
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            senderId: input.senderId,
+            channel: toBotChannel(input.channel),
+            workflow: "ADD_RECIPE",
+            step: "init",
+            data: initialData,
+          });
+          result = { ok: true, reply: firstQ, replyScenario: "workflow_add_recipe" };
+          break;
+        }
+
+        case "UPDATE_ITEM": {
+          const updateItemId = interpretation.inventoryItemId ?? null;
+          const updateItemName = interpretation.inventoryItemName ?? null;
+          if (!updateItemId || !updateItemName) {
+            result = {
+              ok: false,
+              reply: "Which item do you want to update? (Give me the name)",
+              replyScenario: "clarification",
+              replyFacts: { interpretation },
+            };
+            break;
+          }
+          const { reply: firstQ, initialData } = startUpdateItem(updateItemId, updateItemName);
+          await saveWorkflowState({
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            senderId: input.senderId,
+            channel: toBotChannel(input.channel),
+            workflow: "UPDATE_ITEM",
+            step: "init",
+            data: initialData,
+          });
+          result = { ok: true, reply: firstQ, replyScenario: "workflow_update_item" };
+          break;
+        }
+
+        case "UPDATE_STOCK_COUNT": {
+          if (!interpretation.inventoryItemId || interpretation.reportedOnHand == null) {
+            result = {
+              ok: false,
+              reply: "Tell me the item and the correct count. Example: 'we actually have 30 bananas'.",
+              replyScenario: "clarification",
+              replyFacts: { interpretation },
+            };
+            break;
+          }
+          result = await updateStockCountFromBotMessage({
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            inventoryItemId: interpretation.inventoryItemId,
+            correctedOnHand: interpretation.reportedOnHand,
+          });
+          break;
+        }
+
         case "UNKNOWN":
         default: {
           const parsed = parseManagerRestockMessage(input.text, inventoryChoices);
@@ -267,7 +439,7 @@ export async function handleInboundManagerBotMessage(
           result = {
             ok: false,
             reply:
-              "I can help with stock checks and restocks. Ask what's low, check a specific item, or say 'Whole milk 2 left, order more.'",
+              "I'm StockBuddy! I can check stock levels, flag what's running low, and place restock orders. Try texting or sending a voice message like 'Oat milk 3 left, order more.'",
             replyScenario: "unknown",
             replyFacts: {
               interpretation,
@@ -278,14 +450,19 @@ export async function handleInboundManagerBotMessage(
       }
     }
 
-    const draftedReply = await botLanguage.draftReply({
-      channel: input.channel,
-      managerText: input.text,
-      scenario: result.replyScenario ?? "default",
-      fallbackReply: result.reply,
-      facts: result.replyFacts ?? {},
-      conversationHistory,
-    });
+    // Workflow replies are precise operational questions — don't run them through Groq paraphrasing
+    const isWorkflowReply = result.replyScenario?.startsWith("workflow");
+
+    const draftedReply = isWorkflowReply
+      ? { provider: "local", reply: result.reply }
+      : await botLanguage.draftReply({
+          channel: input.channel,
+          managerText: input.text,
+          scenario: result.replyScenario ?? "default",
+          fallbackReply: result.reply,
+          facts: result.replyFacts ?? {},
+          conversationHistory,
+        });
 
     result = {
       ...result,
@@ -342,6 +519,59 @@ export async function handleInboundManagerBotMessage(
 
     throw error;
   }
+}
+
+async function updateStockCountFromBotMessage(input: {
+  locationId: string;
+  userId: string;
+  inventoryItemId: string;
+  correctedOnHand: number;
+}): Promise<BotHandlingResult> {
+  const item = await db.inventoryItem.findFirst({
+    where: { id: input.inventoryItemId, locationId: input.locationId },
+    select: { id: true, name: true, stockOnHandBase: true, baseUnit: true },
+  });
+
+  if (!item) {
+    return {
+      ok: false,
+      reply: "I couldn't find that item in your inventory.",
+      replyScenario: "unknown",
+    };
+  }
+
+  const delta = input.correctedOnHand - item.stockOnHandBase;
+
+  await db.$transaction(async (tx) => {
+    await tx.inventoryItem.update({
+      where: { id: item.id },
+      data: { stockOnHandBase: input.correctedOnHand },
+    });
+
+    if (delta !== 0) {
+      await tx.stockMovement.create({
+        data: {
+          locationId: input.locationId,
+          inventoryItemId: item.id,
+          userId: input.userId,
+          movementType: MovementType.MANUAL_COUNT_ADJUSTMENT,
+          quantityDeltaBase: delta,
+          beforeBalanceBase: item.stockOnHandBase,
+          afterBalanceBase: input.correctedOnHand,
+          sourceType: "bot_correction",
+          sourceId: `bot-correction-${Date.now()}`,
+          notes: `Manual count correction via bot: ${input.correctedOnHand}`,
+        },
+      });
+    }
+  });
+
+  return {
+    ok: true,
+    reply: `✅ *${item.name}* stock updated to ${input.correctedOnHand}. ${delta > 0 ? `(+${delta} added)` : delta < 0 ? `(${delta} removed)` : "(no change)"}`,
+    replyScenario: "stock_corrected",
+    replyFacts: { itemName: item.name, correctedOnHand: input.correctedOnHand, delta },
+  };
 }
 
 async function createRestockOrderFromBotMessage(input: {
@@ -586,6 +816,49 @@ async function createRestockOrderFromBotMessage(input: {
     return createdPurchaseOrder;
   });
 
+  // If n8n order-approval webhook is configured, hand off to n8n for Telegram approval flow
+  const n8nApprovalUrl = env.N8N_ORDER_APPROVAL_WEBHOOK_URL;
+  if (n8nApprovalUrl) {
+    // Mark PO as AWAITING_APPROVAL — n8n will send to supplier after manager confirms
+    await db.purchaseOrder.update({
+      where: { id: purchaseOrder.id },
+      data: { status: PurchaseOrderStatus.AWAITING_APPROVAL },
+    });
+
+    // Fire-and-forget: tell n8n to start the approval flow
+    void fetch(n8nApprovalUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        purchaseOrderId: purchaseOrder.id,
+        locationId: input.locationId,
+        orderNumber: purchaseOrder.orderNumber,
+        supplierName: supplierContext.supplier.name,
+        itemName: refreshedItem.name,
+        quantity: order.recommendedPackCount,
+        purchaseUnit: refreshedItem.purchaseUnit,
+        telegramChatId: process.env.MANAGER_TELEGRAM_CHAT_ID ?? "",
+      }),
+    }).catch((err) => console.error("[n8n order-approval] fire-and-forget failed:", err));
+
+    const displayQty = `${order.recommendedPackCount} ${refreshedItem.purchaseUnit.toLowerCase()}`;
+    return {
+      ok: true,
+      purchaseOrderId: purchaseOrder.id,
+      orderNumber: purchaseOrder.orderNumber,
+      reply: `📋 Got it! I've queued *Order ${purchaseOrder.orderNumber}* — ${displayQty} of *${refreshedItem.name}* from *${supplierContext.supplier.name}*.\n\nCheck your Telegram for a confirmation message. Reply *YES* there to send, or *NO* to cancel.`,
+      replyScenario: "order_awaiting_n8n_approval",
+      replyFacts: {
+        inventoryItemName: refreshedItem.name,
+        supplierName: supplierContext.supplier.name,
+        orderNumber: purchaseOrder.orderNumber,
+        orderedPackCount: order.recommendedPackCount,
+        purchaseUnit: refreshedItem.purchaseUnit,
+      },
+    };
+  }
+
+  // Fallback: direct dispatch (no n8n configured)
   const finalOrder = await dispatchBotPurchaseOrder({
     purchaseOrderId: purchaseOrder.id,
     locationId: input.locationId,
