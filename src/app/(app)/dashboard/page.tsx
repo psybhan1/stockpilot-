@@ -19,245 +19,296 @@ import { requireSession } from "@/modules/auth/session";
 import { getDashboardData } from "@/modules/dashboard/queries";
 import { formatQuantityBase } from "@/modules/inventory/units";
 
+/* ─── colour tokens (match globals.css .dark) ─── */
+const C = {
+  bg:      "#07080F",
+  card:    "#0D0E1A",
+  card2:   "#111220",
+  border:  "rgba(255,255,255,0.07)",
+  blue:    "#5B73F7",
+  blueGlow:"rgba(91,115,247,0.18)",
+  text:    "#F0F2FC",
+  muted:   "#5A6285",
+  red:     "#F87171",
+  amber:   "#FCD34D",
+  green:   "#34D399",
+};
+
 export default async function DashboardPage() {
   const session = await requireSession(Role.SUPERVISOR);
-  const data = await getDashboardData(session.locationId);
+  const data    = await getDashboardData(session.locationId);
   const firstName = session.userName.split(" ")[0];
 
   return (
-    <div className="space-y-10">
-      {/* ─── Hero ─── */}
-      <section>
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          {session.locationName}
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
-          Good morning, {firstName}
-        </h1>
-        <p className="mt-2 max-w-lg text-muted-foreground">
-          Here&apos;s what needs attention today.
-        </p>
-      </section>
+    <div style={{ display:"flex", flexDirection:"column", gap:"24px" }}>
 
-      {/* ─── Metrics ─── */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <MetricCard label="Items tracked" value={data.metrics.inventoryCount} />
-        <MetricCard
-          label="Running low"
-          value={data.metrics.lowStockCount}
-          icon={TrendingDown}
-          highlight={data.metrics.lowStockCount > 0 ? "warning" : undefined}
-        />
-        <MetricCard
-          label="Urgent"
-          value={data.metrics.criticalCount}
-          icon={AlertTriangle}
-          highlight={data.metrics.criticalCount > 0 ? "critical" : undefined}
-        />
-        <MetricCard
-          label="Awaiting review"
-          value={data.metrics.pendingRecommendations + data.metrics.pendingRecipes}
-        />
-      </section>
+      {/* ── HERO ── */}
+      <GlowCard className="anim-fade-up" style={{ padding:"44px 48px", position:"relative", overflow:"hidden" }}>
+        {/* background blobs */}
+        <div style={{ position:"absolute", top:"-80px", left:"-80px", width:"360px", height:"360px",
+          borderRadius:"50%", background:"radial-gradient(circle, rgba(91,115,247,0.22) 0%, transparent 65%)",
+          filter:"blur(50px)", pointerEvents:"none" }} />
+        <div style={{ position:"absolute", bottom:"-60px", right:"-40px", width:"280px", height:"280px",
+          borderRadius:"50%", background:"radial-gradient(circle, rgba(91,115,247,0.10) 0%, transparent 70%)",
+          filter:"blur(40px)", pointerEvents:"none" }} />
+        {/* dot grid */}
+        <div style={{ position:"absolute", inset:0, pointerEvents:"none",
+          backgroundImage:"radial-gradient(circle, rgba(255,255,255,0.045) 1px, transparent 1px)",
+          backgroundSize:"22px 22px" }} />
 
-      {/* ─── Quick actions ─── */}
-      <section className="grid gap-3 sm:grid-cols-3">
-        <ActionCard
-          href="/stock-count"
-          icon={ClipboardCheck}
-          title="Count stock"
-          description="Confirm uncertain items"
-        />
-        <ActionCard
-          href="/inventory"
-          icon={Package}
-          title="Inventory"
-          description="Search and review items"
-        />
-        <ActionCard
-          href="/purchase-orders"
-          icon={ShoppingCart}
-          title="Orders"
-          description="Review supplier actions"
-        />
-      </section>
+        <div style={{ position:"relative" }}>
+          {/* location pill */}
+          <span style={{ display:"inline-flex", alignItems:"center", gap:"6px",
+            border:`1px solid rgba(91,115,247,0.30)`,
+            background:"rgba(91,115,247,0.12)",
+            borderRadius:"100px", padding:"5px 14px",
+            fontSize:"11px", fontWeight:600, letterSpacing:"0.14em",
+            textTransform:"uppercase", color:C.blue }}>
+            {session.locationName}
+          </span>
 
-      {/* ─── Alerts + Inventory watchlist ─── */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Alerts */}
-        <section>
-          <h2 className="text-lg font-semibold">Alerts</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Issues that need attention now</p>
-          <div className="mt-4 space-y-2">
-            {data.alerts.length ? (
-              data.alerts.map((alert) => (
-                <div
-                  key={alert.id}
-                  className="flex items-start justify-between gap-3 rounded-xl border border-border/50 bg-card p-4"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{alert.title}</p>
-                    <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{alert.message}</p>
+          {/* giant heading */}
+          <h1 style={{ marginTop:"20px",
+            fontSize:"clamp(2.4rem, 5vw, 3.6rem)", fontWeight:800,
+            letterSpacing:"-0.05em", lineHeight:1.0,
+            background:"linear-gradient(160deg, #fff 0%, rgba(255,255,255,0.55) 100%)",
+            WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent",
+            backgroundClip:"text" }}>
+            Good morning,<br />{firstName}.
+          </h1>
+
+          <p style={{ marginTop:"14px", fontSize:"15px", color:C.muted, maxWidth:"380px", lineHeight:1.6 }}>
+            Here&apos;s what needs your attention today.
+          </p>
+        </div>
+      </GlowCard>
+
+      {/* ── METRICS ── */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:"12px" }}
+           className="sm:grid-cols-4">
+        {([
+          { label:"Items tracked",  value:data.metrics.inventoryCount, icon:null,         color:C.text },
+          { label:"Running low",    value:data.metrics.lowStockCount,  icon:TrendingDown, color:data.metrics.lowStockCount  > 0 ? C.amber : C.text },
+          { label:"Urgent",         value:data.metrics.criticalCount,  icon:AlertTriangle,color:data.metrics.criticalCount  > 0 ? C.red   : C.text },
+          { label:"Pending review", value:data.metrics.pendingRecommendations+data.metrics.pendingRecipes, icon:null, color:C.text },
+        ] as const).map((m, i) => (
+          <GlowCard key={m.label} className={`anim-fade-up d-${(i+1)*50 as 50|100|150|200}`}
+            hoverable style={{ padding:"22px 24px" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <p style={{ fontSize:"10px", fontWeight:700, letterSpacing:"0.14em",
+                textTransform:"uppercase", color:C.muted }}>
+                {m.label}
+              </p>
+              {m.icon && <m.icon style={{ width:14, height:14, color:m.color, opacity:0.7 }} />}
+            </div>
+            <p style={{ marginTop:"12px", fontSize:"3rem", fontWeight:800,
+              letterSpacing:"-0.05em", lineHeight:1, color:m.color,
+              fontVariantNumeric:"tabular-nums" }}>
+              {m.value}
+            </p>
+          </GlowCard>
+        ))}
+      </div>
+
+      {/* ── QUICK ACTIONS ── */}
+      <div style={{ display:"grid", gap:"12px" }} className="sm:grid-cols-3">
+        {([
+          { href:"/stock-count",     icon:ClipboardCheck, title:"Count stock",  desc:"Confirm uncertain items" },
+          { href:"/inventory",       icon:Package,        title:"Inventory",    desc:"Search and review all items" },
+          { href:"/purchase-orders", icon:ShoppingCart,   title:"Orders",       desc:"Review supplier actions" },
+        ] as const).map((a, i) => (
+          <ActionCard key={a.href} {...a} delay={(i * 75) as 0|75|150} />
+        ))}
+      </div>
+
+      {/* ── ALERTS + WATCH LIST ── */}
+      <div style={{ display:"grid", gap:"20px" }} className="lg:grid-cols-2">
+
+        <section style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+          <SectionLabel title="Alerts" sub="Issues requiring attention now" />
+          <div style={{ display:"flex", flexDirection:"column", gap:"6px" }}>
+            {data.alerts.length ? data.alerts.map((alert) => (
+              <GlowCard key={alert.id} hoverable style={{ padding:"14px 18px" }}>
+                <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:"12px" }}>
+                  <div style={{ minWidth:0 }}>
+                    <p style={{ fontSize:"13px", fontWeight:500, color:C.text, lineHeight:1.4 }}>{alert.title}</p>
+                    <p style={{ marginTop:"3px", fontSize:"12px", color:C.muted, overflow:"hidden",
+                      textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{alert.message}</p>
                   </div>
                   <StatusBadge
-                    label={alert.severity === "CRITICAL" ? "Urgent" : alert.severity === "WARNING" ? "Watch" : "Info"}
-                    tone={alert.severity === "CRITICAL" ? "critical" : alert.severity === "WARNING" ? "warning" : "info"}
-                  />
+                    label={alert.severity==="CRITICAL"?"Urgent":alert.severity==="WARNING"?"Watch":"Info"}
+                    tone={alert.severity==="CRITICAL"?"critical":alert.severity==="WARNING"?"warning":"info"} />
                 </div>
-              ))
-            ) : (
-              <EmptyState text="No active alerts" />
+              </GlowCard>
+            )) : (
+              <EmptyCard text="All clear — no active alerts" />
             )}
           </div>
         </section>
 
-        {/* Watch list */}
-        <section>
-          <h2 className="text-lg font-semibold">Watch list</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Items running low</p>
-          <div className="mt-4 space-y-2">
-            {data.inventory.slice(0, 5).map((item) => (
-              <Link
-                key={item.id}
-                href={`/inventory/${item.id}`}
-                className="flex items-center justify-between gap-3 rounded-xl border border-border/50 bg-card p-4 transition-colors hover:bg-muted/30"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{item.name}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {formatQuantityBase(item.stockOnHandBase, item.displayUnit, item.packSizeBase)} on hand
-                    {item.snapshot?.daysLeft != null ? ` \u00B7 ${formatRelativeDays(item.snapshot.daysLeft)} left` : ""}
-                  </p>
-                </div>
-                <StatusBadge
-                  label={item.snapshot?.urgency === "CRITICAL" ? "Urgent" : item.snapshot?.urgency === "WARNING" ? "Low" : "OK"}
-                  tone={item.snapshot?.urgency === "CRITICAL" ? "critical" : item.snapshot?.urgency === "WARNING" ? "warning" : "success"}
-                />
+        <section style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+          <SectionLabel title="Watch list" sub="Items running low on stock" />
+          <div style={{ display:"flex", flexDirection:"column", gap:"6px" }}>
+            {data.inventory.slice(0,6).map((item) => (
+              <Link key={item.id} href={`/inventory/${item.id}`} style={{ textDecoration:"none" }}>
+                <GlowCard hoverable style={{ padding:"14px 18px", cursor:"pointer" }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:"12px" }}>
+                    <div style={{ minWidth:0 }}>
+                      <p style={{ fontSize:"13px", fontWeight:500, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</p>
+                      <p style={{ marginTop:"3px", fontSize:"12px", color:C.muted }}>
+                        {formatQuantityBase(item.stockOnHandBase, item.displayUnit, item.packSizeBase)} on hand
+                        {item.snapshot?.daysLeft != null ? ` · ${formatRelativeDays(item.snapshot.daysLeft)} left` : ""}
+                      </p>
+                    </div>
+                    <div style={{ display:"flex", alignItems:"center", gap:"8px", flexShrink:0 }}>
+                      <StatusBadge
+                        label={item.snapshot?.urgency==="CRITICAL"?"Urgent":item.snapshot?.urgency==="WARNING"?"Low":"OK"}
+                        tone={item.snapshot?.urgency==="CRITICAL"?"critical":item.snapshot?.urgency==="WARNING"?"warning":"success"} />
+                      <ArrowRight style={{ width:13, height:13, color:C.muted, opacity:0.5 }} />
+                    </div>
+                  </div>
+                </GlowCard>
               </Link>
             ))}
           </div>
         </section>
       </div>
 
-      {/* ─── Pending orders ─── */}
+      {/* ── PENDING ORDERS ── */}
       {data.recommendations.length > 0 && (
-        <section>
-          <h2 className="text-lg font-semibold">Pending orders</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Recommendations waiting for approval</p>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <section style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+          <SectionLabel title="Pending orders" sub="Recommendations waiting for your approval" />
+          <div style={{ display:"grid", gap:"6px" }} className="sm:grid-cols-2">
             {data.recommendations.map((rec) => (
-              <Link
-                key={rec.id}
-                href="/purchase-orders"
-                className="flex items-start justify-between gap-3 rounded-xl border border-border/50 bg-card p-4 transition-colors hover:bg-muted/30"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">{rec.inventoryItem.name}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{rec.supplier.name}</p>
-                </div>
-                <StatusBadge
-                  label={rec.urgency === "CRITICAL" ? "Urgent" : rec.urgency === "WARNING" ? "Soon" : "Planned"}
-                  tone={rec.urgency === "CRITICAL" ? "critical" : rec.urgency === "WARNING" ? "warning" : "info"}
-                />
+              <Link key={rec.id} href="/purchase-orders" style={{ textDecoration:"none" }}>
+                <GlowCard hoverable style={{ padding:"14px 18px", cursor:"pointer" }}>
+                  <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:"12px" }}>
+                    <div style={{ minWidth:0 }}>
+                      <p style={{ fontSize:"13px", fontWeight:500, color:C.text }}>{rec.inventoryItem.name}</p>
+                      <p style={{ marginTop:"3px", fontSize:"12px", color:C.muted }}>{rec.supplier.name}</p>
+                    </div>
+                    <StatusBadge
+                      label={rec.urgency==="CRITICAL"?"Urgent":rec.urgency==="WARNING"?"Soon":"Planned"}
+                      tone={rec.urgency==="CRITICAL"?"critical":rec.urgency==="WARNING"?"warning":"info"} />
+                  </div>
+                </GlowCard>
               </Link>
             ))}
           </div>
         </section>
       )}
 
-      {/* ─── Manager actions (small, bottom) ─── */}
+      {/* ── MANAGER ACTIONS ── */}
       {session.role === Role.MANAGER && (
-        <section className="flex flex-wrap items-center gap-2 border-t border-border/50 pt-6">
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"8px",
+          borderTop:`1px solid ${C.border}`, paddingTop:"24px" }}>
           <form action={connectSquareAction}>
-            <Button type="submit" variant="outline" size="sm" className="h-8 text-xs">
-              <Store className="mr-1.5 size-3" />
-              Connect Square
-            </Button>
+            <PillButton icon={Store} label="Connect Square" />
           </form>
           <form action={syncSalesAction}>
-            <Button type="submit" variant="outline" size="sm" className="h-8 text-xs">
-              <ShoppingCart className="mr-1.5 size-3" />
-              Sync sale
-            </Button>
+            <PillButton icon={ShoppingCart} label="Sync sales" />
           </form>
           <form action={runJobsAction}>
-            <Button type="submit" variant="outline" size="sm" className="h-8 text-xs">
-              <RefreshCcw className="mr-1.5 size-3" />
-              Run jobs
-            </Button>
+            <PillButton icon={RefreshCcw} label="Run jobs" />
           </form>
-        </section>
+        </div>
       )}
     </div>
   );
 }
 
-/* ─── Small components ─── */
+/* ─── Shared components ─── */
 
-function MetricCard({
-  label,
-  value,
-  icon: Icon,
-  highlight,
+function GlowCard({
+  children, style, className = "", hoverable,
 }: {
-  label: string;
-  value: number;
-  icon?: typeof AlertTriangle;
-  highlight?: "warning" | "critical";
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+  className?: string;
+  hoverable?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-border/50 bg-card p-4">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium text-muted-foreground">{label}</p>
-        {Icon && (
-          <Icon
-            className={`size-3.5 ${
-              highlight === "critical"
-                ? "text-red-500"
-                : highlight === "warning"
-                  ? "text-amber-500"
-                  : "text-muted-foreground"
-            }`}
-          />
-        )}
+    <div
+      className={className + (hoverable ? " group/card" : "")}
+      style={{
+        borderRadius:"14px",
+        padding:"1px",
+        background:"linear-gradient(145deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.03) 55%, rgba(91,115,247,0.12) 100%)",
+        transition: hoverable ? "box-shadow 0.3s cubic-bezier(0,0.44,0.6,1), transform 0.3s cubic-bezier(0,0.44,0.6,1)" : undefined,
+      }}
+    >
+      <div
+        style={{
+          borderRadius:"13px",
+          background:"#0D0E1A",
+          height:"100%",
+          transition:"background 0.3s cubic-bezier(0,0.44,0.6,1)",
+          ...style,
+        }}
+        className={hoverable ? "group-hover/card:bg-[#101123]" : ""}
+      >
+        {children}
       </div>
-      <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
     </div>
   );
 }
 
-function ActionCard({
-  href,
-  icon: Icon,
-  title,
-  description,
-}: {
-  href: string;
-  icon: typeof ClipboardCheck;
-  title: string;
-  description: string;
+function ActionCard({ href, icon: Icon, title, desc, delay }:{
+  href: string; icon: typeof ClipboardCheck; title: string; desc: string; delay?: number;
 }) {
   return (
-    <Link
-      href={href}
-      className="group flex items-center gap-4 rounded-xl border border-border/50 bg-card p-4 transition-all hover:border-primary/30 hover:bg-muted/20"
-    >
-      <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-        <Icon className="size-4 text-primary" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium">{title}</p>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
-      <ArrowRight className="size-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+    <Link href={href} style={{ textDecoration:"none" }}>
+      <GlowCard hoverable className={`anim-fade-up${delay ? ` d-${delay}` : ""}`}
+        style={{ padding:"28px 24px", position:"relative", cursor:"pointer", minHeight:"130px" }}>
+        {/* icon */}
+        <div style={{ width:42, height:42, borderRadius:"12px",
+          background:"rgba(91,115,247,0.12)",
+          border:"1px solid rgba(91,115,247,0.22)",
+          display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <Icon style={{ width:18, height:18, color:"#5B73F7" }} />
+        </div>
+        {/* text */}
+        <p style={{ marginTop:"18px", fontSize:"15px", fontWeight:700,
+          letterSpacing:"-0.025em", color:"#F0F2FC" }}>{title}</p>
+        <p style={{ marginTop:"4px", fontSize:"13px", color:"#5A6285" }}>{desc}</p>
+        {/* arrow */}
+        <ArrowRight style={{ position:"absolute", right:"20px", bottom:"22px",
+          width:14, height:14, color:"rgba(91,115,247,0.45)",
+          transition:"transform 0.25s cubic-bezier(0,0.44,0.6,1), color 0.25s" }} />
+      </GlowCard>
     </Link>
   );
 }
 
-function EmptyState({ text }: { text: string }) {
+function SectionLabel({ title, sub }:{ title:string; sub:string }) {
   return (
-    <div className="rounded-xl border border-dashed border-border/50 px-4 py-8 text-center">
-      <p className="text-sm text-muted-foreground">{text}</p>
+    <div>
+      <h2 style={{ fontSize:"16px", fontWeight:700, letterSpacing:"-0.03em", color:"#F0F2FC" }}>{title}</h2>
+      <p style={{ marginTop:"2px", fontSize:"12px", color:"#5A6285" }}>{sub}</p>
     </div>
+  );
+}
+
+function EmptyCard({ text }:{ text:string }) {
+  return (
+    <div style={{ borderRadius:"12px", border:"1px dashed rgba(255,255,255,0.09)",
+      padding:"28px 16px", textAlign:"center" }}>
+      <p style={{ fontSize:"13px", color:"#5A6285" }}>{text}</p>
+    </div>
+  );
+}
+
+function PillButton({ icon: Icon, label }:{ icon: typeof Store; label: string }) {
+  return (
+    <Button type="submit" variant="outline" size="sm"
+      style={{ borderRadius:"100px", height:"34px", padding:"0 16px",
+        fontSize:"12px", fontWeight:600, letterSpacing:"0.01em",
+        border:"1px solid rgba(255,255,255,0.10)",
+        background:"rgba(255,255,255,0.04)",
+        color:"#A0AACC",
+        transition:"all 0.25s cubic-bezier(0,0.44,0.6,1)" }}>
+      <Icon style={{ width:12, height:12, marginRight:6 }} />
+      {label}
+    </Button>
   );
 }
