@@ -166,7 +166,6 @@ export default async function SettingsPage({
                 type="submit"
                 size="sm"
                 className="h-9 gap-2 bg-[#2CA5E0] hover:bg-[#1d96d3] text-white text-xs border-0"
-                disabled={!telegramTokenReady}
               >
                 <TelegramLogo size={14} />
                 {locationChannels.telegram?.enabled ? "Reconnect" : "Connect Telegram"}
@@ -202,7 +201,6 @@ export default async function SettingsPage({
                 type="submit"
                 size="sm"
                 className="h-9 gap-2 bg-[#25D366] hover:bg-[#1ebe5d] text-white text-xs border-0"
-                disabled={!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_WHATSAPP_FROM || !publicAppUrlReady}
               >
                 <WhatsAppLogo size={14} />
                 {locationChannels.whatsapp?.enabled ? "Reconnect" : "Pair WhatsApp"}
@@ -304,7 +302,6 @@ export default async function SettingsPage({
               type="submit"
               size="sm"
               className="h-9 gap-2 bg-[#25D366] hover:bg-[#1ebe5d] text-white text-xs border-0"
-              disabled={!env.TWILIO_WHATSAPP_FROM}
             >
               <WhatsAppLogo size={14} />
               {currentManager.phoneNumber ? "Relink WhatsApp" : "Connect on WhatsApp"}
@@ -329,7 +326,6 @@ export default async function SettingsPage({
               type="submit"
               size="sm"
               className="h-9 gap-2 bg-[#2CA5E0] hover:bg-[#1d96d3] text-white text-xs border-0"
-              disabled={!telegramTokenReady || !publicAppUrlReady}
             >
               <TelegramLogo size={14} />
               {currentManager.telegramChatId ? "Relink Telegram" : "Connect on Telegram"}
