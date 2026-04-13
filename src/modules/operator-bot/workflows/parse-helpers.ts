@@ -6,14 +6,18 @@ const CATEGORY_MAP: Array<[RegExp, InventoryCategory]> = [
   [/coffee|espresso|bean/i, InventoryCategory.COFFEE],
   [/dairy|milk(?! alt)|cream|butter|cheese|yogurt/i, InventoryCategory.DAIRY],
   [/oat|almond|soy|coconut|alt.?dairy|plant.?based|non.?dairy/i, InventoryCategory.ALT_DAIRY],
-  [/syrup|sauce|caramel|vanilla|hazelnut|pump/i, InventoryCategory.SYRUP],
-  [/bakel?y|flour|sugar|egg|bread|muffin|pastry|ingredi/i, InventoryCategory.BAKERY_INGREDIENT],
+  // Syrup: only match "hazelnut syrup" / "hazelnut sauce", not plain hazelnuts
+  [/syrup|sauce|caramel|vanilla|pump/i, InventoryCategory.SYRUP],
+  [/hazelnut\s+(?:syrup|sauce|flavou?r)/i, InventoryCategory.SYRUP],
+  // Bakery / ingredient — nuts, seeds, grains treated as baking ingredients
+  [/bakel?y|flour|sugar|egg|bread|muffin|pastry|ingredi|nut|seed|grain|hazelnut|walnut|almond\s+flour|pecan|cashew|pistachio/i, InventoryCategory.BAKERY_INGREDIENT],
   [/packag|cup|lid|straw|bag|box|wrap|foil|napkin|sleeve/i, InventoryCategory.PACKAGING],
   [/clean|soap|sanitiz|detergent|wip/i, InventoryCategory.CLEANING],
   [/paper|tissue|towel|receipt/i, InventoryCategory.PAPER_GOODS],
   [/retail|resell|gift|bottle.?sell/i, InventoryCategory.RETAIL],
   [/season|holiday|special/i, InventoryCategory.SEASONAL],
-  [/produce|fruit|vegetable|fresh|banana|apple|lemon|berr|avocado|tomato|herb/i, InventoryCategory.SUPPLY],
+  // Produce / fresh
+  [/produce|fruit|vegetable|fresh|banana|apple|lemon|berr|avocado|tomato|herb|carrot|potato|onion|garlic|ginger|spinach|lettuce|mango|orange|lime|celery|cucumber/i, InventoryCategory.SUPPLY],
   [/supply|misc|other/i, InventoryCategory.SUPPLY],
 ];
 

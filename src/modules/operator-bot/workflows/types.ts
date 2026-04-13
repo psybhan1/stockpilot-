@@ -34,6 +34,8 @@ export type WorkflowAdvanceResult = {
 export type AddItemData = {
   name?: string;
   category?: InventoryCategory;
+  /** True when category was auto-detected from the item name — skip the category question */
+  _categoryResolved?: boolean;
   baseUnit?: BaseUnit;
   parLevelBase?: number;
   packSizeBase?: number;

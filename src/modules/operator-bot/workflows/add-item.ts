@@ -21,6 +21,23 @@ type AddItemStep = (typeof STEPS)[number];
 
 // ── First question (called when intent ADD_INVENTORY_ITEM is detected) ────────
 export function startAddItem(itemName: string): { reply: string; initialData: AddItemData } {
+  // Auto-detect category from the item name — skip the question if we can
+  const autoCategory = parseCategory(itemName);
+
+  if (autoCategory) {
+    return {
+      reply: [
+        `Got it, adding *${itemName}* to your inventory! 🛒`,
+        ``,
+        `How do you measure *${itemName}* in your kitchen?`,
+        `• grams`,
+        `• ml / liters`,
+        `• count / units (each)`,
+      ].join("\n"),
+      initialData: { name: itemName, category: autoCategory, _categoryResolved: true },
+    };
+  }
+
   return {
     reply: [
       `Got it, adding *${itemName}* to your inventory! 🛒`,
@@ -49,6 +66,26 @@ export async function advanceAddItem(
 ): Promise<WorkflowAdvanceResult> {
   switch (step) {
     case "init": {
+      // If category was already auto-resolved from the item name, the user's
+      // reply here is actually their base_unit answer — forward it directly.
+      if (data._categoryResolved) {
+        const baseUnit = parseBaseUnit(userMessage);
+        if (!baseUnit) {
+          return {
+            reply: `How is *${data.name}* measured? Reply with *grams*, *ml*, or *count*.`,
+            done: false,
+            nextStep: "init",
+            updatedData: data,
+          };
+        }
+        return {
+          reply: `What's your par level for *${data.name}*?\nThat's how many ${baseUnitLabel(baseUnit)} you always want in stock.`,
+          done: false,
+          nextStep: "par_level",
+          updatedData: { ...data, baseUnit },
+        };
+      }
+
       const category = parseCategory(userMessage);
       if (!category) {
         return {
