@@ -25,7 +25,7 @@ export default async function TelegramConnectPage({
 
   if (!connectToken) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
         "Telegram connect token is missing. Start again from Settings."
       )}`
     );
@@ -33,7 +33,7 @@ export default async function TelegramConnectPage({
 
   if (!isPublicAppUrl(env.APP_URL)) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
         "Telegram connect needs a public HTTPS APP_URL."
       )}`
     );
@@ -43,7 +43,7 @@ export default async function TelegramConnectPage({
 
   if (!env.TELEGRAM_BOT_TOKEN || !botUsername) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
         "Telegram bot credentials are missing or the bot username could not be resolved."
       )}`
     );
@@ -53,7 +53,7 @@ export default async function TelegramConnectPage({
 
   if (!webhook.ok) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
         webhook.reason
       )}`
     );

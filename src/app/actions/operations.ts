@@ -966,7 +966,7 @@ export async function startWhatsAppBotConnectAction() {
 
   if (!isPublicAppUrl(env.APP_URL)) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=whatsapp&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
         "Production chat linking needs a public HTTPS APP_URL."
       )}`
     );
@@ -974,7 +974,7 @@ export async function startWhatsAppBotConnectAction() {
 
   if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_WHATSAPP_FROM) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=whatsapp&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
         "Twilio WhatsApp credentials are still missing."
       )}`
     );
@@ -994,7 +994,7 @@ export async function startTelegramBotConnectAction() {
 
   if (!isPublicAppUrl(env.APP_URL)) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
         "Production chat linking needs a public HTTPS APP_URL."
       )}`
     );
@@ -1026,7 +1026,7 @@ export async function startTelegramBotConnectAction() {
 
   if (!env.TELEGRAM_BOT_TOKEN) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
         "Telegram bot token is missing."
       )}`
     );
@@ -1042,7 +1042,7 @@ export async function startTelegramBotConnectAction() {
 
   if (!webhook.ok) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
         webhook.reason
       )}`
     );
@@ -1056,7 +1056,7 @@ export async function startLocalWhatsAppBotConnectAction() {
 
   if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_WHATSAPP_FROM) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=whatsapp&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
         "Twilio WhatsApp credentials are still missing."
       )}`
     );
@@ -1077,7 +1077,7 @@ export async function startLocalTelegramBotConnectAction() {
 
   if (!env.TELEGRAM_BOT_TOKEN || !telegramBotUsername) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
         "Telegram bot credentials are missing or the bot username could not be resolved."
       )}`
     );
@@ -1098,7 +1098,7 @@ export async function disconnectBotChannelAction(formData: FormData) {
 
   if (channel !== BotChannel.WHATSAPP && channel !== BotChannel.TELEGRAM) {
     redirect(
-      `/settings?chatConnect=error&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelDetail=${encodeURIComponent(
         "Unknown channel."
       )}`
     );
@@ -1144,7 +1144,7 @@ export async function disconnectBotChannelAction(formData: FormData) {
   });
 
   revalidateOperations();
-  redirect(`/settings?chatConnect=disconnected&chatChannel=${channel.toLowerCase()}`);
+  redirect(`/settings?channelConnect=disconnected&channelType=${channel.toLowerCase()}`);
 }
 
 export async function updateBotIdentityAction(formData: FormData) {
