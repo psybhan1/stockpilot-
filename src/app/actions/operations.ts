@@ -964,18 +964,10 @@ export async function upsertSupplierItemAction(formData: FormData) {
 export async function startWhatsAppBotConnectAction() {
   const session = await requireSession(Role.MANAGER);
 
-  if (!isPublicAppUrl(env.APP_URL)) {
+  if (!env.TWILIO_WHATSAPP_FROM) {
     redirect(
       `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
-        "Production chat linking needs a public HTTPS APP_URL."
-      )}`
-    );
-  }
-
-  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_WHATSAPP_FROM) {
-    redirect(
-      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
-        "Twilio WhatsApp credentials are still missing."
+        "WhatsApp is not configured yet. Ask your admin to add TWILIO_WHATSAPP_FROM."
       )}`
     );
   }
@@ -986,7 +978,8 @@ export async function startWhatsAppBotConnectAction() {
     channel: BotChannel.WHATSAPP,
   });
 
-  redirect(`/settings/whatsapp/connect?token=${encodeURIComponent(request.token)}`);
+  // Opens WhatsApp directly with the connect message pre-filled — user just taps Send
+  redirect(buildWhatsAppConnectUrl(env.TWILIO_WHATSAPP_FROM, request.token));
 }
 
 export async function startTelegramBotConnectAction() {

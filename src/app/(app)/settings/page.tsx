@@ -261,20 +261,41 @@ export default async function SettingsPage({
 
       {/* ─── Bot Connections (user-level) ─── */}
       <Section title="Chat bot" description="Personal bot link for your account">
-        <SettingRow
-          icon={Phone}
-          title="WhatsApp"
-          status={currentManager.phoneNumber ? "Linked" : "Not linked"}
-          statusTone={currentManager.phoneNumber ? "success" : "info"}
-          detail={currentManager.phoneNumber ?? undefined}
-        >
-          <form action={startWhatsAppBotConnectAction}>
-            <Button type="submit" variant="outline" size="sm" className="h-8 text-xs"
-              disabled={!publicAppUrlReady}>
-              {currentManager.phoneNumber ? "Relink" : "Connect"}
-            </Button>
-          </form>
-        </SettingRow>
+        {/* WhatsApp one-click connect card */}
+        <div className="rounded-xl border border-border/50 bg-card px-5 py-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-4 min-w-0">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <Phone className="size-4 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">WhatsApp</p>
+                  <StatusBadge
+                    label={currentManager.phoneNumber ? "Linked" : "Not linked"}
+                    tone={currentManager.phoneNumber ? "success" : "info"}
+                  />
+                </div>
+                {currentManager.phoneNumber ? (
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{currentManager.phoneNumber}</p>
+                ) : (
+                  <p className="mt-0.5 text-xs text-muted-foreground">Tap the button — WhatsApp opens with the message ready to send</p>
+                )}
+              </div>
+            </div>
+            <form action={startWhatsAppBotConnectAction} className="shrink-0">
+              <Button
+                type="submit"
+                size="sm"
+                className="h-8 text-xs bg-[#25D366] hover:bg-[#1ebe5d] text-white border-0"
+                disabled={!env.TWILIO_WHATSAPP_FROM}
+              >
+                {currentManager.phoneNumber ? "Relink WhatsApp" : "Connect WhatsApp"}
+              </Button>
+            </form>
+          </div>
+        </div>
+
         <SettingRow
           icon={MessageCircle}
           title="Telegram bot"
