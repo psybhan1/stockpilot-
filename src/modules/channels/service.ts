@@ -11,6 +11,7 @@ import { db } from "@/lib/db";
 import { ChannelType } from "@/generated/prisma-postgres";
 import { decryptJson, encryptJson } from "@/lib/channel-crypto";
 import { sendTelegramMessage } from "@/lib/telegram-bot";
+import { sendWhatsAppMessage } from "@/lib/whatsapp-bot";
 
 export { ChannelType };
 
@@ -122,6 +123,93 @@ export async function sendTelegramChannelMessage(locationId: string, text: strin
   }
 
   await sendTelegramMessage(row.telegramChatId, text);
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp
+// ---------------------------------------------------------------------------
+
+export async function startWhatsAppChannelPairing(locationId: string) {
+  const code = generatePairingCode();
+  const expiresAt = pairingCodeExpiresAt();
+
+  await db.locationChannel.upsert({
+    where: { locationId_channel: { locationId, channel: ChannelType.WHATSAPP } },
+    create: {
+      locationId,
+      channel: ChannelType.WHATSAPP,
+      enabled: false,
+      pairingCode: code,
+      pairingExpiresAt: expiresAt,
+    },
+    update: {
+      pairingCode: code,
+      pairingExpiresAt: expiresAt,
+      whatsappPhone: null,
+      enabled: false,
+    },
+  });
+
+  return { code, expiresAt };
+}
+
+/**
+ * Called by the WhatsApp bot handler when it receives a message matching
+ * the pairing code pattern (e.g. "SB-AB1234").
+ */
+export async function completeWhatsAppChannelPairing(input: {
+  pairingCode: string;
+  phone: string;
+  senderDisplayName?: string | null;
+}): Promise<{ ok: true; locationName: string } | { ok: false; reason: string }> {
+  const row = await db.locationChannel.findFirst({
+    where: { pairingCode: input.pairingCode, channel: ChannelType.WHATSAPP },
+    include: { location: { select: { name: true } } },
+  });
+
+  if (!row) return { ok: false, reason: "Code not found" };
+  if (!row.pairingExpiresAt || row.pairingExpiresAt < new Date()) {
+    return { ok: false, reason: "Code expired" };
+  }
+
+  // Normalise to E.164, strip whatsapp: prefix if present
+  const normalizedPhone = input.phone.replace(/^whatsapp:/i, "");
+
+  await db.locationChannel.update({
+    where: { id: row.id },
+    data: {
+      whatsappPhone: normalizedPhone,
+      enabled: true,
+      pairingCode: null,
+      pairingExpiresAt: null,
+    },
+  });
+
+  return { ok: true, locationName: row.location.name };
+}
+
+export async function disconnectWhatsAppChannel(locationId: string) {
+  await db.locationChannel.updateMany({
+    where: { locationId, channel: ChannelType.WHATSAPP },
+    data: {
+      whatsappPhone: null,
+      enabled: false,
+      pairingCode: null,
+      pairingExpiresAt: null,
+    },
+  });
+}
+
+export async function sendWhatsAppChannelMessage(locationId: string, text: string) {
+  const row = await db.locationChannel.findUnique({
+    where: { locationId_channel: { locationId, channel: ChannelType.WHATSAPP } },
+  });
+
+  if (!row?.enabled || !row.whatsappPhone) {
+    throw new Error(`WhatsApp channel not connected for location ${locationId}`);
+  }
+
+  await sendWhatsAppMessage(row.whatsappPhone, text);
 }
 
 // ---------------------------------------------------------------------------
@@ -250,6 +338,7 @@ export async function getLocationChannels(locationId: string) {
   const find = (channel: ChannelType) => rows.find((r) => r.channel === channel);
 
   const telegram = find(ChannelType.TELEGRAM);
+  const whatsapp = find(ChannelType.WHATSAPP);
   const smtp = find(ChannelType.EMAIL_SMTP);
   const gmail = find(ChannelType.EMAIL_GMAIL);
 
@@ -260,6 +349,14 @@ export async function getLocationChannels(locationId: string) {
           chatId: telegram.telegramChatId,
           pairingCode: telegram.pairingCode,
           pairingExpiresAt: telegram.pairingExpiresAt,
+        }
+      : null,
+    whatsapp: whatsapp
+      ? {
+          enabled: whatsapp.enabled,
+          phone: whatsapp.whatsappPhone,
+          pairingCode: whatsapp.pairingCode,
+          pairingExpiresAt: whatsapp.pairingExpiresAt,
         }
       : null,
     email: smtp?.enabled

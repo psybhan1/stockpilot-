@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Cable, Mail, MessageCircle, Phone, Send, Settings2, Wifi } from "lucide-react";
+import { Cable, Mail, MessageCircle, Phone, Send, Settings2, Smartphone, Wifi } from "lucide-react";
 
 import {
   connectSquareAction,
@@ -8,6 +8,8 @@ import {
   disconnectTelegramChannelAction,
   disconnectEmailChannelAction,
   generateTelegramChannelCodeAction,
+  generateWhatsAppChannelCodeAction,
+  disconnectWhatsAppChannelAction,
   runJobsAction,
   startTelegramBotConnectAction,
   startWhatsAppBotConnectAction,
@@ -57,11 +59,12 @@ export default async function SettingsPage({
   const telegramTokenReady = Boolean(env.TELEGRAM_BOT_TOKEN);
   const publicAppUrlReady = isPublicAppUrl(env.APP_URL);
 
-  // Pairing code from URL (after generating)
+  // Pairing code from URL (after generating) — telegram or whatsapp
   const pairingCode =
-    params.channelCode && params.channel === "telegram"
+    params.channelCode && (params.channel === "telegram" || params.channel === "whatsapp")
       ? {
           code: params.channelCode,
+          channel: params.channel as "telegram" | "whatsapp",
           expiresAt: params.channelCodeExpiry ? new Date(params.channelCodeExpiry) : null,
         }
       : null;
@@ -109,13 +112,22 @@ export default async function SettingsPage({
 
       {pairingCode && (
         <div className="rounded-xl border border-primary/20 bg-primary/5 p-6 text-center">
-          <p className="text-sm font-medium text-muted-foreground">Send this code to your Telegram bot</p>
+          <p className="text-sm font-medium text-muted-foreground">
+            {pairingCode.channel === "whatsapp"
+              ? `Send this code to your WhatsApp bot number (${env.TWILIO_WHATSAPP_FROM ?? "configured number"})`
+              : "Send this code to your Telegram bot"}
+          </p>
           <p className="mt-3 font-mono text-3xl font-bold tracking-[0.15em] text-primary">
             {pairingCode.code}
           </p>
           {pairingCode.expiresAt && (
             <p className="mt-2 text-xs text-muted-foreground">
               Expires {formatDateTime(pairingCode.expiresAt)}
+            </p>
+          )}
+          {pairingCode.channel === "whatsapp" && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Open WhatsApp, message the bot number exactly: <span className="font-mono font-semibold">{pairingCode.code}</span>
             </p>
           )}
         </div>
@@ -159,6 +171,42 @@ export default async function SettingsPage({
             </form>
             {locationChannels.telegram?.enabled && (
               <form action={disconnectTelegramChannelAction}>
+                <Button type="submit" variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
+                  Disconnect
+                </Button>
+              </form>
+            )}
+          </div>
+        </SettingRow>
+
+        {/* WhatsApp (location-level) */}
+        <SettingRow
+          icon={Smartphone}
+          title="WhatsApp"
+          status={locationChannels.whatsapp?.enabled ? "Connected" : "Not connected"}
+          statusTone={locationChannels.whatsapp?.enabled ? "success" : "info"}
+          detail={
+            locationChannels.whatsapp?.enabled
+              ? locationChannels.whatsapp.phone ?? undefined
+              : env.TWILIO_WHATSAPP_FROM
+                ? `Bot number: ${env.TWILIO_WHATSAPP_FROM}`
+                : "Twilio not configured"
+          }
+        >
+          <div className="flex gap-2">
+            <form action={generateWhatsAppChannelCodeAction}>
+              <Button
+                type="submit"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_WHATSAPP_FROM || !publicAppUrlReady}
+              >
+                {locationChannels.whatsapp?.enabled ? "Reconnect" : "Pair"}
+              </Button>
+            </form>
+            {locationChannels.whatsapp?.enabled && (
+              <form action={disconnectWhatsAppChannelAction}>
                 <Button type="submit" variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
                   Disconnect
                 </Button>

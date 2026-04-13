@@ -43,6 +43,8 @@ import {
 import {
   startTelegramChannelPairing,
   disconnectTelegramChannel,
+  startWhatsAppChannelPairing,
+  disconnectWhatsAppChannel,
   connectSmtpEmailChannel,
   disconnectEmailChannel,
 } from "@/modules/channels/service";
@@ -1282,6 +1284,30 @@ export async function disconnectTelegramChannelAction() {
   await disconnectTelegramChannel(session.locationId);
   revalidateOperations();
   redirect("/settings?channelConnect=disconnected&channelType=telegram");
+}
+
+export async function generateWhatsAppChannelCodeAction() {
+  const session = await requireSession(Role.MANAGER);
+
+  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_WHATSAPP_FROM) {
+    redirect(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
+        "Twilio WhatsApp credentials are not configured."
+      )}`
+    );
+  }
+
+  const { code, expiresAt } = await startWhatsAppChannelPairing(session.locationId);
+  redirect(
+    `/settings?channelCode=${encodeURIComponent(code)}&channelCodeExpiry=${encodeURIComponent(expiresAt.toISOString())}&channel=whatsapp`
+  );
+}
+
+export async function disconnectWhatsAppChannelAction() {
+  const session = await requireSession(Role.MANAGER);
+  await disconnectWhatsAppChannel(session.locationId);
+  revalidateOperations();
+  redirect("/settings?channelConnect=disconnected&channelType=whatsapp");
 }
 
 export async function connectSmtpEmailChannelAction(formData: FormData) {

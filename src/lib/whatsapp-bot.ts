@@ -1,0 +1,124 @@
+import { env } from "@/lib/env";
+
+/**
+ * Send a WhatsApp message proactively via the Twilio REST API.
+ * Used for outbound notifications (alerts, order approvals) and bot replies
+ * outside of a TwiML response window.
+ *
+ * `to` can be a plain E.164 number (+14155551234) or already prefixed
+ * with "whatsapp:" — both are normalised automatically.
+ */
+export async function sendWhatsAppMessage(to: string, text: string) {
+  const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM } = env;
+
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_WHATSAPP_FROM) {
+    return { ok: false, skipped: true, reason: "Missing Twilio credentials" };
+  }
+
+  const from = normalizeWhatsAppAddress(TWILIO_WHATSAPP_FROM);
+  const toAddress = normalizeWhatsAppAddress(to);
+
+  const body = new URLSearchParams({ From: from, To: toAddress, Body: text });
+
+  const response = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${Buffer.from(
+          `${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`
+        ).toString("base64")}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    }
+  );
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as { message?: string };
+    throw new Error(
+      payload.message ?? `Twilio WhatsApp send failed with status ${response.status}`
+    );
+  }
+
+  const payload = (await response.json()) as { sid?: string };
+  return { ok: true, skipped: false, sid: payload.sid };
+}
+
+/**
+ * Download a Twilio media file (voice note, image, etc.) as an ArrayBuffer.
+ * Twilio media URLs require HTTP Basic auth using account credentials.
+ */
+export async function downloadTwilioMedia(mediaUrl: string): Promise<ArrayBuffer | null> {
+  const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN } = env;
+
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) return null;
+
+  try {
+    const response = await fetch(mediaUrl, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(
+          `${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`
+        ).toString("base64")}`,
+      },
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!response.ok) return null;
+    return await response.arrayBuffer();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Transcribe a WhatsApp voice note (OGG/MP4/AMR) via Groq Whisper.
+ * Returns the transcribed text, or null if transcription fails.
+ */
+export async function transcribeWhatsAppVoice(
+  mediaUrl: string,
+  contentType: string
+): Promise<string | null> {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) return null;
+
+  const audioBuffer = await downloadTwilioMedia(mediaUrl);
+  if (!audioBuffer) return null;
+
+  // Determine file extension from content-type
+  const ext = contentType.includes("ogg")
+    ? "ogg"
+    : contentType.includes("mp4") || contentType.includes("mpeg")
+      ? "mp4"
+      : contentType.includes("amr")
+        ? "amr"
+        : "ogg";
+
+  const audioBlob = new Blob([audioBuffer], { type: contentType });
+
+  const formData = new FormData();
+  formData.append("file", audioBlob, `voice.${ext}`);
+  formData.append("model", "whisper-large-v3-turbo");
+  formData.append("response_format", "json");
+
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${groqKey}` },
+      body: formData,
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as { text?: string };
+    return data.text?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeWhatsAppAddress(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.toLowerCase().startsWith("whatsapp:") ? trimmed : `whatsapp:${trimmed}`;
+}
