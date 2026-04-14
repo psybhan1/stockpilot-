@@ -1,14 +1,45 @@
 import { Role } from "@/lib/domain-enums";
 
 import { InventoryBrowser } from "@/components/app/inventory-browser";
+import { db } from "@/lib/db";
 import { formatRelativeDays } from "@/lib/format";
 import { requireSession } from "@/modules/auth/session";
 import { getInventoryList } from "@/modules/dashboard/queries";
+import { buildInventoryImageUrl } from "@/modules/inventory/image-resolver";
 import { formatQuantityBase } from "@/modules/inventory/units";
 
 export default async function InventoryPage() {
   const session = await requireSession(Role.SUPERVISOR);
   const items = await getInventoryList(session.locationId);
+
+  // Lazy image backfill: any item without an imageUrl gets one generated now
+  // and persisted, so every card in the UI has a real product image. A single
+  // bulk updateMany would overwrite different URLs with the same value, so we
+  // fire them in parallel per-item.
+  //
+  // We mutate the in-memory `items` array so the very first render already
+  // shows the newly filled URLs — no extra round-trip needed.
+  const missing = items.filter((item) => !item.imageUrl);
+  if (missing.length > 0) {
+    await Promise.all(
+      missing.map(async (item) => {
+        // Pull brand out of notes if we stashed it there ("Brand: Monin | ...").
+        const brandMatch = item.notes?.match(/brand:\s*([^|]+)/i);
+        const brand = brandMatch?.[1]?.trim() ?? null;
+
+        const url = buildInventoryImageUrl({
+          name: item.name,
+          brand,
+          category: item.category,
+        });
+        item.imageUrl = url;
+        await db.inventoryItem.update({
+          where: { id: item.id },
+          data: { imageUrl: url },
+        });
+      })
+    );
+  }
 
   return (
     <div className="space-y-8">

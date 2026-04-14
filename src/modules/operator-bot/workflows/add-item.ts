@@ -154,9 +154,19 @@ export async function advanceAddItem(
         category: (data.category as InventoryCategory) ?? null,
       });
 
+      // If the LLM suggests a different (valid) category than what we auto-
+      // detected from the name, trust it — it has full context (brand, usage,
+      // storage) so it's much better at distinguishing e.g. "coconut syrup"
+      // (SYRUP) from "coconut milk" (ALT_DAIRY).
+      const correctedCategory =
+        defaults.category && defaults.category !== data.category
+          ? defaults.category
+          : (data.category as InventoryCategory | undefined);
+
       const updatedData: AddItemData = {
         ...data,
         storage,
+        category: correctedCategory ?? data.category,
         suggestedBaseUnit: defaults.baseUnit,
         suggestedParLevel: defaults.parLevel,
         suggestedPackText: defaults.packText,

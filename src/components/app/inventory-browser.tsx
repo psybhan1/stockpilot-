@@ -206,6 +206,7 @@ function InventoryCard({ item }: { item: InventoryBrowserItem }) {
             fill
             sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
             className="object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+            unoptimized
           />
         ) : (
           <div className="flex h-full items-center justify-center">

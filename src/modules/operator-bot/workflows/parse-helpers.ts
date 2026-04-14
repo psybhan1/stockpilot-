@@ -306,6 +306,8 @@ export type ItemDefaults = {
   baseUnit: BaseUnit;
   parLevel: number;
   packText: string;
+  /** Optional LLM-corrected category. Null when the LLM agrees with the input. */
+  category: InventoryCategory | null;
 };
 
 /**
@@ -321,7 +323,12 @@ export async function suggestItemDefaults(input: {
   storage?: string | null;
   category?: InventoryCategory | null;
 }): Promise<ItemDefaults> {
-  const fallback: ItemDefaults = { baseUnit: BaseUnit.COUNT, parLevel: 10, packText: "individual units" };
+  const fallback: ItemDefaults = {
+    baseUnit: BaseUnit.COUNT,
+    parLevel: 10,
+    packText: "individual units",
+    category: null,
+  };
   const groqKey = process.env.GROQ_API_KEY;
   if (!groqKey) return fallback;
 
@@ -342,7 +349,9 @@ export async function suggestItemDefaults(input: {
             role: "system",
             content: [
               "You suggest sensible inventory defaults for a small café/restaurant.",
-              "Given an item, output JSON: {baseUnit, parLevel, packText}.",
+              "Given an item, output JSON: {category, baseUnit, parLevel, packText}.",
+              "category ∈ {COFFEE, DAIRY, ALT_DAIRY, SYRUP, BAKERY_INGREDIENT, PACKAGING, CLEANING, PAPER_GOODS, RETAIL, SEASONAL, SUPPLY}.",
+              "Choose category based on what the item ACTUALLY is. E.g. 'coconut syrup' is SYRUP (not ALT_DAIRY — ALT_DAIRY is for milks like oat/almond/soy/coconut MILK). 'Oat milk' is ALT_DAIRY. 'Coffee beans' is COFFEE. 'Bananas' is SUPPLY.",
               "baseUnit ∈ {GRAM, MILLILITER, COUNT}.",
               "parLevel = a reasonable weekly par in base units (e.g. 5000 grams of coffee, 10000 ml of milk, 50 count bananas).",
               "packText = how it's typically ordered from a wholesaler (e.g. '1kg bags', '1L bottles', 'cases of 12', 'individual units').",
@@ -372,6 +381,7 @@ export async function suggestItemDefaults(input: {
     if (!raw) return fallback;
 
     const parsed = JSON.parse(raw) as {
+      category?: string;
       baseUnit?: string;
       parLevel?: number;
       packText?: string;
@@ -388,8 +398,13 @@ export async function suggestItemDefaults(input: {
     const packText = typeof parsed.packText === "string" && parsed.packText.trim()
       ? parsed.packText.trim()
       : fallback.packText;
+    const validCategories = Object.values(InventoryCategory) as string[];
+    const category =
+      typeof parsed.category === "string" && validCategories.includes(parsed.category)
+        ? (parsed.category as InventoryCategory)
+        : null;
 
-    return { baseUnit, parLevel, packText };
+    return { baseUnit, parLevel, packText, category };
   } catch {
     return fallback;
   }
