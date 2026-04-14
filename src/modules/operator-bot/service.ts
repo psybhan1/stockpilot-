@@ -54,7 +54,7 @@ type InboundManagerBotMessage = {
   rawPayload?: Prisma.InputJsonValue;
 };
 
-type BotHandlingResult = {
+export type BotHandlingResult = {
   ok: boolean;
   reply: string;
   purchaseOrderId?: string | null;
@@ -222,30 +222,76 @@ export async function handleInboundManagerBotMessage(
 
     const pendingContext = extractPendingContext(recentReceipts[0]?.metadata);
 
-    // ── Chit-chat shortcut ──────────────────────────────────────────────────────
-    // Pattern-match common conversational inputs BEFORE the LLM so small/local
-    // models can't misclassify "how are u" as STOCK_STATUS and dump inventory.
-    const chitChatReply = detectChitChatReply(input.text, conversationHistory);
-    if (chitChatReply) {
-      const chitResult: BotHandlingResult = {
-        ok: true,
-        reply: chitChatReply.reply,
-        replyScenario: chitChatReply.scenario,
-      };
-      await completeBotMessageReceipt({
-        receiptId,
-        locationId: managerContext.locationId,
-        userId: managerContext.userId,
-        reply: chitResult.reply,
-        metadata: toInputJsonValue({
+    // ── Tool-calling agent path ────────────────────────────────────────────────
+    // Try the real agent first — it sees the conversation, has tools, and
+    // decides what to do. Falls through to the legacy intent-classifier only
+    // if GROQ isn't configured or the agent throws.
+    if (process.env.GROQ_API_KEY) {
+      try {
+        const { runBotAgent } = await import("@/modules/operator-bot/agent");
+        const agentResult = await runBotAgent({
+          locationId: managerContext.locationId,
+          userId: managerContext.userId,
           channel: input.channel,
-          replyScenario: chitResult.replyScenario ?? null,
-          sourceMessageId: input.sourceMessageId ?? null,
           senderId: input.senderId,
-          replyProvider: "chit-chat-local",
-        }),
-      });
-      return chitResult;
+          sourceMessageId: input.sourceMessageId ?? null,
+          conversation: [
+            ...conversationHistory.map((turn) => ({
+              role: turn.role === "manager" ? ("user" as const) : ("assistant" as const),
+              content: turn.text,
+            })),
+            { role: "user" as const, content: input.text },
+          ],
+        });
+
+        await db.auditLog.create({
+          data: {
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            action: "bot.outbound_replied",
+            entityType: "botChannel",
+            entityId: input.sourceMessageId ?? `${input.channel.toLowerCase()}-message`,
+            details: {
+              channel: input.channel,
+              reply: agentResult.reply,
+              replyScenario: agentResult.replyScenario ?? "agent",
+            },
+          },
+        });
+
+        await completeBotMessageReceipt({
+          receiptId,
+          locationId: managerContext.locationId,
+          userId: managerContext.userId,
+          reply: agentResult.reply,
+          purchaseOrderId: agentResult.purchaseOrderId ?? null,
+          orderNumber: agentResult.orderNumber ?? null,
+          metadata: toInputJsonValue({
+            channel: input.channel,
+            replyScenario: agentResult.replyScenario ?? "agent",
+            sourceMessageId: input.sourceMessageId ?? null,
+            senderId: input.senderId,
+            replyProvider: "groq-agent",
+          }),
+        });
+
+        return agentResult;
+      } catch (agentError) {
+        // Log and fall through to legacy path so the bot still works if the
+        // agent is mis-configured.
+        await db.auditLog.create({
+          data: {
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            action: "bot.agent_failed",
+            entityType: "botChannel",
+            entityId: input.sourceMessageId ?? `${input.channel.toLowerCase()}-message`,
+            details: {
+              error: agentError instanceof Error ? agentError.message : String(agentError),
+            },
+          },
+        });
+      }
     }
 
     const botLanguage = getBotLanguageProvider();
@@ -576,7 +622,7 @@ export async function handleInboundManagerBotMessage(
   }
 }
 
-async function updateStockCountFromBotMessage(input: {
+export async function updateStockCountFromBotMessage(input: {
   locationId: string;
   userId: string;
   inventoryItemId: string;
@@ -660,7 +706,7 @@ async function updateStockCountFromBotMessage(input: {
   };
 }
 
-async function createRestockOrderFromBotMessage(input: {
+export async function createRestockOrderFromBotMessage(input: {
   locationId: string;
   userId: string;
   channel: ManagerBotChannel;
@@ -998,7 +1044,7 @@ async function createRestockOrderFromBotMessage(input: {
   };
 }
 
-async function answerStockStatusFromBotMessage(input: {
+export async function answerStockStatusFromBotMessage(input: {
   locationId: string;
   userId: string;
   inventoryItemId: string | null;
@@ -1492,7 +1538,7 @@ function normalizePhoneNumber(value: string) {
   return normalized.startsWith("+") ? normalized : `+${normalized}`;
 }
 
-function toBotChannel(channel: ManagerBotChannel) {
+export function toBotChannel(channel: ManagerBotChannel) {
   return channel === "TELEGRAM" ? BotChannel.TELEGRAM : BotChannel.WHATSAPP;
 }
 
