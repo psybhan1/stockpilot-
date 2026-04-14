@@ -9,6 +9,7 @@ import {
   startWhatsAppBotConnectAction,
   syncSalesAction,
 } from "@/app/actions/operations";
+import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Role } from "@/lib/domain-enums";
@@ -69,18 +70,12 @@ export default async function SettingsPage({
 
   return (
     <div className="space-y-10">
-      {/* ─── Header ─── */}
-      <section>
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          Settings
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-          Integrations & channels
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Connect your POS, notification channels, and automation tools.
-        </p>
-      </section>
+      <PageHero
+        eyebrow="Settings"
+        title="Integrations"
+        subtitle="& channels."
+        description="Connect your POS, notification channels, and automation tools."
+      />
 
       {/* ─── Banners ─── */}
       {channelBanner && (

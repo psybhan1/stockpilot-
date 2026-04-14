@@ -6,6 +6,7 @@ import {
   queueTestNotificationAction,
   retryNotificationAction,
 } from "@/app/actions/operations";
+import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -72,25 +73,17 @@ export default async function NotificationsPage({
 
   return (
     <div className="space-y-10">
-      {/* Header */}
-      <section>
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          Notifications
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-          Delivery channels
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Test and monitor email, push, and WhatsApp delivery.
-        </p>
-      </section>
-
-      {/* Metrics */}
-      <section className="grid grid-cols-3 gap-3">
-        <MetricCard label="Queued" value={queuedCount} />
-        <MetricCard label="Sent" value={sentCount} />
-        <MetricCard label="Failed" value={failedCount} highlight={failedCount > 0 ? "critical" : undefined} />
-      </section>
+      <PageHero
+        eyebrow="Notifications"
+        title="Delivery channels"
+        subtitle="every message, every path."
+        description="Test and monitor email, push, and WhatsApp delivery."
+        stats={[
+          { label: "Queued", value: String(queuedCount).padStart(2, "0") },
+          { label: "Sent", value: String(sentCount).padStart(2, "0") },
+          { label: "Failed", value: String(failedCount).padStart(2, "0"), highlight: failedCount > 0 },
+        ]}
+      />
 
       {/* Feedback banner */}
       {feedbackMessage && (

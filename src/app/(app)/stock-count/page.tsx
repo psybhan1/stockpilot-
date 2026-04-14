@@ -3,6 +3,7 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 
 import { submitCountAction } from "@/app/actions/operations";
+import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,28 +28,25 @@ export default async function StockCountPage() {
 
   return (
     <div className="space-y-10">
-      {/* Header */}
-      <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-            Count
-          </p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-            Stock count
-          </h1>
-          <p className="mt-2 text-muted-foreground">
-            Confirm inventory levels. Riskiest items are shown first.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="rounded-md border border-border/50 bg-muted/30 px-3 py-1.5 text-xs font-medium">
-            Session: {openSession ? openSession.mode.toLowerCase() : "not started"}
-          </span>
-          <Link href="/stock-count/swipe" className={buttonVariants({ size: "sm", className: "h-8 text-xs" })}>
-            Swipe mode
-          </Link>
-        </div>
-      </section>
+      <PageHero
+        eyebrow="Count"
+        title="Stock count"
+        subtitle="riskiest items, first."
+        description="Confirm inventory levels. Riskiest items are shown first."
+        action={
+          <div className="flex items-center gap-3">
+            <span className="rounded-full border border-border/50 bg-background/50 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+              Session · {openSession ? openSession.mode.toLowerCase() : "not started"}
+            </span>
+            <Link
+              href="/stock-count/swipe"
+              className={buttonVariants({ size: "sm", className: "h-8 rounded-full text-xs" })}
+            >
+              Swipe mode
+            </Link>
+          </div>
+        }
+      />
 
       {/* Table mode (managers/supervisors) */}
       {session.role !== Role.STAFF && (

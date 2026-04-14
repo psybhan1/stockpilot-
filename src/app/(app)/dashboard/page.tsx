@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { connectSquareAction, runJobsAction, syncSalesAction } from "@/app/actions/operations";
+import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Role } from "@/lib/domain-enums";
@@ -42,73 +43,28 @@ export default async function DashboardPage() {
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:"24px" }}>
 
-      {/* ── HERO ── */}
-      <GlowCard className="anim-fade-up" style={{ padding:"44px 48px", position:"relative", overflow:"hidden" }}>
-        {/* background blobs */}
-        <div style={{ position:"absolute", top:"-80px", left:"-80px", width:"360px", height:"360px",
-          borderRadius:"50%", background:"radial-gradient(circle, rgba(91,115,247,0.22) 0%, transparent 65%)",
-          filter:"blur(50px)", pointerEvents:"none" }} />
-        <div style={{ position:"absolute", bottom:"-60px", right:"-40px", width:"280px", height:"280px",
-          borderRadius:"50%", background:"radial-gradient(circle, rgba(91,115,247,0.10) 0%, transparent 70%)",
-          filter:"blur(40px)", pointerEvents:"none" }} />
-        {/* dot grid */}
-        <div style={{ position:"absolute", inset:0, pointerEvents:"none",
-          backgroundImage:"radial-gradient(circle, rgba(255,255,255,0.045) 1px, transparent 1px)",
-          backgroundSize:"22px 22px" }} />
+      <PageHero
+        eyebrow={`Dashboard · ${session.locationName}`}
+        title={`Good morning,`}
+        subtitle={`${firstName}.`}
+        description="Here's what needs your attention today."
+        stats={[
+          { label: "Items tracked", value: String(data.metrics.inventoryCount).padStart(2, "0") },
+          { label: "Running low", value: String(data.metrics.lowStockCount).padStart(2, "0"), highlight: data.metrics.lowStockCount > 0 },
+          { label: "Urgent", value: String(data.metrics.criticalCount).padStart(2, "0"), highlight: data.metrics.criticalCount > 0 },
+          { label: "Pending review", value: String(data.metrics.pendingRecommendations + data.metrics.pendingRecipes).padStart(2, "0") },
+        ]}
+        marquee={[
+          "stockpilot · live",
+          `${session.locationName.toLowerCase()}`,
+          "ai-assisted",
+          "voice + chat",
+          "auto reordering",
+          "pos synced",
+        ]}
+      />
 
-        <div style={{ position:"relative" }}>
-          {/* location pill */}
-          <span style={{ display:"inline-flex", alignItems:"center", gap:"6px",
-            border:`1px solid rgba(91,115,247,0.30)`,
-            background:"rgba(91,115,247,0.12)",
-            borderRadius:"100px", padding:"5px 14px",
-            fontSize:"11px", fontWeight:600, letterSpacing:"0.14em",
-            textTransform:"uppercase", color:C.blue }}>
-            {session.locationName}
-          </span>
-
-          {/* giant heading */}
-          <h1 style={{ marginTop:"20px",
-            fontSize:"clamp(2.4rem, 5vw, 3.6rem)", fontWeight:800,
-            letterSpacing:"-0.05em", lineHeight:1.0,
-            background:"linear-gradient(160deg, #fff 0%, rgba(255,255,255,0.55) 100%)",
-            WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent",
-            backgroundClip:"text" }}>
-            Good morning,<br />{firstName}.
-          </h1>
-
-          <p style={{ marginTop:"14px", fontSize:"15px", color:C.muted, maxWidth:"380px", lineHeight:1.6 }}>
-            Here&apos;s what needs your attention today.
-          </p>
-        </div>
-      </GlowCard>
-
-      {/* ── METRICS ── */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:"12px" }}
-           className="sm:grid-cols-4">
-        {([
-          { label:"Items tracked",  value:data.metrics.inventoryCount, icon:null,         color:C.text },
-          { label:"Running low",    value:data.metrics.lowStockCount,  icon:TrendingDown, color:data.metrics.lowStockCount  > 0 ? C.amber : C.text },
-          { label:"Urgent",         value:data.metrics.criticalCount,  icon:AlertTriangle,color:data.metrics.criticalCount  > 0 ? C.red   : C.text },
-          { label:"Pending review", value:data.metrics.pendingRecommendations+data.metrics.pendingRecipes, icon:null, color:C.text },
-        ] as const).map((m, i) => (
-          <GlowCard key={m.label} className={`anim-fade-up d-${(i+1)*50 as 50|100|150|200}`}
-            hoverable style={{ padding:"22px 24px" }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-              <p style={{ fontSize:"10px", fontWeight:700, letterSpacing:"0.14em",
-                textTransform:"uppercase", color:C.muted }}>
-                {m.label}
-              </p>
-              {m.icon && <m.icon style={{ width:14, height:14, color:m.color, opacity:0.7 }} />}
-            </div>
-            <p style={{ marginTop:"12px", fontSize:"3rem", fontWeight:800,
-              letterSpacing:"-0.05em", lineHeight:1, color:m.color,
-              fontVariantNumeric:"tabular-nums" }}>
-              {m.value}
-            </p>
-          </GlowCard>
-        ))}
-      </div>
+      {/* Metrics are rendered inside the hero above. */}
 
       {/* ── QUICK ACTIONS ── */}
       <div style={{ display:"grid", gap:"12px" }} className="sm:grid-cols-3">

@@ -5,6 +5,7 @@ import {
   dispatchAgentTaskAction,
   failAgentTaskAction,
 } from "@/app/actions/operations";
+import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Role } from "@/lib/domain-enums";
@@ -47,25 +48,17 @@ export default async function AgentTasksPage() {
 
   return (
     <div className="space-y-10">
-      {/* Header */}
-      <section>
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          Agent Tasks
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-          Automation queue
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Review and manage automated ordering and website tasks.
-        </p>
-      </section>
-
-      {/* Metrics */}
-      <section className="grid grid-cols-3 gap-3">
-        <MetricCard label="Pending" value={pendingCount} highlight={pendingCount > 0 ? "warning" : undefined} />
-        <MetricCard label="Ready for review" value={reviewCount} />
-        <MetricCard label="Failed" value={failedCount} highlight={failedCount > 0 ? "critical" : undefined} />
-      </section>
+      <PageHero
+        eyebrow="Agent Tasks"
+        title="Automation queue"
+        subtitle="machines at work."
+        description="Review and manage automated ordering and website tasks."
+        stats={[
+          { label: "Pending", value: String(pendingCount).padStart(2, "0"), highlight: pendingCount > 0 },
+          { label: "Ready for review", value: String(reviewCount).padStart(2, "0") },
+          { label: "Failed", value: String(failedCount).padStart(2, "0"), highlight: failedCount > 0 },
+        ]}
+      />
 
       {/* Task list */}
       <section className="space-y-3">

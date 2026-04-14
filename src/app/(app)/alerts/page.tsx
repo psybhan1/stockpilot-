@@ -2,6 +2,7 @@ import {
   acknowledgeAlertAction,
   resolveAlertAction,
 } from "@/app/actions/operations";
+import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Role } from "@/lib/domain-enums";
@@ -18,25 +19,17 @@ export default async function AlertsPage() {
 
   return (
     <div className="space-y-10">
-      {/* Header */}
-      <section>
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          Alerts
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-          {openAlerts} open alert{openAlerts !== 1 ? "s" : ""}
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Low stock, sync issues, and missing counts that need attention.
-        </p>
-      </section>
-
-      {/* Metrics */}
-      <section className="grid grid-cols-3 gap-3">
-        <MetricCard label="Open" value={openAlerts} highlight={openAlerts > 0 ? "warning" : undefined} />
-        <MetricCard label="Acknowledged" value={acknowledgedAlerts} />
-        <MetricCard label="Resolved" value={resolvedAlerts} />
-      </section>
+      <PageHero
+        eyebrow="Alerts"
+        title={openAlerts === 1 ? "One open alert" : `${openAlerts} open alerts`}
+        subtitle="attention required."
+        description="Low stock, sync issues, and missing counts that need attention."
+        stats={[
+          { label: "Open", value: String(openAlerts).padStart(2, "0"), highlight: openAlerts > 0 },
+          { label: "Acknowledged", value: String(acknowledgedAlerts).padStart(2, "0") },
+          { label: "Resolved", value: String(resolvedAlerts).padStart(2, "0") },
+        ]}
+      />
 
       {/* Alert list */}
       <section className="space-y-3">

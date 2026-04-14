@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 
+import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Role } from "@/lib/domain-enums";
 import { requireSession } from "@/modules/auth/session";
@@ -16,25 +17,17 @@ export default async function PosMappingPage() {
 
   return (
     <div className="space-y-10">
-      {/* Header */}
-      <section>
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          POS Mapping
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-          {mappings.length} mappings
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Connect Square items to internal menu variants and recipes.
-        </p>
-      </section>
-
-      {/* Metrics */}
-      <section className="grid grid-cols-3 gap-3">
-        <MetricCard label="Ready" value={readyCount} />
-        <MetricCard label="Needs review" value={reviewCount} highlight={reviewCount > 0 ? "warning" : undefined} />
-        <MetricCard label="Recipe draft" value={draftCount} />
-      </section>
+      <PageHero
+        eyebrow="POS Mapping"
+        title={mappings.length === 1 ? "One mapping" : `${mappings.length} mappings`}
+        subtitle="menu meets inventory."
+        description="Connect Square items to internal menu variants and recipes."
+        stats={[
+          { label: "Ready", value: String(readyCount).padStart(2, "0") },
+          { label: "Needs review", value: String(reviewCount).padStart(2, "0"), highlight: reviewCount > 0 },
+          { label: "Recipe draft", value: String(draftCount).padStart(2, "0") },
+        ]}
+      />
 
       {/* Mapping list */}
       <section className="grid gap-3 lg:grid-cols-2">

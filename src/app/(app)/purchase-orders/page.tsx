@@ -6,6 +6,7 @@ import {
   deferRecommendationAction,
   rejectRecommendationAction,
 } from "@/app/actions/operations";
+import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,25 +30,17 @@ export default async function PurchaseOrdersPage() {
 
   return (
     <div className="space-y-10">
-      {/* Header */}
-      <section>
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          Orders
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-          Purchase orders
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Review recommendations and track supplier orders.
-        </p>
-      </section>
-
-      {/* Metrics */}
-      <section className="grid grid-cols-3 gap-3">
-        <MetricCard label="Needs approval" value={pendingRecommendations.length} />
-        <MetricCard label="In progress" value={activeOrders.length} />
-        <MetricCard label="Delivered" value={deliveredOrders.length} />
-      </section>
+      <PageHero
+        eyebrow="Orders"
+        title="Purchase orders"
+        subtitle="from draft to doorstep."
+        description="Review recommendations and track supplier orders."
+        stats={[
+          { label: "Needs approval", value: String(pendingRecommendations.length).padStart(2, "0"), highlight: pendingRecommendations.length > 0 },
+          { label: "In progress", value: String(activeOrders.length).padStart(2, "0") },
+          { label: "Delivered", value: String(deliveredOrders.length).padStart(2, "0") },
+        ]}
+      />
 
       {/* Pending approvals */}
       <section className="space-y-4">

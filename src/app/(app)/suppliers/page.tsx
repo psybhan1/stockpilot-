@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 
 import { upsertSupplierAction } from "@/app/actions/operations";
+import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,18 +18,12 @@ export default async function SuppliersPage() {
 
   return (
     <div className="space-y-10">
-      {/* Header */}
-      <section>
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          Suppliers
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-          {suppliers.length} supplier{suppliers.length !== 1 ? "s" : ""}
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Manage contacts, lead times, and delivery schedules.
-        </p>
-      </section>
+      <PageHero
+        eyebrow="Suppliers"
+        title={suppliers.length === 1 ? "One supplier" : `${suppliers.length} suppliers`}
+        subtitle="in your network."
+        description="Manage contacts, lead times, and delivery schedules."
+      />
 
       {/* Add supplier form */}
       <section className="rounded-xl border border-border/50 bg-card p-5 space-y-4">
