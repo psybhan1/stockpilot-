@@ -1,9 +1,32 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { Inter_Tight, Instrument_Serif, JetBrains_Mono } from "next/font/google";
 
 import { AppProviders } from "@/components/providers/app-providers";
 import { env } from "@/lib/env";
+
+const interTight = Inter_Tight({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
+const instrumentSerif = Instrument_Serif({
+  subsets: ["latin"],
+  variable: "--font-display",
+  weight: ["400"],
+  style: ["normal", "italic"],
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  weight: ["400", "500"],
+  display: "swap",
+});
 
 const metadataBase = (() => {
   try {
@@ -62,8 +85,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fafafa" },
-    { media: "(prefers-color-scheme: dark)", color: "#090c14" },
+    { media: "(prefers-color-scheme: light)", color: "#F1EDE5" },
+    { media: "(prefers-color-scheme: dark)", color: "#0A0A0A" },
   ],
 };
 
@@ -73,8 +96,12 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="min-h-full flex flex-col overflow-x-hidden">
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${interTight.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable}`}
+    >
+      <body className="min-h-full flex flex-col overflow-x-hidden font-sans">
         <AppProviders>{children}</AppProviders>
       </body>
     </html>

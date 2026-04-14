@@ -93,32 +93,12 @@ export function InventoryBrowser({ items }: InventoryBrowserProps) {
 
   return (
     <div className="space-y-6">
-      {/* ── Summary tiles ─────────────────────────────────────────────────── */}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile
-          icon={<Package className="size-5" />}
-          label="All items"
-          value={counts.total}
-          tone="neutral"
-        />
-        <StatTile
-          icon={<AlertTriangle className="size-5" />}
-          label="Needs attention"
-          value={counts.attention}
-          tone="amber"
-        />
-        <StatTile
-          icon={<TrendingDown className="size-5" />}
-          label="Critical now"
-          value={counts.critical}
-          tone="rose"
-        />
-        <StatTile
-          icon={<CheckCircle2 className="size-5" />}
-          label="Looking healthy"
-          value={counts.healthy}
-          tone="emerald"
-        />
+      {/* ── Summary tiles (editorial numbered grid) ───────────────────────── */}
+      <div className="grid gap-6 border-y border-border/50 py-6 sm:grid-cols-2 xl:grid-cols-4">
+        <StatTile index="01" icon={<Package className="size-4" />} label="All items" value={counts.total} />
+        <StatTile index="02" icon={<AlertTriangle className="size-4" />} label="Needs attention" value={counts.attention} tone="amber" />
+        <StatTile index="03" icon={<TrendingDown className="size-4" />} label="Critical now" value={counts.critical} tone="rose" />
+        <StatTile index="04" icon={<CheckCircle2 className="size-4" />} label="Looking healthy" value={counts.healthy} tone="emerald" />
       </div>
 
       {/* ── Search + status filters ──────────────────────────────────────── */}
@@ -242,21 +222,27 @@ function InventoryCard({ item }: { item: InventoryBrowserItem }) {
       </div>
 
       {/* ── Body ─────────────────────────────────────────────────────────── */}
-      <div className="flex flex-1 flex-col gap-3 p-4">
+      <div className="flex flex-1 flex-col gap-3 p-5">
         <div>
-          <p className="truncate text-base font-semibold tracking-tight">{item.name}</p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            From {item.supplierName}
+          <p className="truncate font-display text-2xl leading-tight tracking-[-0.02em]">
+            {item.name}
+          </p>
+          <p className="mt-1 truncate font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+            from · {item.supplierName}
           </p>
         </div>
 
         {/* Stock progress bar */}
         <div className="mt-auto space-y-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-medium text-foreground/90">{item.onHandLabel}</span>
-            <span className="text-muted-foreground">{item.daysLeftLabel}</span>
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[11px] tabular-nums text-foreground/90">
+              {item.onHandLabel}
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              {item.daysLeftLabel}
+            </span>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+          <div className="h-[3px] w-full overflow-hidden rounded-full bg-muted">
             <div
               className={cn("h-full rounded-full transition-all", urgencyMeta.bar)}
               style={{ width: `${stockPct}%` }}
@@ -285,12 +271,12 @@ function FilterPill({
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors",
+        "rounded-full border px-4 py-1.5 font-mono text-[10px] uppercase tracking-[0.22em] transition-colors",
         active
-          ? "border-primary bg-primary text-primary-foreground shadow-sm"
+          ? "border-foreground bg-foreground text-background"
           : subtle
-          ? "border-border/60 bg-background/50 text-muted-foreground hover:border-primary/30 hover:text-foreground"
-          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
+          ? "border-border/60 bg-transparent text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+          : "border-border bg-transparent text-muted-foreground hover:border-foreground/40 hover:text-foreground"
       )}
     >
       {label}
@@ -299,34 +285,41 @@ function FilterPill({
 }
 
 function StatTile({
+  index,
   icon,
   label,
   value,
-  tone,
+  tone = "neutral",
 }: {
+  index: string;
   icon: React.ReactNode;
   label: string;
   value: number;
-  tone: "neutral" | "amber" | "rose" | "emerald";
+  tone?: "neutral" | "amber" | "rose" | "emerald";
 }) {
   const toneClass = {
-    neutral: "text-foreground bg-foreground/5",
-    amber: "text-amber-600 dark:text-amber-400 bg-amber-500/10",
-    rose: "text-rose-600 dark:text-rose-400 bg-rose-500/10",
-    emerald: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
+    neutral: "text-foreground",
+    amber: "text-amber-600 dark:text-amber-400",
+    rose: "text-rose-600 dark:text-rose-400",
+    emerald: "text-emerald-600 dark:text-emerald-400",
   }[tone];
 
   return (
-    <div className="flex items-center gap-3 rounded-3xl border border-border/60 bg-card/90 p-4 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset,0_20px_50px_-24px_rgba(0,0,0,0.12)] backdrop-blur">
-      <div className={cn("flex size-11 items-center justify-center rounded-2xl", toneClass)}>
-        {icon}
+    <div className="group relative">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-[10px] uppercase tracking-[0.26em] text-muted-foreground">
+          {index} — {label}
+        </span>
+        <span className={cn("opacity-70", toneClass)}>{icon}</span>
       </div>
-      <div className="min-w-0">
-        <p className="truncate text-xs uppercase tracking-[0.14em] text-muted-foreground">
-          {label}
-        </p>
-        <p className="mt-1 text-2xl font-semibold leading-none tracking-tight">{value}</p>
-      </div>
+      <p
+        className={cn(
+          "mt-3 font-display text-5xl tabular-nums leading-none tracking-[-0.02em]",
+          toneClass
+        )}
+      >
+        {value.toString().padStart(2, "0")}
+      </p>
     </div>
   );
 }
