@@ -222,6 +222,32 @@ export async function handleInboundManagerBotMessage(
 
     const pendingContext = extractPendingContext(recentReceipts[0]?.metadata);
 
+    // ── Chit-chat shortcut ──────────────────────────────────────────────────────
+    // Pattern-match common conversational inputs BEFORE the LLM so small/local
+    // models can't misclassify "how are u" as STOCK_STATUS and dump inventory.
+    const chitChatReply = detectChitChatReply(input.text, conversationHistory);
+    if (chitChatReply) {
+      const chitResult: BotHandlingResult = {
+        ok: true,
+        reply: chitChatReply.reply,
+        replyScenario: chitChatReply.scenario,
+      };
+      await completeBotMessageReceipt({
+        receiptId,
+        locationId: managerContext.locationId,
+        userId: managerContext.userId,
+        reply: chitResult.reply,
+        metadata: toInputJsonValue({
+          channel: input.channel,
+          replyScenario: chitResult.replyScenario ?? null,
+          sourceMessageId: input.sourceMessageId ?? null,
+          senderId: input.senderId,
+          replyProvider: "chit-chat-local",
+        }),
+      });
+      return chitResult;
+    }
+
     const botLanguage = getBotLanguageProvider();
     const interpretation = await botLanguage.interpretMessage({
       channel: input.channel,
@@ -325,7 +351,8 @@ export async function handleInboundManagerBotMessage(
         }
 
         case "ADD_SUPPLIER": {
-          const supplierName = interpretation.supplierName || null;
+          const rawSupplierName = interpretation.supplierName || null;
+          const supplierName = sanitizeSupplierName(rawSupplierName);
           if (!supplierName) {
             result = {
               ok: false,
@@ -410,11 +437,30 @@ export async function handleInboundManagerBotMessage(
             };
             break;
           }
+          // Safety guard: voice transcripts can be garbled and the LLM can pick the
+          // wrong item. Before applying a large drop, require the item's name to
+          // actually appear in the user's message as a sanity check.
+          const interpretedItem = inventoryChoices.find(
+            (choice) => choice.id === interpretation.inventoryItemId
+          );
+          const userTextLower = input.text.toLowerCase();
+          const itemNameInMessage =
+            interpretedItem != null &&
+            interpretedItem.name
+              .toLowerCase()
+              .split(/\s+/)
+              .some((token) => token.length >= 3 && userTextLower.includes(token));
+          const hasConfirmWord = /\b(confirm|yes|correct|i\s*mean\s*it)\b/i.test(
+            input.text
+          );
+
           result = await updateStockCountFromBotMessage({
             locationId: managerContext.locationId,
             userId: managerContext.userId,
             inventoryItemId: interpretation.inventoryItemId,
             correctedOnHand: interpretation.reportedOnHand,
+            requireConfirmationForLargeDrop: !hasConfirmWord,
+            itemNameInMessage,
           });
           break;
         }
@@ -436,10 +482,19 @@ export async function handleInboundManagerBotMessage(
             break;
           }
 
+          const unknownFallbacks = [
+            "I didn't quite catch that. You can ask me about stock ('how much oat milk?'), reorder something ('whole milk 2 left, order more'), or add a new item ('we now have bananas'). Voice messages work too.",
+            "Not sure what you meant there. Try 'whats low?', 'oat milk 2 left order more', or 'add supplier FreshCo'.",
+            "Hmm, I couldn't parse that. Want to check stock, reorder an item, or add something new?",
+            "I'm StockBuddy — I handle stock checks and restocks. Could you phrase that differently? e.g. 'oat milk 2 left, order more'.",
+          ];
+          const lastBot = [...conversationHistory].reverse().find((turn) => turn.role === "bot")?.text ?? "";
+          const candidates = unknownFallbacks.filter((candidate) => candidate !== lastBot);
+          const pool = candidates.length > 0 ? candidates : unknownFallbacks;
+          const chosen = pool[Math.floor(Math.random() * pool.length)]!;
           result = {
             ok: false,
-            reply:
-              "I'm StockBuddy! I can check stock levels, flag what's running low, and place restock orders. Try texting or sending a voice message like 'Oat milk 3 left, order more.'",
+            reply: chosen,
             replyScenario: "unknown",
             replyFacts: {
               interpretation,
@@ -526,6 +581,8 @@ async function updateStockCountFromBotMessage(input: {
   userId: string;
   inventoryItemId: string;
   correctedOnHand: number;
+  requireConfirmationForLargeDrop?: boolean;
+  itemNameInMessage?: boolean;
 }): Promise<BotHandlingResult> {
   const item = await db.inventoryItem.findFirst({
     where: { id: input.inventoryItemId, locationId: input.locationId },
@@ -541,6 +598,35 @@ async function updateStockCountFromBotMessage(input: {
   }
 
   const delta = input.correctedOnHand - item.stockOnHandBase;
+
+  // Safety valve: voice misrecognition can produce wrong-item + huge delta combos
+  // that silently wipe real inventory. If the drop is large AND the user's original
+  // message didn't actually mention the item, stop and ask for confirmation.
+  const isLargeDrop =
+    delta < 0 && Math.abs(delta) > Math.max(20, item.stockOnHandBase * 0.5);
+  const needsConfirmation =
+    isLargeDrop &&
+    input.requireConfirmationForLargeDrop !== false &&
+    input.itemNameInMessage === false;
+
+  if (needsConfirmation) {
+    return {
+      ok: false,
+      reply: [
+        `⚠️ Hold on — that would drop *${item.name}* from ${item.stockOnHandBase} to ${input.correctedOnHand} (${delta} change).`,
+        "",
+        `I'm not sure you meant ${item.name} — I didn't see it in your message.`,
+        `If you really meant it, reply with: *confirm ${item.name.toLowerCase()} ${input.correctedOnHand}*. Otherwise, ignore this.`,
+      ].join("\n"),
+      replyScenario: "stock_update_needs_confirmation",
+      replyFacts: {
+        itemName: item.name,
+        beforeOnHand: item.stockOnHandBase,
+        proposedOnHand: input.correctedOnHand,
+        delta,
+      },
+    };
+  }
 
   await db.$transaction(async (tx) => {
     await tx.inventoryItem.update({
@@ -1449,6 +1535,159 @@ function appendOperationalNote(existing: string | null | undefined, next: string
 
 function toInputJsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+// ── Supplier name sanitizer ───────────────────────────────────────────────────
+// The LLM sometimes hands us whole sentences as the supplier name (e.g.
+// "the supplier has email, its psybhan@gmail.com"). Extract a clean name:
+//   1. If an email is present, fall back to its local-part (e.g. "psybhan").
+//   2. Otherwise strip filler phrases ("supplier is", "their name is", "called").
+//   3. Reject anything that still looks like a full sentence (verbs, punctuation).
+function sanitizeSupplierName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let cleaned = raw.trim();
+  if (!cleaned) return null;
+
+  const emailMatch = cleaned.match(/([a-z0-9._%+-]+)@[a-z0-9.-]+\.[a-z]{2,}/i);
+  // Filler words that usually precede the real name.
+  cleaned = cleaned
+    .replace(/\b(the\s+)?supplier(?:'s)?\s+(is|name is|called|named)?\b/gi, " ")
+    .replace(/\bcalled\b/gi, " ")
+    .replace(/\bnamed\b/gi, " ")
+    .replace(/\btheir?\s+name(?:'s)?\s+(is|are)?\b/gi, " ")
+    .replace(/\bits?\s+(email|name|number|phone)\b.*$/gi, " ")
+    .replace(/\bhas\s+(email|phone|website)\b.*$/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Drop trailing punctuation.
+  cleaned = cleaned.replace(/[,.!?;:]+$/g, "").trim();
+
+  // If, after cleaning, we still have a long multi-word sentence (>5 tokens),
+  // fall back to the email local-part if available.
+  const tokens = cleaned.split(/\s+/).filter(Boolean);
+  if (tokens.length > 5 && emailMatch) {
+    cleaned = emailMatch[1] ?? cleaned;
+  }
+
+  // If the cleaned name is just an email, reduce it to the local-part.
+  const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned);
+  if (looksLikeEmail) {
+    cleaned = cleaned.split("@")[0] ?? cleaned;
+  }
+
+  cleaned = cleaned.trim();
+  if (!cleaned) return null;
+  if (cleaned.length > 60) cleaned = cleaned.slice(0, 60).trim();
+
+  // Final guard: reject pure filler after stripping.
+  if (/^(is|a|an|the|and|or|but|with|their|its|has)$/i.test(cleaned)) return null;
+
+  return cleaned;
+}
+
+// ── Chit-chat detector ────────────────────────────────────────────────────────
+// Handles common conversational patterns locally, with varied replies that avoid
+// repeating the last bot message. Returns null when the user is clearly trying to
+// do a real operation (contains numbers, inventory-ish verbs, etc.) so the LLM
+// path can take over.
+function detectChitChatReply(
+  text: string,
+  history: BotConversationTurn[]
+): { reply: string; scenario: string } | null {
+  const raw = text.trim();
+  if (!raw) return null;
+  // Already matches an operational pattern → let the LLM interpret it.
+  if (
+    /\d/.test(raw) ||
+    /\b(order|restock|reorder|refill|buy|add|remove|have|left|stock|inventory|par|delete|update|change|set|supplier|recipe|link)\b/i.test(
+      raw
+    )
+  ) {
+    return null;
+  }
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return null;
+
+  const lastBotReply = [...history].reverse().find((turn) => turn.role === "bot")?.text ?? "";
+  const pickDistinct = (options: string[]): string => {
+    const pool = options.filter((candidate) => candidate !== lastBotReply);
+    const source = pool.length > 0 ? pool : options;
+    return source[Math.floor(Math.random() * source.length)] ?? options[0]!;
+  };
+
+  // Identity
+  if (/\b(what(?:'| i)?s| whats)? ?(?:your |ur )?name\b/.test(normalized) || /\bwho are (?:you|u)\b/.test(normalized)) {
+    return {
+      reply: pickDistinct([
+        "I'm StockBuddy 🤖 — your inventory sidekick. I help track stock, reorder from suppliers, and flag low items.",
+        "My name is StockBuddy! I handle inventory for your business — stock checks, restocks, recipe tracking, the works.",
+        "StockBuddy, at your service. I live in your chat and keep an eye on stock levels.",
+      ]),
+      scenario: "chitchat_identity",
+    };
+  }
+
+  // Thanks
+  if (/\b(thanks?|thx|ty|thank you|cheers|appreciate)\b/.test(normalized)) {
+    return {
+      reply: pickDistinct(["You're welcome! 👋", "Anytime!", "Happy to help."]),
+      scenario: "chitchat_thanks",
+    };
+  }
+
+  // How are you
+  if (/\bhow (?:are|r) (?:you|u|ya)\b/.test(normalized) || /\bhow s? (?:it going|things)\b/.test(normalized)) {
+    return {
+      reply: pickDistinct([
+        "Doing great — keeping an eye on stock. How's the shop looking today?",
+        "All good here. Anything running low I should know about?",
+        "Can't complain — inventory's my happy place. What's up?",
+      ]),
+      scenario: "chitchat_howareyou",
+    };
+  }
+
+  // Plain greeting
+  if (
+    /^(hi|hey|yo|hello|hola|sup|yoo+|hiya|heya|boy|ey|oi|morning|evening|afternoon)\b/.test(normalized) ||
+    /^[\p{Emoji}\s]+$/u.test(raw)
+  ) {
+    return {
+      reply: pickDistinct([
+        "Hey 👋 — want a quick stock check, or do you need to reorder something?",
+        "Yo! Ask me about any item, or say something like 'oat milk 2 left, order more'.",
+        "Hi! I can check stock, place restocks, or add new items. What do you need?",
+        "Hey there. Anything I should reorder today?",
+      ]),
+      scenario: "chitchat_greeting",
+    };
+  }
+
+  // Apology / oops
+  if (/\b(sorry|my bad|oops|nvm|never mind|nevermind)\b/.test(normalized)) {
+    return {
+      reply: pickDistinct(["No worries. What do you need?", "All good! What can I help with?"]),
+      scenario: "chitchat_ack",
+    };
+  }
+
+  // Affirm / negate (only when no pending context — let the LLM handle those)
+  if (/^(yes|yeah|yup|ok|okay|sure|cool|nice|great|lol|haha|lmao)$/.test(normalized)) {
+    return {
+      reply: pickDistinct([
+        "👍 Let me know if you need anything.",
+        "Cool. Ping me whenever.",
+      ]),
+      scenario: "chitchat_ack",
+    };
+  }
+
+  return null;
 }
 
 function extractPendingContext(metadata: Prisma.JsonValue | null | undefined): BotPendingContext | undefined {

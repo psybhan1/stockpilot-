@@ -86,10 +86,22 @@ export async function advanceAddItem(
         };
       }
 
-      const category = parseCategory(userMessage);
+      // If the user is giving up / asking the bot to decide, auto-pick a
+      // reasonable default category instead of looping on the same question.
+      const wantsAutoPick = /\b(figure (it )?out|you (pick|decide|choose|guess)|your choice|whatever|any|auto|dunno|i don'?t know|idk|up to you)\b/i.test(
+        userMessage
+      );
+
+      let category = parseCategory(userMessage);
+      if (!category && wantsAutoPick) {
+        // Use the item name itself as a fallback guess; if that still fails,
+        // default to SUPPLY so the flow can continue.
+        category = parseCategory(data.name ?? "") ?? InventoryCategory.SUPPLY;
+      }
+
       if (!category) {
         return {
-          reply: `I didn't catch that. What category is *${data.name}*? (e.g. dairy, coffee, produce, packaging, other)`,
+          reply: `I didn't catch that. What category is *${data.name}*? Reply with the category (dairy, coffee, syrup, produce, packaging, cleaning, other) — or say *figure it out* and I'll pick for you.`,
           done: false,
           nextStep: "init",
           updatedData: data,

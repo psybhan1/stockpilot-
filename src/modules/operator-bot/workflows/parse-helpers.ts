@@ -4,11 +4,13 @@ import { BaseUnit, InventoryCategory, MeasurementUnit, SupplierOrderingMode } fr
 
 const CATEGORY_MAP: Array<[RegExp, InventoryCategory]> = [
   [/coffee|espresso|bean/i, InventoryCategory.COFFEE],
+  // Syrup / sauce — checked BEFORE dairy/alt-dairy so "coconut syrup" / "vanilla syrup"
+  // land in SYRUP instead of ALT_DAIRY (coconut) or DAIRY (vanilla-cream).
+  [/syrup|sauce|caramel|pump(?:kin)?\s+spice/i, InventoryCategory.SYRUP],
+  [/(?:hazelnut|vanilla|caramel|coconut|almond|maple)\s+(?:syrup|sauce|flavou?r|shot)/i, InventoryCategory.SYRUP],
   [/dairy|milk(?! alt)|cream|butter|cheese|yogurt/i, InventoryCategory.DAIRY],
-  [/oat|almond|soy|coconut|alt.?dairy|plant.?based|non.?dairy/i, InventoryCategory.ALT_DAIRY],
-  // Syrup: only match "hazelnut syrup" / "hazelnut sauce", not plain hazelnuts
-  [/syrup|sauce|caramel|vanilla|pump/i, InventoryCategory.SYRUP],
-  [/hazelnut\s+(?:syrup|sauce|flavou?r)/i, InventoryCategory.SYRUP],
+  // Alt-dairy — only matches when followed by milk/cream/yoghurt, so "coconut syrup" won't match here.
+  [/(?:oat|almond|soy|coconut|cashew|rice|hemp)\s+(?:milk|cream|yogh?urt)|alt.?dairy|plant.?based|non.?dairy/i, InventoryCategory.ALT_DAIRY],
   // Bakery / ingredient — nuts, seeds, grains treated as baking ingredients
   [/bakel?y|flour|sugar|egg|bread|muffin|pastry|ingredi|nut|seed|grain|hazelnut|walnut|almond\s+flour|pecan|cashew|pistachio/i, InventoryCategory.BAKERY_INGREDIENT],
   [/packag|cup|lid|straw|bag|box|wrap|foil|napkin|sleeve/i, InventoryCategory.PACKAGING],
@@ -133,6 +135,21 @@ export function parsePackSize(text: string, baseUnit: BaseUnit): PackSizeResult 
   const plain = parseNumber(text);
   if (plain && plain > 0) {
     return { packSizeBase: plain, purchaseUnit: baseUnit === BaseUnit.COUNT ? MeasurementUnit.COUNT : MeasurementUnit.BOX };
+  }
+
+  // bare container word (no number, no quantity) — fall back to a single container
+  // with the base unit as pack size; purchase unit reflects what the user said.
+  if (/bottle|can|jar/.test(lower)) {
+    return { packSizeBase: 1, purchaseUnit: MeasurementUnit.BOTTLE };
+  }
+  if (/\bbag\b|sachet|pouch/.test(lower)) {
+    return { packSizeBase: 1, purchaseUnit: MeasurementUnit.BAG };
+  }
+  if (/\bbox\b|carton/.test(lower)) {
+    return { packSizeBase: 1, purchaseUnit: MeasurementUnit.BOX };
+  }
+  if (/\bcase\b|crate|tray/.test(lower)) {
+    return { packSizeBase: 1, purchaseUnit: MeasurementUnit.CASE };
   }
 
   // fallback: pack of 1
