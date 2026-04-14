@@ -63,9 +63,9 @@ export default async function DashboardPage() {
             <Link
               key={a.href}
               href={a.href}
-              className="group flex items-center gap-4 rounded-md border border-border bg-card p-4 transition-colors hover:border-foreground/30"
+              className="notif-card group flex items-center gap-4 p-4"
             >
-              <div className="flex size-10 items-center justify-center rounded-md bg-muted">
+              <div className="flex size-11 items-center justify-center rounded-2xl bg-foreground/[0.06] backdrop-blur">
                 <a.icon className="size-5" />
               </div>
               <div className="min-w-0 flex-1">
@@ -83,15 +83,18 @@ export default async function DashboardPage() {
         <section>
           <SectionLabel>Alerts</SectionLabel>
           <p className="mt-1 text-xs text-muted-foreground">Issues requiring attention now</p>
-          <div className="mt-4 space-y-2">
+          <div className="mt-4 space-y-2.5">
             {data.alerts.length ? (
               data.alerts.map((alert) => (
                 <div
                   key={alert.id}
-                  className="flex items-start justify-between gap-3 rounded-md border border-border bg-card p-4"
+                  className={cn(
+                    "notif-card flex items-start justify-between gap-3 p-4",
+                    alert.severity === "CRITICAL" && "notif-card-urgent"
+                  )}
                 >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{alert.title}</p>
+                    <p className="truncate text-sm font-semibold">{alert.title}</p>
                     <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
                       {alert.message}
                     </p>
@@ -123,16 +126,19 @@ export default async function DashboardPage() {
         <section>
           <SectionLabel>Watch list</SectionLabel>
           <p className="mt-1 text-xs text-muted-foreground">Items running low on stock</p>
-          <div className="mt-4 space-y-2">
+          <div className="mt-4 space-y-2.5">
             {data.inventory.slice(0, 6).length ? (
               data.inventory.slice(0, 6).map((item) => (
                 <Link
                   key={item.id}
                   href={`/inventory/${item.id}`}
-                  className="group flex items-center justify-between gap-3 rounded-md border border-border bg-card p-4 transition-colors hover:border-foreground/30"
+                  className={cn(
+                    "notif-card flex items-center justify-between gap-3 p-4",
+                    item.snapshot?.urgency === "CRITICAL" && "notif-card-urgent"
+                  )}
                 >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{item.name}</p>
+                    <p className="truncate text-sm font-semibold">{item.name}</p>
                     <p className="mt-0.5 truncate text-xs text-muted-foreground">
                       {formatQuantityBase(item.stockOnHandBase, item.displayUnit, item.packSizeBase)}
                       {" on hand"}
@@ -173,15 +179,18 @@ export default async function DashboardPage() {
           <p className="mt-1 text-xs text-muted-foreground">
             Recommendations waiting for your approval
           </p>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
             {data.recommendations.map((rec) => (
               <Link
                 key={rec.id}
                 href="/purchase-orders"
-                className="group flex items-start justify-between gap-3 rounded-md border border-border bg-card p-4 transition-colors hover:border-foreground/30"
+                className={cn(
+                  "notif-card flex items-start justify-between gap-3 p-4",
+                  rec.urgency === "CRITICAL" && "notif-card-urgent"
+                )}
               >
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{rec.inventoryItem.name}</p>
+                  <p className="truncate text-sm font-semibold">{rec.inventoryItem.name}</p>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">
                     {rec.supplier.name}
                   </p>
@@ -244,7 +253,7 @@ function SectionLabel({ children, className }: { children: React.ReactNode; clas
 
 function EmptyCard({ text }: { text: string }) {
   return (
-    <div className="rounded-md border border-dashed border-border p-6 text-center">
+    <div className="rounded-[22px] border border-dashed border-border/60 bg-background/40 p-6 text-center backdrop-blur">
       <p className="text-xs text-muted-foreground">{text}</p>
     </div>
   );

@@ -124,7 +124,7 @@ export function InventoryBrowser({ items }: InventoryBrowserProps) {
           ))}
         </div>
       ) : (
-        <div className="rounded-md border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
+        <div className="rounded-[22px] border border-dashed border-border/60 bg-background/40 p-10 text-center text-sm text-muted-foreground backdrop-blur">
           No items match those filters.
         </div>
       )}
@@ -139,9 +139,12 @@ function InventoryCard({ item }: { item: InventoryBrowserItem }) {
   return (
     <Link
       href={`/inventory/${item.id}`}
-      className="group flex gap-4 rounded-md border border-border bg-card p-3 transition-colors hover:border-foreground/30"
+      className={cn(
+        "notif-card group flex gap-4 p-3",
+        item.urgency === "CRITICAL" && "notif-card-urgent"
+      )}
     >
-      <div className="relative size-20 shrink-0 overflow-hidden rounded bg-muted">
+      <div className="relative size-20 shrink-0 overflow-hidden rounded-2xl bg-muted/70">
         {item.imageUrl ? (
           <Image
             src={item.imageUrl}
