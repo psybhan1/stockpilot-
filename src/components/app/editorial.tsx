@@ -21,20 +21,20 @@ import {
   type ReactNode,
 } from "react";
 
-// ── Background (ambient gradient mesh + grain + optional looping video) ──
+import { InkCanvas } from "@/components/app/ink-canvas";
+
+// ── Background (live ink-canvas + grain + optional looping video) ───────
 type EditorialBackgroundProps = {
+  /** Optional .mp4 URL — layered above the generative canvas when provided. */
   videoSrc?: string;
   /** Adds a vignette on top of the background when true. */
   vignette?: boolean;
-  /** Accent color override — defaults to the CSS --accent. */
-  accent?: string;
   className?: string;
 };
 
 export function EditorialBackground({
   videoSrc,
   vignette = true,
-  accent,
   className,
 }: EditorialBackgroundProps) {
   const [videoReady, setVideoReady] = useState(false);
@@ -48,44 +48,10 @@ export function EditorialBackground({
         className
       )}
     >
-      {/* Ambient gradient-mesh blobs. These animate with meshDrift. */}
-      <div className="absolute inset-0">
-        <span
-          className="mesh-blob"
-          style={{
-            top: "-18%",
-            left: "-10%",
-            width: "55vw",
-            height: "55vw",
-            background: accent ?? "var(--accent)",
-          }}
-        />
-        <span
-          className="mesh-blob"
-          style={{
-            bottom: "-14%",
-            right: "-8%",
-            width: "48vw",
-            height: "48vw",
-            background: "var(--chart-2)",
-            animationDelay: "-8s",
-          }}
-        />
-        <span
-          className="mesh-blob"
-          style={{
-            top: "35%",
-            left: "45%",
-            width: "32vw",
-            height: "32vw",
-            background: "var(--chart-3)",
-            animationDelay: "-14s",
-            opacity: 0.35,
-          }}
-        />
-      </div>
+      {/* Live generative motion — 100% client-rendered, no network. */}
+      <InkCanvas />
 
-      {/* Optional background video — layered above the mesh when available. */}
+      {/* Optional video layer — layered above the canvas when available. */}
       {videoSrc && (
         <video
           autoPlay
@@ -95,7 +61,7 @@ export function EditorialBackground({
           onCanPlay={() => setVideoReady(true)}
           className={cn(
             "absolute inset-0 size-full object-cover opacity-0 transition-opacity duration-1000",
-            videoReady && "opacity-60"
+            videoReady && "opacity-55 mix-blend-screen"
           )}
           style={{ filter: "grayscale(0.15) contrast(1.05)" }}
         >
