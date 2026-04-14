@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { AppShell } from "@/components/app/app-shell";
 import { env } from "@/lib/env";
 import { requireSession } from "@/modules/auth/session";
-import { getAssistantPanelData } from "@/modules/dashboard/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +12,6 @@ export default async function AuthenticatedLayout({
   children: ReactNode;
 }) {
   const session = await requireSession();
-  const assistantPanel = await getAssistantPanelData(session.locationId);
 
   return (
     <AppShell
@@ -24,7 +22,7 @@ export default async function AuthenticatedLayout({
         locationName: session.locationName,
       }}
       autoRefreshMs={env.APP_AUTO_REFRESH_MS}
-      assistantPanel={assistantPanel}
+      assistantPanel={null}
     >
       {children}
     </AppShell>

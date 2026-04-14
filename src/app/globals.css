@@ -177,8 +177,11 @@
 @keyframes pageEnter {
   0% {
     opacity: 0;
-    transform: translateY(20px);
-    filter: blur(6px);
+    transform: translateY(28px);
+    filter: blur(8px);
+  }
+  60% {
+    filter: blur(0);
   }
   100% {
     opacity: 1;
@@ -187,38 +190,53 @@
   }
 }
 
-/* Parent element animates as a whole for the hero/first-impression feel. */
+/* Parent is only a tiny fade to keep motion tied together. The heavy
+   lifting happens on the staggered children below. */
 .page-transition-enter {
-  animation: pageEnter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
-  will-change: opacity, transform, filter;
+  animation: fadeIn 0.3s ease-out both;
+  will-change: opacity;
 }
 
-/* Stagger the ACTUAL sections — pages wrap their body in a <div class="space-y-10">,
+/* Stagger the ACTUAL sections — pages wrap their body in <div class="space-y-*">,
    so the sections (PageHero, section, section, ...) are grand-children of
-   .page-transition-enter. Target grandchildren explicitly. */
+   .page-transition-enter. Target grandchildren explicitly and cascade
+   them down the page with increasing delay so the eye tracks content
+   arriving top → bottom. */
 .page-transition-enter > * > * {
-  animation: pageEnter 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: pageEnter 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
   will-change: opacity, transform, filter;
 }
-.page-transition-enter > * > :nth-child(1) { animation-delay: 0.05s; }
+.page-transition-enter > * > :nth-child(1) { animation-delay: 0.00s; }
 .page-transition-enter > * > :nth-child(2) { animation-delay: 0.14s; }
-.page-transition-enter > * > :nth-child(3) { animation-delay: 0.22s; }
-.page-transition-enter > * > :nth-child(4) { animation-delay: 0.30s; }
-.page-transition-enter > * > :nth-child(n+5) { animation-delay: 0.36s; }
+.page-transition-enter > * > :nth-child(3) { animation-delay: 0.26s; }
+.page-transition-enter > * > :nth-child(4) { animation-delay: 0.38s; }
+.page-transition-enter > * > :nth-child(5) { animation-delay: 0.50s; }
+.page-transition-enter > * > :nth-child(6) { animation-delay: 0.60s; }
+.page-transition-enter > * > :nth-child(n+7) { animation-delay: 0.68s; }
+
+/* Nested grid/flex containers — animate their direct children too so
+   cards inside a section cascade lightly instead of arriving all at once. */
+.page-transition-enter > * > * > .grid > *,
+.page-transition-enter > * > * > div[class*="grid"] > * {
+  animation: pageEnter 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: inherit;
+}
+.page-transition-enter > * > * > .grid > :nth-child(1) { animation-delay: 0.04s; }
+.page-transition-enter > * > * > .grid > :nth-child(2) { animation-delay: 0.10s; }
+.page-transition-enter > * > * > .grid > :nth-child(3) { animation-delay: 0.16s; }
+.page-transition-enter > * > * > .grid > :nth-child(4) { animation-delay: 0.22s; }
+.page-transition-enter > * > * > .grid > :nth-child(n+5) { animation-delay: 0.28s; }
 
 /* ── Navigation fader (exit only) ─────────────────────────────────── */
-/* Only defines the OUT direction. When the class is removed on route
-   arrival there's no transition back — the browser snaps, and the
-   pageEnter animation on the newly mounted content plays unimpeded. */
 .nav-fader-out {
   opacity: 0;
-  filter: blur(4px);
-  transform: translateY(-6px);
+  filter: blur(6px);
+  transform: translateY(-8px);
   pointer-events: none;
   transition:
-    opacity 220ms cubic-bezier(0.4, 0, 1, 1),
-    filter 220ms cubic-bezier(0.4, 0, 1, 1),
-    transform 220ms cubic-bezier(0.4, 0, 1, 1);
+    opacity 300ms cubic-bezier(0.4, 0, 1, 1),
+    filter 300ms cubic-bezier(0.4, 0, 1, 1),
+    transform 300ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* Nav-link ink underline — quick visual feedback when switching tabs */
