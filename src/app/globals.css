@@ -172,3 +172,42 @@
   line-height: 0.95;
   text-transform: uppercase;
 }
+
+/* ── Page transitions (route-keyed) ───────────────────────────────── */
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.995);
+    filter: blur(4px);
+  }
+  60% {
+    filter: blur(0);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+.page-transition-enter {
+  animation: pageEnter 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: opacity, transform, filter;
+}
+
+/* Nav-link ink underline — quick visual feedback when switching tabs */
+@keyframes navActiveIn {
+  from { transform: scaleX(0); opacity: 0; }
+  to   { transform: scaleX(1); opacity: 1; }
+}
+.nav-active-indicator {
+  transform-origin: left center;
+  animation: navActiveIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Smooth color transitions everywhere — tunes hover + theme swap feel */
+a, button, [role="button"] {
+  transition-property: background-color, border-color, color, fill, stroke,
+    opacity, transform;
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}

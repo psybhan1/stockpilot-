@@ -9,6 +9,7 @@ import { useTheme } from "next-themes";
 import { logoutAction } from "@/app/actions/auth";
 import { AppLiveRefresh } from "@/components/app/app-live-refresh";
 import { InkCanvas } from "@/components/app/ink-canvas";
+import { PageTransition } from "@/components/app/page-transition";
 import { Role } from "@/lib/domain-enums";
 import { navigationItems, productName } from "@/lib/navigation";
 import { hasMinimumRole } from "@/lib/permissions";
@@ -65,7 +66,7 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
             <span className="hidden sm:inline">{productName}</span>
           </Link>
 
-          <nav className="hidden lg:flex lg:flex-1 lg:items-center lg:gap-1 lg:px-4">
+          <nav className="hidden lg:flex lg:flex-1 lg:items-center lg:gap-0.5 lg:px-4">
             {visibleItems.map((item) => {
               const active =
                 pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -74,13 +75,15 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
                   key={item.href}
                   href={item.href}
                   className={cn(
-                    "rounded-md px-3 py-1.5 font-mono text-[11px] font-medium uppercase tracking-[0.14em] transition-colors",
-                    active
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    "relative rounded-md px-3 py-1.5 font-mono text-[11px] font-medium uppercase tracking-[0.14em]",
+                    "hover:text-foreground",
+                    active ? "text-foreground" : "text-muted-foreground"
                   )}
                 >
                   {item.label}
+                  {active && (
+                    <span className="nav-active-indicator pointer-events-none absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-foreground" />
+                  )}
                 </Link>
               );
             })}
@@ -161,7 +164,7 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
       {/* ── Content ─────────────────────────────────────────────────── */}
       <main className="relative z-10 flex-1">
         <div className="mx-auto w-full max-w-[1600px] px-4 py-8 sm:px-6 sm:py-10 lg:px-10 lg:py-12">
-          {children}
+          <PageTransition>{children}</PageTransition>
         </div>
       </main>
 

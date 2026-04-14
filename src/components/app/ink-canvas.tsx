@@ -1,21 +1,112 @@
 "use client";
 
 /**
- * InkCanvas — a real-time generative gradient background rendered every
- * frame on the client. Nine soft "ink drops" drift through a 2D velocity
- * field driven by two octaves of seeded gradient noise; each frame fades
- * the prior one toward the current theme background so trails bleed
- * organically instead of stacking into mud.
+ * InkCanvas — generative gradient background that lives behind the whole
+ * app. Each route gets its own palette, and we interpolate smoothly
+ * between palettes over ~1.2 s when the path changes.
  *
- * Theme-aware: reads `--background` from CSS so it works cleanly on both
- * the warm-paper light theme and the near-black dark theme.
+ * Theme-aware: reads --background from CSS each frame so the fade trick
+ * works on both the light paper theme and the near-black dark theme.
  * Cost-aware: pauses when off-screen or the tab is hidden.
  */
 
-import { useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useRef } from "react";
 
 import { cn } from "@/lib/utils";
 
+type RGB = [number, number, number];
+
+// Named palettes — keep entries to 5 colors so interpolation is cheap.
+const PALETTES: Record<string, readonly RGB[]> = {
+  dashboard: [
+    [194, 168, 120], // ochre
+    [176, 137, 107], // caramel
+    [138, 160, 122], // sage
+    [233, 184, 138], // sand
+    [193, 39, 45], // red accent
+  ],
+  inventory: [
+    [138, 160, 122], // sage
+    [194, 168, 120], // ochre
+    [176, 137, 107], // caramel
+    [220, 210, 180], // cream
+    [100, 140, 110], // deeper sage
+  ],
+  alerts: [
+    [193, 39, 45], // red
+    [227, 106, 92], // coral
+    [233, 140, 90], // orange
+    [194, 168, 120], // ochre
+    [160, 40, 50], // deeper red
+  ],
+  suppliers: [
+    [90, 120, 150], // blue-grey
+    [138, 160, 122], // sage
+    [176, 137, 107], // caramel
+    [120, 145, 175], // steel
+    [60, 90, 130], // deep blue
+  ],
+  "purchase-orders": [
+    [194, 168, 120], // ochre
+    [176, 137, 107], // caramel
+    [227, 106, 92], // coral
+    [233, 184, 138], // sand
+    [193, 39, 45], // red
+  ],
+  recipes: [
+    [210, 140, 110], // terracotta
+    [227, 180, 160], // rose
+    [194, 168, 120], // ochre
+    [176, 137, 107], // caramel
+    [230, 200, 170], // peach
+  ],
+  "stock-count": [
+    [138, 160, 122], // sage
+    [194, 168, 120], // ochre
+    [170, 180, 130], // olive
+    [210, 200, 150], // straw
+    [100, 130, 100], // deep sage
+  ],
+  "pos-mapping": [
+    [90, 120, 170], // indigo
+    [138, 160, 122], // sage
+    [194, 168, 120], // ochre
+    [150, 140, 180], // lavender
+    [70, 100, 150], // deep indigo
+  ],
+  settings: [
+    [150, 150, 145], // stone
+    [180, 175, 160], // silver
+    [200, 195, 180], // platinum
+    [120, 125, 125], // slate
+    [194, 168, 120], // ochre accent
+  ],
+  notifications: [
+    [230, 170, 100], // amber
+    [227, 106, 92], // coral
+    [180, 140, 110], // bronze
+    [210, 180, 140], // sand
+    [200, 90, 70], // terracotta
+  ],
+  "agent-tasks": [
+    [140, 130, 180], // purple
+    [90, 120, 170], // indigo
+    [138, 160, 122], // sage
+    [180, 155, 200], // lavender
+    [110, 100, 160], // violet
+  ],
+};
+
+const DEFAULT_PALETTE: readonly RGB[] = PALETTES.dashboard;
+
+function pickPalette(pathname: string | null): readonly RGB[] {
+  if (!pathname) return DEFAULT_PALETTE;
+  const first = pathname.split("/").filter(Boolean)[0] ?? "";
+  return PALETTES[first] ?? DEFAULT_PALETTE;
+}
+
+// ── Seeded noise (tiny Perlin-ish) ────────────────────────────────────
 function mulberry32(seed: number) {
   return () => {
     let t = (seed += 0x6d2b79f5);
@@ -51,31 +142,16 @@ function makeNoise(seed: number) {
   };
 }
 
-type Drop = {
-  x: number;
-  y: number;
-  r: number;
-  vx: number;
-  vy: number;
-  palette: number;
-};
+type Drop = { x: number; y: number; r: number; vx: number; vy: number; idx: number };
 
-// Warm, inviting palette — ochre, sage, caramel, rose, sand.
-const PALETTE = [
-  [194, 168, 120],
-  [138, 160, 122],
-  [193, 39, 45],
-  [176, 137, 107],
-  [233, 184, 138],
-] as const;
-
-function parseCssColor(raw: string): [number, number, number] {
+function parseCssColor(raw: string): RGB {
   const s = raw.trim();
   if (s.startsWith("#")) {
     const hex = s.slice(1);
-    const n = hex.length === 3
-      ? hex.split("").map((c) => parseInt(c + c, 16))
-      : [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+    const n =
+      hex.length === 3
+        ? hex.split("").map((c) => parseInt(c + c, 16))
+        : [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
     return [n[0] ?? 245, n[1] ?? 243, n[2] ?? 238];
   }
   const m = s.match(/rgba?\(([^)]+)\)/);
@@ -86,8 +162,33 @@ function parseCssColor(raw: string): [number, number, number] {
   return [245, 243, 238];
 }
 
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
 export function InkCanvas({ className }: { className?: string }) {
+  const pathname = usePathname();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Stable palette ref the animation loop reads each frame.
+  const paletteRef = useRef<{
+    current: RGB[];
+    target: RGB[];
+    tween: number;
+  }>({
+    current: DEFAULT_PALETTE.map((c) => [...c] as unknown as RGB),
+    target: DEFAULT_PALETTE.map((c) => [...c] as unknown as RGB),
+    tween: 1,
+  });
+
+  // Selected target palette — re-computed whenever the route changes.
+  const targetPalette = useMemo(() => pickPalette(pathname), [pathname]);
+
+  // On route change: set a new target, restart the tween.
+  useEffect(() => {
+    paletteRef.current.target = targetPalette.map((c) => [...c] as unknown as RGB);
+    paletteRef.current.tween = 0;
+  }, [targetPalette]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -121,7 +222,7 @@ export function InkCanvas({ className }: { className?: string }) {
       r: 280 + rand() * 360,
       vx: (rand() - 0.5) * 0.4,
       vy: (rand() - 0.5) * 0.4,
-      palette: i % PALETTE.length,
+      idx: i % 5,
     }));
 
     const noiseA = makeNoise(7);
@@ -145,7 +246,10 @@ export function InkCanvas({ className }: { className?: string }) {
     };
     document.addEventListener("visibilitychange", handleVis);
 
-    const readThemeBg = (): [number, number, number] => {
+    // Palette tween speed (1 / seconds) — 1.2 s palette blend.
+    const TWEEN_PER_MS = 1 / 1200;
+
+    const readThemeBg = (): RGB => {
       const styles = getComputedStyle(document.documentElement);
       const raw = styles.getPropertyValue("--background") || "#F5F3EE";
       return parseCssColor(raw);
@@ -159,15 +263,25 @@ export function InkCanvas({ className }: { className?: string }) {
       last = now;
       t += dt * 0.00018;
 
-      // Fade the prior frame toward the current theme background so the
-      // canvas always reads correctly in light + dark, and trails softly
-      // dissolve instead of building up.
+      // Advance palette tween.
+      const pal = paletteRef.current;
+      if (pal.tween < 1) {
+        pal.tween = Math.min(1, pal.tween + dt * TWEEN_PER_MS);
+        const eased =
+          pal.tween < 0.5 ? 2 * pal.tween * pal.tween : 1 - Math.pow(-2 * pal.tween + 2, 2) / 2;
+        for (let i = 0; i < pal.current.length; i++) {
+          const cur = pal.current[i];
+          const tgt = pal.target[i] ?? pal.target[pal.target.length - 1];
+          cur[0] = lerp(cur[0], tgt[0], eased) as number;
+          cur[1] = lerp(cur[1], tgt[1], eased) as number;
+          cur[2] = lerp(cur[2], tgt[2], eased) as number;
+        }
+      }
+
       const [br, bg, bb] = readThemeBg();
       ctx.globalCompositeOperation = "source-over";
       ctx.fillStyle = `rgba(${br}, ${bg}, ${bb}, 0.12)`;
       ctx.fillRect(0, 0, width, height);
-
-      ctx.globalCompositeOperation = "source-over";
 
       for (const d of drops) {
         const fx =
@@ -188,11 +302,11 @@ export function InkCanvas({ className }: { className?: string }) {
         if (d.y < -m) d.y = height + m;
         if (d.y > height + m) d.y = -m;
 
-        const rgb = PALETTE[d.palette];
+        const rgb = paletteRef.current.current[d.idx] ?? paletteRef.current.current[0];
         const grad = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, d.r);
-        grad.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.35)`);
-        grad.addColorStop(0.4, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.14)`);
-        grad.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`);
+        grad.addColorStop(0, `rgba(${rgb[0] | 0},${rgb[1] | 0},${rgb[2] | 0},0.35)`);
+        grad.addColorStop(0.4, `rgba(${rgb[0] | 0},${rgb[1] | 0},${rgb[2] | 0},0.14)`);
+        grad.addColorStop(1, `rgba(${rgb[0] | 0},${rgb[1] | 0},${rgb[2] | 0},0)`);
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
