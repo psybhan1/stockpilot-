@@ -107,8 +107,8 @@ export async function connectManagerBotChannel(input: {
   if (!normalizedSenderId) {
     const reply =
       input.channel === BotChannel.WHATSAPP
-        ? "I couldn't read that WhatsApp number. Open StockPilot and tap Connect WhatsApp again."
-        : "I couldn't read that Telegram chat. Open StockPilot and tap Connect Telegram again.";
+        ? "⚠️ Something went wrong reading your WhatsApp number. Open StockPilot and tap Connect WhatsApp again."
+        : "⚠️ Something went wrong reading your Telegram chat. Open StockPilot and tap Connect Telegram again.";
 
     await recordConnectAttempt(input, "invalid", {
       senderId: input.senderId,
@@ -142,7 +142,7 @@ export async function connectManagerBotChannel(input: {
   });
 
   if (!request) {
-    const reply = "This connection link is no longer valid. Open StockPilot and tap connect again.";
+    const reply = "❌ This link is no longer valid. Open StockPilot → Settings and tap Connect again to get a fresh one.";
 
     await recordConnectAttempt(input, "invalid", {
       senderId: normalizedSenderId,
@@ -166,7 +166,7 @@ export async function connectManagerBotChannel(input: {
 
   if (request.expiresAt <= new Date()) {
     const reply =
-      "This connection link expired. Open StockPilot and tap connect again for a fresh link.";
+      "⏱️ This link has expired. Open StockPilot → Settings and tap Connect again to get a fresh one.";
 
     await db.botConnectRequest.update({
       where: {
@@ -229,8 +229,8 @@ export async function connectManagerBotChannel(input: {
   if (conflict) {
     const reply =
       input.channel === BotChannel.WHATSAPP
-        ? "That WhatsApp account is already linked to another StockPilot manager."
-        : "That Telegram chat is already linked to another StockPilot manager.";
+        ? "⚠️ This WhatsApp number is already linked to another StockPilot account. Contact your admin if this is a mistake."
+        : "⚠️ This Telegram account is already linked to another StockPilot account. Contact your admin if this is a mistake.";
 
     await recordConnectAttempt(input, "conflict", {
       locationId: request.locationId,
@@ -314,8 +314,8 @@ export async function connectManagerBotChannel(input: {
 
     const reply =
       input.channel === BotChannel.WHATSAPP
-        ? `WhatsApp is now connected to StockPilot for ${request.user.name}. You can message things like "Whole milk 2 left, order more."`
-        : `Telegram is now connected to StockPilot for ${request.user.name}. You can message things like "Whole milk 2 left, order more."`;
+        ? `✅ You're all set, ${request.user.name}! WhatsApp is now linked to StockPilot.\n\nYou'll receive stock alerts here. You can also send messages like:\n• "Whole milk — 2 left, order more"\n• "Order 5 cases of olive oil"`
+        : `✅ You're all set, ${request.user.name}! Telegram is now linked to StockPilot.\n\nYou'll receive stock alerts here. You can also send messages like:\n• "Whole milk — 2 left, order more"\n• "Order 5 cases of olive oil"`;
 
     await completeBotMessageReceipt({
       receiptId,
@@ -525,7 +525,7 @@ export function buildWhatsAppConnectUrl(senderNumber: string, token: string) {
   const normalizedSender = senderNumber
     .replace(/^whatsapp:/i, "")
     .replace(/[^\d]/g, "");
-  const message = encodeURIComponent(`connect ${token}`);
+  const message = encodeURIComponent(`🔗 Link my StockPilot account\nCode: ${token}`);
   return `https://wa.me/${normalizedSender}?text=${message}`;
 }
 
@@ -540,8 +540,11 @@ export function readConnectTokenFromText(input: {
     return match?.[1] ?? null;
   }
 
-  const match = normalized.match(/^connect\s+([A-Za-z0-9_-]+)$/i);
-  return match?.[1] ?? null;
+  // Match both "Code: {token}" (new pretty format) and "connect {token}" (legacy)
+  const prettyMatch = normalized.match(/code:\s*([A-Za-z0-9_-]+)/i);
+  if (prettyMatch) return prettyMatch[1];
+  const legacyMatch = normalized.match(/^connect\s+([A-Za-z0-9_-]+)$/i);
+  return legacyMatch?.[1] ?? null;
 }
 
 export function verifyTelegramWidgetAuth(input: Record<string, string>) {
