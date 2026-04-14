@@ -38,6 +38,7 @@ export function EditorialBackground({
   className,
 }: EditorialBackgroundProps) {
   const [videoReady, setVideoReady] = useState(false);
+  const [videoFailed, setVideoFailed] = useState(false);
 
   return (
     <div
@@ -48,17 +49,19 @@ export function EditorialBackground({
         className
       )}
     >
-      {/* Live generative motion — 100% client-rendered, no network. */}
+      {/* Live generative motion — always drawn. When the optional video
+          loads on top, mix-blend-screen layers them organically. If the
+          video is missing / fails, the canvas is the entire background. */}
       <InkCanvas />
 
-      {/* Optional video layer — layered above the canvas when available. */}
-      {videoSrc && (
+      {videoSrc && !videoFailed && (
         <video
           autoPlay
           muted
           loop
           playsInline
           onCanPlay={() => setVideoReady(true)}
+          onError={() => setVideoFailed(true)}
           className={cn(
             "absolute inset-0 size-full object-cover opacity-0 transition-opacity duration-1000",
             videoReady && "opacity-55 mix-blend-screen"

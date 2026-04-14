@@ -26,7 +26,11 @@ import { cn } from "@/lib/utils";
  *   ▶▶▶ marquee strip of live metrics ▶▶▶
  */
 
-const heroVideoUrl = process.env.STOCKPILOT_HERO_VIDEO_URL;
+// Prefer an explicit override (env var, e.g. a CDN URL), otherwise fall back
+// to /hero.mp4 — drop a locally-generated LTX-Video render into public/ and
+// every page hero picks it up automatically. If the file doesn't exist the
+// <video> element quietly fails and the ink canvas keeps drawing behind it.
+const heroVideoUrl = process.env.STOCKPILOT_HERO_VIDEO_URL ?? "/hero.mp4";
 
 export type HeroStat = {
   label: string;
