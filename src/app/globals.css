@@ -244,11 +244,14 @@
   border-radius: 22px;
   overflow: hidden;
 
-  /* Very subtle fill — the refraction + what's behind does the work. */
+  /* Cursor position inside the card (written by PointerGloss).
+     --gloss-on toggles 0/1 so the specular fades in/out. */
+  --gloss-x: 50%;
+  --gloss-y: 0%;
+  --gloss-on: 0;
+
   background: rgba(255, 255, 255, 0.14);
 
-  /* THE Apple trick: SVG displacement on top of blur + saturation.
-     The canvas behind is physically warped, like real glass. */
   backdrop-filter:
     url(#glass-refract)
     blur(18px)
@@ -261,13 +264,6 @@
 
   border: 1px solid rgba(255, 255, 255, 0.22);
 
-  /* Restrained shadow stack — Apple is never loud.
-       1. Tight contact: sits on the canvas
-       2. Mid-ambient: soft body shadow
-       3. Low-ambient: extended grounding
-       4. Subtle outer halo: the edge catches room light
-       5. Inner top highlight: one whisper of a rim
-       6. Inner bottom shadow: slight volume at the base */
   box-shadow:
     0 0 0 0.5px rgba(10, 10, 10, 0.04),
     0 0.5px 1px rgba(10, 10, 10, 0.06),
@@ -280,11 +276,10 @@
     background 360ms cubic-bezier(0.22, 1, 0.36, 1),
     border-color 360ms cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 360ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 360ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Soft dome highlight — broader, much lower opacity than before.
-   Real glass doesn't have a hard gloss band; it has a diffuse sheen. */
+/* ::before = static dome sheen — the light that's always there. */
 .notif-card::before {
   content: "";
   position: absolute;
@@ -300,22 +295,24 @@
   z-index: 1;
 }
 
-/* Fine specular — a short light kiss near the lower edge, not a streak. */
+/* ::after = pointer-tracked specular. Fades in on hover (via --gloss-on)
+   and a radial blob follows the cursor. This is the macOS / iOS trick —
+   the glass catches light from where you "look" at it. */
 .notif-card::after {
   content: "";
   position: absolute;
-  left: 25%;
-  right: 25%;
-  bottom: 0.5px;
-  height: 1px;
+  inset: 0;
   pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.45) 50%,
-    transparent 100%
+  opacity: var(--gloss-on, 0);
+  transition: opacity 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  background: radial-gradient(
+    220px 160px at var(--gloss-x) var(--gloss-y),
+    rgba(255, 255, 255, 0.42) 0%,
+    rgba(255, 255, 255, 0.12) 30%,
+    rgba(255, 255, 255, 0) 65%
   );
   z-index: 1;
+  mix-blend-mode: plus-lighter;
 }
 
 .notif-card > * { position: relative; z-index: 2; }
@@ -331,6 +328,12 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.6),
     inset 0 -0.5px 0 rgba(10, 10, 10, 0.05);
   transform: translateY(-1px);
+}
+
+/* Click press — the glass "gives" for a beat, like physical material. */
+.notif-card:active {
+  transform: translateY(0) scale(0.995);
+  transition-duration: 80ms;
 }
 
 /* ── Dark glass — same physics, darker fill + brighter edge ───────── */
@@ -361,11 +364,11 @@
 }
 
 .dark .notif-card::after {
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.18) 50%,
-    transparent 100%
+  background: radial-gradient(
+    240px 180px at var(--gloss-x) var(--gloss-y),
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.06) 30%,
+    rgba(255, 255, 255, 0) 65%
   );
 }
 

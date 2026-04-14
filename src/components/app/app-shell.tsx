@@ -10,6 +10,7 @@ import { logoutAction } from "@/app/actions/auth";
 import { AppLiveRefresh } from "@/components/app/app-live-refresh";
 import { GlassFilter } from "@/components/app/glass-filter";
 import { InkCanvas } from "@/components/app/ink-canvas";
+import { PointerGloss } from "@/components/app/pointer-gloss";
 import {
   NavigationFader,
   NavigationTransitionProvider,
@@ -54,6 +55,8 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
     <div className="relative flex min-h-screen flex-col bg-background">
       {/* Global SVG filter defs for liquid-glass refraction. */}
       <GlassFilter />
+      {/* Global pointer tracker — feeds specular highlight on hovered cards. */}
+      <PointerGloss />
 
       {/* ── Living gradient background — fixed behind everything ──── */}
       <div
