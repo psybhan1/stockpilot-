@@ -36,11 +36,18 @@ export type AddItemData = {
   category?: InventoryCategory;
   /** True when category was auto-detected from the item name — skip the category question */
   _categoryResolved?: boolean;
+  brand?: string | null;
+  usage?: string | null;
+  storage?: string | null;
   baseUnit?: BaseUnit;
   parLevelBase?: number;
   packSizeBase?: number;
   purchaseUnit?: MeasurementUnit;
   primarySupplierId?: string | null;
+  /** Smart defaults suggested by LLM — used to pre-fill answers */
+  suggestedBaseUnit?: BaseUnit;
+  suggestedParLevel?: number;
+  suggestedPackText?: string;
 };
 
 // ── ADD_SUPPLIER data shape ───────────────────────────────────────────────────

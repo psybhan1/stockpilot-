@@ -13,26 +13,44 @@ import {
   parseCategory,
   parseNumber,
   parsePackSize,
+  suggestItemDefaults,
 } from "./parse-helpers";
 
 // ── Step names ────────────────────────────────────────────────────────────────
-const STEPS = ["init", "base_unit", "par_level", "pack_size", "supplier"] as const;
+// Flow: init → brand → usage → storage → base_unit (smart-skip) → par_level →
+//       pack_size → supplier
+const STEPS = [
+  "init",
+  "brand",
+  "usage",
+  "storage",
+  "base_unit",
+  "par_level",
+  "pack_size",
+  "supplier",
+] as const;
 type AddItemStep = (typeof STEPS)[number];
+
+// ── Utility: normalise "skip" / "no" / empty replies for optional fields ─────
+function optionalText(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (isSkip(trimmed)) return null;
+  // Keep it short — this goes in notes.
+  return trimmed.slice(0, 120);
+}
 
 // ── First question (called when intent ADD_INVENTORY_ITEM is detected) ────────
 export function startAddItem(itemName: string): { reply: string; initialData: AddItemData } {
-  // Auto-detect category from the item name — skip the question if we can
+  // Auto-detect category from the item name — skip the category question if we can
   const autoCategory = parseCategory(itemName);
 
   if (autoCategory) {
     return {
       reply: [
-        `Got it, adding *${itemName}* to your inventory! 🛒`,
+        `Got it — adding *${itemName}* to your inventory. 🛒`,
         ``,
-        `How do you measure *${itemName}* in your kitchen?`,
-        `• grams`,
-        `• ml / liters`,
-        `• count / units (each)`,
+        `What brand is it? (e.g. "Monin", "Oatly", or say *skip* if it doesn't matter)`,
       ].join("\n"),
       initialData: { name: itemName, category: autoCategory, _categoryResolved: true },
     };
@@ -40,18 +58,9 @@ export function startAddItem(itemName: string): { reply: string; initialData: Ad
 
   return {
     reply: [
-      `Got it, adding *${itemName}* to your inventory! 🛒`,
+      `Got it — adding *${itemName}* to your inventory. 🛒`,
       ``,
-      `What category is it?`,
-      `• coffee`,
-      `• dairy`,
-      `• alt dairy / plant-based`,
-      `• syrup / sauce`,
-      `• bakery / ingredient`,
-      `• produce / fresh`,
-      `• packaging`,
-      `• cleaning`,
-      `• other`,
+      `What kind of thing is it? e.g. coffee, dairy, syrup, produce, packaging, cleaning. Or just describe it and I'll figure it out.`,
     ].join("\n"),
     initialData: { name: itemName },
   };
@@ -66,52 +75,121 @@ export async function advanceAddItem(
 ): Promise<WorkflowAdvanceResult> {
   switch (step) {
     case "init": {
-      // If category was already auto-resolved from the item name, the user's
-      // reply here is actually their base_unit answer — forward it directly.
+      // If category was auto-resolved from the item name, the user's reply here
+      // is actually their *brand* answer — forward into the brand step.
       if (data._categoryResolved) {
-        const baseUnit = parseBaseUnit(userMessage);
-        if (!baseUnit) {
-          return {
-            reply: `How is *${data.name}* measured? Reply with *grams*, *ml*, or *count*.`,
-            done: false,
-            nextStep: "init",
-            updatedData: data,
-          };
-        }
+        const brand = optionalText(userMessage);
         return {
-          reply: `What's your par level for *${data.name}*?\nThat's how many ${baseUnitLabel(baseUnit)} you always want in stock.`,
+          reply: `What do you use *${data.name}* for? (e.g. "lattes and mochas", "smoothies", "pastries")`,
           done: false,
-          nextStep: "par_level",
-          updatedData: { ...data, baseUnit },
+          nextStep: "usage",
+          updatedData: { ...data, brand },
         };
       }
 
-      // If the user is giving up / asking the bot to decide, auto-pick a
-      // reasonable default category instead of looping on the same question.
       const wantsAutoPick = /\b(figure (it )?out|you (pick|decide|choose|guess)|your choice|whatever|any|auto|dunno|i don'?t know|idk|up to you)\b/i.test(
         userMessage
       );
 
       let category = parseCategory(userMessage);
       if (!category && wantsAutoPick) {
-        // Use the item name itself as a fallback guess; if that still fails,
-        // default to SUPPLY so the flow can continue.
         category = parseCategory(data.name ?? "") ?? InventoryCategory.SUPPLY;
       }
 
       if (!category) {
         return {
-          reply: `I didn't catch that. What category is *${data.name}*? Reply with the category (dairy, coffee, syrup, produce, packaging, cleaning, other) — or say *figure it out* and I'll pick for you.`,
+          reply: `I didn't catch that. What kind of item is *${data.name}*? Any of: dairy, coffee, syrup, produce, packaging, cleaning. Or just say *figure it out* and I'll pick.`,
           done: false,
           nextStep: "init",
           updatedData: data,
         };
       }
+
       return {
-        reply: `How do you measure *${data.name}* in your kitchen?\n\n• grams\n• ml / liters\n• count / units (each)`,
+        reply: `What brand is *${data.name}*? (e.g. "Monin", "Oatly", or say *skip* if brand doesn't matter)`,
+        done: false,
+        nextStep: "brand",
+        updatedData: { ...data, category },
+      };
+    }
+
+    case "brand": {
+      const brand = optionalText(userMessage);
+      return {
+        reply: `What's *${data.name}* used for? (e.g. "lattes and mochas", "smoothies", "baking") — keeps things clear when linking recipes later.`,
+        done: false,
+        nextStep: "usage",
+        updatedData: { ...data, brand },
+      };
+    }
+
+    case "usage": {
+      const usage = optionalText(userMessage);
+      return {
+        reply: [
+          `Where do you store *${data.name}*?`,
+          `• fridge`,
+          `• freezer`,
+          `• dry storage / pantry`,
+          `• counter / bar`,
+          `(or *skip*)`,
+        ].join("\n"),
+        done: false,
+        nextStep: "storage",
+        updatedData: { ...data, usage },
+      };
+    }
+
+    case "storage": {
+      const storage = optionalText(userMessage);
+
+      // Ask Groq for smart defaults now that we have name + brand + usage +
+      // category. If it returns a confident baseUnit we can skip that question.
+      const defaults = await suggestItemDefaults({
+        name: data.name ?? "",
+        brand: data.brand,
+        usage: data.usage,
+        storage,
+        category: (data.category as InventoryCategory) ?? null,
+      });
+
+      const updatedData: AddItemData = {
+        ...data,
+        storage,
+        suggestedBaseUnit: defaults.baseUnit,
+        suggestedParLevel: defaults.parLevel,
+        suggestedPackText: defaults.packText,
+      };
+
+      // If the LLM is confident about base unit (not the fallback COUNT), use it
+      // and skip straight to par level.
+      const confidentBaseUnit =
+        defaults.baseUnit === BaseUnit.GRAM || defaults.baseUnit === BaseUnit.MILLILITER;
+
+      if (confidentBaseUnit) {
+        return {
+          reply: [
+            `Good. I'll measure *${data.name}* in ${baseUnitLabel(defaults.baseUnit)}.`,
+            ``,
+            `What's your par level — how much do you always want in stock?`,
+            `(A typical guess for this kind of item is *${defaults.parLevel} ${baseUnitLabel(defaults.baseUnit)}* — say a number, or *sounds good* to use that.)`,
+          ].join("\n"),
+          done: false,
+          nextStep: "par_level",
+          updatedData: { ...updatedData, baseUnit: defaults.baseUnit },
+        };
+      }
+
+      return {
+        reply: [
+          `How do you measure *${data.name}* in your kitchen?`,
+          `• grams`,
+          `• ml / liters`,
+          `• count / units (each)`,
+        ].join("\n"),
         done: false,
         nextStep: "base_unit",
-        updatedData: { ...data, category },
+        updatedData,
       };
     }
 
@@ -125,8 +203,13 @@ export async function advanceAddItem(
           updatedData: data,
         };
       }
+      const suggested =
+        typeof data.suggestedParLevel === "number" ? data.suggestedParLevel : null;
+      const hint = suggested
+        ? `\n(Typical for this kind of item: *${suggested} ${baseUnitLabel(baseUnit)}* — say that number, or *sounds good* to use it.)`
+        : "";
       return {
-        reply: `What's your par level for *${data.name}*?\nThat's how many ${baseUnitLabel(baseUnit)} you always want in stock.`,
+        reply: `What's your par level for *${data.name}*?\nThat's how many ${baseUnitLabel(baseUnit)} you always want in stock.${hint}`,
         done: false,
         nextStep: "par_level",
         updatedData: { ...data, baseUnit },
@@ -134,24 +217,32 @@ export async function advanceAddItem(
     }
 
     case "par_level": {
-      const par = parseNumber(userMessage);
+      // Accept "sounds good" / "yes" / "use that" to take the suggested default.
+      const acceptDefault =
+        /\b(sounds?\s*good|use\s*that|that\s*works|yes|yep|sure|ok|okay|fine)\b/i.test(userMessage);
+      let par = parseNumber(userMessage);
+      if (!par && acceptDefault && typeof data.suggestedParLevel === "number") {
+        par = data.suggestedParLevel;
+      }
       if (!par || par <= 0) {
         return {
-          reply: `Please give me a number for the par level of *${data.name}*. (e.g. 50)`,
+          reply: `Give me a number for the par level of *${data.name}* — e.g. 50. Or say *sounds good* to use my suggestion.`,
           done: false,
           nextStep: "par_level",
           updatedData: data,
         };
       }
+
+      const suggestedPack = data.suggestedPackText ?? "";
+      const hint = suggestedPack
+        ? `\n(Typical for this item: *${suggestedPack}* — say that, or *sounds good* to use it.)`
+        : "";
+
       return {
         reply: [
-          `How do you order *${data.name}* from your supplier?`,
+          `How does *${data.name}* come from the supplier?`,
           ``,
-          `Give me the pack size, e.g.:`,
-          `• "1L bottles"`,
-          `• "500g bags"`,
-          `• "individual units"`,
-          `• "cases of 12"`,
+          `e.g. "1L bottles", "500g bags", "individual units", "cases of 12"${hint}`,
         ].join("\n"),
         done: false,
         nextStep: "pack_size",
@@ -161,7 +252,12 @@ export async function advanceAddItem(
 
     case "pack_size": {
       const baseUnit = (data.baseUnit as BaseUnit) ?? BaseUnit.COUNT;
-      const { packSizeBase, purchaseUnit } = parsePackSize(userMessage, baseUnit);
+      const acceptDefault =
+        /\b(sounds?\s*good|use\s*that|that\s*works|yes|yep|sure|ok|okay|fine)\b/i.test(userMessage);
+      const effectiveInput =
+        acceptDefault && data.suggestedPackText ? data.suggestedPackText : userMessage;
+      const { packSizeBase, purchaseUnit } = parsePackSize(effectiveInput, baseUnit);
+
       const supplierList =
         context.suppliers.length > 0
           ? `\n\nYour current suppliers:\n${context.suppliers.map((s) => `• ${s.name}`).join("\n")}`
@@ -218,6 +314,12 @@ export async function executeAddItem(
 
   const sku = generateSku(name);
 
+  // Fold brand / usage into the notes field so they're preserved and visible in the UI.
+  const noteParts: string[] = [];
+  if (data.brand) noteParts.push(`Brand: ${data.brand}`);
+  if (data.usage) noteParts.push(`Used for: ${data.usage}`);
+  const notes = noteParts.length > 0 ? noteParts.join(" | ") : null;
+
   const item = await db.inventoryItem.create({
     data: {
       locationId: context.locationId,
@@ -237,6 +339,8 @@ export async function executeAddItem(
       leadTimeDays: 0,
       primarySupplierId: data.primarySupplierId ?? null,
       confidenceScore: 0.9,
+      storageLocation: data.storage ?? null,
+      notes,
     },
     select: { id: true, name: true },
   });
@@ -263,15 +367,16 @@ export async function executeAddItem(
 
   const catLabel = categoryLabel(category);
   const unitLabel = baseUnitLabel(baseUnit);
-  const supplierLine = data.primarySupplierId
-    ? `\n• Supplier linked ✓`
-    : "";
+  const brandLine = data.brand ? `\n• Brand: ${data.brand}` : "";
+  const usageLine = data.usage ? `\n• Used for: ${data.usage}` : "";
+  const storageLine = data.storage ? `\n• Stored in: ${data.storage}` : "";
+  const supplierLine = data.primarySupplierId ? `\n• Supplier linked ✓` : "";
 
   return {
     reply: [
       `✅ *${name}* added to your inventory!`,
       ``,
-      `• Category: ${catLabel}`,
+      `• Category: ${catLabel}${brandLine}${usageLine}${storageLine}`,
       `• Unit: ${unitLabel}`,
       `• Par level: ${parLevelBase} ${unitLabel}`,
       `• Pack size: ${packSizeBase} ${purchaseUnit.toLowerCase()}`,

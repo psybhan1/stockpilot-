@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /c/Users/sobha/Desktop/codex/stockpilot && railway up --detach 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

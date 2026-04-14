@@ -300,6 +300,101 @@ export function matchIngredientsToInventory(
   return { matched, unmatched };
 }
 
+// ── Smart item-default suggestion (Groq-backed) ──────────────────────────────
+
+export type ItemDefaults = {
+  baseUnit: BaseUnit;
+  parLevel: number;
+  packText: string;
+};
+
+/**
+ * Given a partial picture of a new inventory item (name + optional brand /
+ * usage / category), asks Groq to suggest sensible defaults for how it's
+ * measured, a typical par level for a small café/restaurant, and a typical
+ * supplier pack size. Falls back to safe defaults if Groq is unavailable.
+ */
+export async function suggestItemDefaults(input: {
+  name: string;
+  brand?: string | null;
+  usage?: string | null;
+  storage?: string | null;
+  category?: InventoryCategory | null;
+}): Promise<ItemDefaults> {
+  const fallback: ItemDefaults = { baseUnit: BaseUnit.COUNT, parLevel: 10, packText: "individual units" };
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) return fallback;
+
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${groqKey}`,
+      },
+      body: JSON.stringify({
+        model: process.env.GROQ_BOT_MODEL ?? "llama-3.3-70b-versatile",
+        temperature: 0.1,
+        max_tokens: 250,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You suggest sensible inventory defaults for a small café/restaurant.",
+              "Given an item, output JSON: {baseUnit, parLevel, packText}.",
+              "baseUnit ∈ {GRAM, MILLILITER, COUNT}.",
+              "parLevel = a reasonable weekly par in base units (e.g. 5000 grams of coffee, 10000 ml of milk, 50 count bananas).",
+              "packText = how it's typically ordered from a wholesaler (e.g. '1kg bags', '1L bottles', 'cases of 12', 'individual units').",
+              "Keep parLevel realistic for a small business — not a warehouse.",
+            ].join(" "),
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              name: input.name,
+              brand: input.brand ?? null,
+              usage: input.usage ?? null,
+              storage: input.storage ?? null,
+              category: input.category ?? null,
+            }),
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!response.ok) return fallback;
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const raw = data?.choices?.[0]?.message?.content?.trim() ?? "";
+    if (!raw) return fallback;
+
+    const parsed = JSON.parse(raw) as {
+      baseUnit?: string;
+      parLevel?: number;
+      packText?: string;
+    };
+
+    const baseUnit =
+      parsed.baseUnit === "GRAM" || parsed.baseUnit === "MILLILITER" || parsed.baseUnit === "COUNT"
+        ? (parsed.baseUnit as BaseUnit)
+        : fallback.baseUnit;
+    const parLevel =
+      typeof parsed.parLevel === "number" && parsed.parLevel > 0 && parsed.parLevel < 1_000_000
+        ? Math.round(parsed.parLevel)
+        : fallback.parLevel;
+    const packText = typeof parsed.packText === "string" && parsed.packText.trim()
+      ? parsed.packText.trim()
+      : fallback.packText;
+
+    return { baseUnit, parLevel, packText };
+  } catch {
+    return fallback;
+  }
+}
+
 // ── SKU generation ────────────────────────────────────────────────────────────
 
 export function generateSku(name: string): string {
