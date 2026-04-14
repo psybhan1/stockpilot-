@@ -1,36 +1,12 @@
 import { type ReactNode } from "react";
 
-import {
-  EditorialBackground,
-  Eyebrow,
-  LiveDot,
-  MarqueeStrip,
-  RevealText,
-  ScrollReveal,
-} from "@/components/app/editorial";
 import { cn } from "@/lib/utils";
 
 /**
- * Editorial page hero — the shared header the whole app uses so every
- * screen feels part of the same publication.
- *
- * Layout:
- *   ┌──────────────────────────────────────────────┐
- *   │ eyebrow                        live ·          │
- *   │                                                │
- *   │           OVERSIZED DISPLAY TITLE             │
- *   │           italic subtitle                      │
- *   │                                                │
- *   │  ── stat 01   ── stat 02   ── stat 03          │
- *   └──────────────────────────────────────────────┘
- *   ▶▶▶ marquee strip of live metrics ▶▶▶
+ * Clean page header — bold uppercase eyebrow, oversized sans title,
+ * optional inline metric strip, optional right-rail action. No canvas,
+ * no grain, no marquee. Designed for speed of scan.
  */
-
-// Prefer an explicit override (env var, e.g. a CDN URL), otherwise fall back
-// to /hero.mp4 — drop a locally-generated LTX-Video render into public/ and
-// every page hero picks it up automatically. If the file doesn't exist the
-// <video> element quietly fails and the ink canvas keeps drawing behind it.
-const heroVideoUrl = process.env.STOCKPILOT_HERO_VIDEO_URL ?? "/hero.mp4";
 
 export type HeroStat = {
   label: string;
@@ -41,136 +17,72 @@ export type HeroStat = {
 type PageHeroProps = {
   eyebrow: string;
   title: string;
-  /** Optional italic tail — rendered below the main title in italic display. */
+  /** Tiny muted tail — one short line. */
   subtitle?: string;
-  /** Small grey helper line. */
+  /** Longer grey helper line. */
   description?: string;
   stats?: HeroStat[];
-  marquee?: string[];
-  /** Anything extra rendered in the hero, below stats. */
-  children?: ReactNode;
-  /** Optional right-rail affordance (buttons etc.) placed top-right. */
+  /** Right-side action buttons / menus. */
   action?: ReactNode;
-  /** Smaller hero when you just want a header, no drama. */
+  /** Kept for back-compat; ignored in the simplified design. */
   compact?: boolean;
+  /** Kept for back-compat; ignored. */
+  marquee?: string[];
 };
 
 export function PageHero({
   eyebrow,
   title,
-  subtitle,
   description,
   stats,
-  marquee,
-  children,
   action,
-  compact = false,
 }: PageHeroProps) {
   return (
-    <>
-      <section
-        className={cn(
-          "relative isolate overflow-hidden rounded-[36px] border border-border/60 bg-card/40 backdrop-blur",
-          compact ? "" : ""
-        )}
-      >
-        <EditorialBackground videoSrc={heroVideoUrl} vignette />
+    <header className="border-b border-border pb-8">
+      <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
+          <p className="font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+            {eyebrow}
+          </p>
+          <h1 className="mt-3 text-4xl font-extrabold uppercase leading-[0.95] tracking-[-0.03em] sm:text-5xl md:text-6xl">
+            {title}
+          </h1>
+          {description && (
+            <p className="mt-4 max-w-2xl text-sm text-muted-foreground">
+              {description}
+            </p>
+          )}
+        </div>
+        {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
+      </div>
 
+      {stats && stats.length > 0 && (
         <div
           className={cn(
-            "relative z-10 flex flex-col justify-between p-8 sm:p-12",
-            compact ? "min-h-[240px]" : "min-h-[420px]"
+            "mt-8 grid gap-x-8 gap-y-6 border-t border-border pt-6",
+            stats.length === 1 && "grid-cols-1",
+            stats.length === 2 && "grid-cols-2",
+            stats.length === 3 && "grid-cols-3",
+            stats.length >= 4 && "grid-cols-2 sm:grid-cols-4"
           )}
         >
-          <div className="flex items-start justify-between gap-4">
-            <Eyebrow>{eyebrow}</Eyebrow>
-            <div className="flex items-center gap-3">
-              {action}
-              <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                <LiveDot />
-                Live
-              </div>
-            </div>
-          </div>
-
-          <div className={cn(compact ? "mt-8" : "mt-16")}>
-            <RevealText
-              as="h1"
-              className={cn(
-                "font-display leading-[0.95] tracking-[-0.04em]",
-                compact
-                  ? "text-[clamp(2.25rem,6vw,4.5rem)]"
-                  : "text-[clamp(3rem,9vw,7.5rem)]"
-              )}
-            >
-              {title}
-            </RevealText>
-            {subtitle && (
-              <RevealText
-                as="p"
-                startDelay={400}
-                stagger={14}
-                className={cn(
-                  "mt-2 font-display italic leading-tight text-muted-foreground",
-                  compact
-                    ? "text-[clamp(1.1rem,2.5vw,1.8rem)]"
-                    : "text-[clamp(1.5rem,4vw,3rem)]"
-                )}
-              >
-                {subtitle}
-              </RevealText>
-            )}
-            {description && (
-              <p className="mt-5 max-w-xl font-mono text-[11px] uppercase leading-relaxed tracking-[0.18em] text-muted-foreground">
-                {description}
+          {stats.map((s, i) => (
+            <div key={i} className="min-w-0">
+              <p className="font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+                {s.label}
               </p>
-            )}
-          </div>
-
-          {stats && stats.length > 0 && (
-            <ScrollReveal delay={600}>
-              <div
+              <p
                 className={cn(
-                  "mt-12 grid gap-6",
-                  stats.length === 1 && "grid-cols-1",
-                  stats.length === 2 && "sm:grid-cols-2",
-                  stats.length === 3 && "sm:grid-cols-3",
-                  stats.length >= 4 && "sm:grid-cols-2 lg:grid-cols-4"
+                  "mt-1.5 text-3xl font-bold tabular-nums leading-none",
+                  s.highlight && "text-accent"
                 )}
               >
-                {stats.map((s, i) => (
-                  <HeroStatBlock key={i} index={i + 1} stat={s} />
-                ))}
-              </div>
-            </ScrollReveal>
-          )}
-
-          {children}
+                {s.value}
+              </p>
+            </div>
+          ))}
         </div>
-      </section>
-
-      {marquee && marquee.length > 0 && (
-        <MarqueeStrip items={marquee} speed="slow" className="mt-8" />
       )}
-    </>
-  );
-}
-
-function HeroStatBlock({ index, stat }: { index: number; stat: HeroStat }) {
-  return (
-    <div className="group relative">
-      <div className="rule-thin mb-4" />
-      <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-muted-foreground">
-        {String(index).padStart(2, "0")} — {stat.label}
-      </p>
-      <p
-        className={cn(
-          "mt-3 font-display text-5xl tabular-nums leading-none",
-          stat.highlight ? "text-destructive" : "text-foreground"
-        )}
-      >
-        {stat.value}
-      </p>
-    </div>
+    </header>
   );
 }

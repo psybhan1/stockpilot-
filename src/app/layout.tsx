@@ -1,7 +1,7 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { Inter_Tight, Instrument_Serif, JetBrains_Mono } from "next/font/google";
+import { Inter_Tight, JetBrains_Mono } from "next/font/google";
 
 import { AppProviders } from "@/components/providers/app-providers";
 import { env } from "@/lib/env";
@@ -9,15 +9,7 @@ import { env } from "@/lib/env";
 const interTight = Inter_Tight({
   subsets: ["latin"],
   variable: "--font-sans",
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-});
-
-const instrumentSerif = Instrument_Serif({
-  subsets: ["latin"],
-  variable: "--font-display",
-  weight: ["400"],
-  style: ["normal", "italic"],
+  weight: ["400", "500", "600", "700", "800"],
   display: "swap",
 });
 
@@ -64,11 +56,7 @@ export const metadata: Metadata = {
     title: "StockPilot",
     statusBarStyle: "default",
   },
-  formatDetection: {
-    email: false,
-    address: false,
-    telephone: false,
-  },
+  formatDetection: { email: false, address: false, telephone: false },
   openGraph: {
     title: "StockPilot",
     description: "Prevent stockouts before the rush turns into supplier chaos.",
@@ -85,21 +73,19 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#F1EDE5" },
+    { media: "(prefers-color-scheme: light)", color: "#F5F3EE" },
     { media: "(prefers-color-scheme: dark)", color: "#0A0A0A" },
   ],
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: ReactNode;
-}>) {
+}: Readonly<{ children: ReactNode }>) {
   return (
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${interTight.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable}`}
+      className={`${interTight.variable} ${jetbrainsMono.variable}`}
     >
       <body className="min-h-full flex flex-col overflow-x-hidden font-sans">
         <AppProviders>{children}</AppProviders>
