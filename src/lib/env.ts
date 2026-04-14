@@ -60,6 +60,8 @@ export const env = {
     process.env.RESEND_FROM_EMAIL ?? "StockPilot <onboarding@resend.dev>",
   EXPO_ACCESS_TOKEN: process.env.EXPO_ACCESS_TOKEN,
   EXPO_TEST_PUSH_TOKEN: process.env.EXPO_TEST_PUSH_TOKEN,
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
   TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
   TWILIO_WHATSAPP_FROM: process.env.TWILIO_WHATSAPP_FROM,
