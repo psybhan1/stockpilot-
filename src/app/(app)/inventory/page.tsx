@@ -13,24 +13,25 @@ export default async function InventoryPage() {
   const session = await requireSession(Role.SUPERVISOR);
   const items = await getInventoryList(session.locationId);
 
+  // Fast path — compute image URLs in memory so the page renders instantly.
+  // The DB write is fire-and-forget: we don't block the user on N round-trips,
+  // and the next render already has the URL set here.
   const missing = items.filter((item) => !item.imageUrl);
   if (missing.length > 0) {
-    await Promise.all(
-      missing.map(async (item) => {
-        const brandMatch = item.notes?.match(/brand:\s*([^|]+)/i);
-        const brand = brandMatch?.[1]?.trim() ?? null;
-        const url = buildInventoryImageUrl({
-          name: item.name,
-          brand,
-          category: item.category,
-        });
-        item.imageUrl = url;
-        await db.inventoryItem.update({
-          where: { id: item.id },
-          data: { imageUrl: url },
-        });
-      })
-    );
+    for (const item of missing) {
+      const brandMatch = item.notes?.match(/brand:\s*([^|]+)/i);
+      const brand = brandMatch?.[1]?.trim() ?? null;
+      const url = buildInventoryImageUrl({
+        name: item.name,
+        brand,
+        category: item.category,
+      });
+      item.imageUrl = url;
+      // Background-persist; don't block the page.
+      void db.inventoryItem
+        .update({ where: { id: item.id }, data: { imageUrl: url } })
+        .catch(() => {});
+    }
   }
 
   const totalItems = items.length;

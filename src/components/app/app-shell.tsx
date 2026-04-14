@@ -9,6 +9,11 @@ import { useTheme } from "next-themes";
 import { logoutAction } from "@/app/actions/auth";
 import { AppLiveRefresh } from "@/components/app/app-live-refresh";
 import { InkCanvas } from "@/components/app/ink-canvas";
+import {
+  NavigationFader,
+  NavigationTransitionProvider,
+  TransitionLink,
+} from "@/components/app/navigation-transition";
 import { PageTransition } from "@/components/app/page-transition";
 import { Role } from "@/lib/domain-enums";
 import { navigationItems, productName } from "@/lib/navigation";
@@ -44,6 +49,7 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
     .slice(0, 2);
 
   return (
+    <NavigationTransitionProvider>
     <div className="relative flex min-h-screen flex-col bg-background">
       {/* ── Living gradient background — fixed behind everything ──── */}
       <div
@@ -71,7 +77,7 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
               const active =
                 pathname === item.href || pathname.startsWith(`${item.href}/`);
               return (
-                <Link
+                <TransitionLink
                   key={item.href}
                   href={item.href}
                   className={cn(
@@ -84,7 +90,7 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
                   {active && (
                     <span className="nav-active-indicator pointer-events-none absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-foreground" />
                   )}
-                </Link>
+                </TransitionLink>
               );
             })}
           </nav>
@@ -141,7 +147,7 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
                 const active =
                   pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
-                  <Link
+                  <TransitionLink
                     key={item.href}
                     href={item.href}
                     onClick={() => setMobileOpen(false)}
@@ -153,7 +159,7 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
                     )}
                   >
                     {item.label}
-                  </Link>
+                  </TransitionLink>
                 );
               })}
             </nav>
@@ -164,11 +170,14 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
       {/* ── Content ─────────────────────────────────────────────────── */}
       <main className="relative z-10 flex-1">
         <div className="mx-auto w-full max-w-[1600px] px-4 py-8 sm:px-6 sm:py-10 lg:px-10 lg:py-12">
-          <PageTransition>{children}</PageTransition>
+          <NavigationFader>
+            <PageTransition>{children}</PageTransition>
+          </NavigationFader>
         </div>
       </main>
 
       <AppLiveRefresh intervalMs={autoRefreshMs} />
     </div>
+    </NavigationTransitionProvider>
   );
 }
