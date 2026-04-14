@@ -8,6 +8,7 @@ import { useTheme } from "next-themes";
 
 import { logoutAction } from "@/app/actions/auth";
 import { AppLiveRefresh } from "@/components/app/app-live-refresh";
+import { GlassFilter } from "@/components/app/glass-filter";
 import { InkCanvas } from "@/components/app/ink-canvas";
 import {
   NavigationFader,
@@ -51,6 +52,9 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
   return (
     <NavigationTransitionProvider>
     <div className="relative flex min-h-screen flex-col bg-background">
+      {/* Global SVG filter defs for liquid-glass refraction. */}
+      <GlassFilter />
+
       {/* ── Living gradient background — fixed behind everything ──── */}
       <div
         className="pointer-events-none fixed inset-0 z-0"
