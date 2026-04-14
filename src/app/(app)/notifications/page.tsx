@@ -109,7 +109,7 @@ export default async function NotificationsPage({
             });
 
             return (
-              <div key={config.channel} className="rounded-xl border border-border/50 bg-muted/20 p-4 space-y-3">
+              <div key={config.channel} className="brutal-card p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <config.icon className="size-4 text-primary" />
@@ -141,7 +141,7 @@ export default async function NotificationsPage({
               const failureSummary = readFailureSummary(notification.metadata);
 
               return (
-                <div key={notification.id} className="rounded-xl border border-border/50 bg-card p-4 space-y-2">
+                <div key={notification.id} className="brutal-card p-4 space-y-2">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -204,7 +204,7 @@ function Section({ title, description, children }: { title: string; description:
 
 function MetricCard({ label, value, highlight }: { label: string; value: number; highlight?: "warning" | "critical" }) {
   return (
-    <div className="rounded-xl border border-border/50 bg-card p-4">
+    <div className="brutal-card p-4">
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
       <p className={`mt-2 text-2xl font-semibold tabular-nums ${
         highlight === "critical" ? "text-red-500" : highlight === "warning" ? "text-amber-500" : ""

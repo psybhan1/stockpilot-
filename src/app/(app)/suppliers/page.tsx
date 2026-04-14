@@ -26,7 +26,7 @@ export default async function SuppliersPage() {
       />
 
       {/* Add supplier form */}
-      <section className="rounded-xl border border-border/50 bg-card p-5 space-y-4">
+      <section className="brutal-card p-5 space-y-4">
         <div>
           <h2 className="text-lg font-semibold">Add supplier</h2>
           <p className="text-sm text-muted-foreground">Set up ordering mode, contacts, and delivery rhythm</p>
@@ -71,39 +71,49 @@ export default async function SuppliersPage() {
 
       {/* Supplier list */}
       <section className="grid gap-3 lg:grid-cols-2">
-        {suppliers.map((supplier) => (
+        {suppliers.map((supplier, i) => (
           <Link
             key={supplier.id}
             href={`/suppliers/${supplier.id}`}
-            className="group rounded-xl border border-border/50 bg-card p-4 transition-colors hover:bg-muted/30"
+            className="brutal-card group p-4"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm font-medium">{supplier.name}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
+                <div className="flex items-center gap-3">
+                  <span className="brutal-number text-xs text-muted-foreground">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span className="brutal-chip-outline">
+                    {supplier.orderingMode === "WEBSITE"
+                      ? "Website"
+                      : supplier.orderingMode === "EMAIL"
+                      ? "Email"
+                      : "Manual"}
+                  </span>
+                </div>
+                <p className="mt-2 text-base font-bold uppercase tracking-[-0.02em]">
+                  {supplier.name}
+                </p>
+                <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                   {supplier.contactName ?? "No contact"}
                 </p>
               </div>
-              <StatusBadge
-                label={supplier.orderingMode === "WEBSITE" ? "Website" : supplier.orderingMode === "EMAIL" ? "Email" : "Manual"}
-                tone={supplier.orderingMode === "WEBSITE" ? "info" : "neutral"}
-              />
             </div>
 
-            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <span>{supplier.leadTimeDays}d lead time</span>
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              <span>{supplier.leadTimeDays}d lead</span>
               <span>{supplier.supplierItems.length} item{supplier.supplierItems.length !== 1 ? "s" : ""}</span>
-              <span>{supplier.email ?? supplier.phone ?? "No contact info"}</span>
+              <span>{supplier.email ?? supplier.phone ?? "No contact"}</span>
               <span>{formatDeliveryDays(supplier.deliveryDays)}</span>
             </div>
 
             {supplier.purchaseOrders.length > 0 && (
-              <p className="mt-2 text-xs text-muted-foreground">
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                 {supplier.purchaseOrders.length} recent order{supplier.purchaseOrders.length !== 1 ? "s" : ""}
               </p>
             )}
 
-            <div className="mt-3 flex items-center gap-1 text-xs font-medium text-muted-foreground">
+            <div className="mt-3 flex items-center gap-1 font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground group-hover:text-foreground">
               View supplier
               <ArrowRight className="size-3 opacity-0 transition-opacity group-hover:opacity-100" />
             </div>

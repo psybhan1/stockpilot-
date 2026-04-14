@@ -51,30 +51,53 @@ export default async function PurchaseOrdersPage() {
 
         {pendingRecommendations.length ? (
           <div className="grid gap-3 xl:grid-cols-2">
-            {pendingRecommendations.map((rec) => (
+            {pendingRecommendations.map((rec, i) => (
               <div
                 key={rec.id}
-                className="rounded-xl border border-border/50 bg-card p-5 space-y-4"
+                className={`brutal-card ${rec.urgency === "CRITICAL" ? "brutal-card-hot pl-7" : ""} p-5 space-y-4`}
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{rec.inventoryItem.name}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{rec.supplier.name}</p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-3">
+                      <span className="brutal-number text-xs text-muted-foreground">
+                        {String(i + 1).padStart(2, "0")}
+                      </span>
+                      {rec.urgency === "CRITICAL" ? (
+                        <span className="brutal-chip-hot">Urgent</span>
+                      ) : (
+                        <span className="brutal-chip-outline">
+                          {rec.urgency === "WARNING" ? "Watch" : "Info"}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-2 text-base font-bold uppercase tracking-[-0.02em]">
+                      {rec.inventoryItem.name}
+                    </p>
+                    <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                      From · {rec.supplier.name}
+                    </p>
                   </div>
-                  <StatusBadge
-                    label={rec.urgency === "CRITICAL" ? "Urgent" : rec.urgency === "WARNING" ? "Watch" : "Info"}
-                    tone={rec.urgency === "CRITICAL" ? "critical" : rec.urgency === "WARNING" ? "warning" : "info"}
-                  />
                 </div>
 
-                <div className="flex gap-3 text-sm">
-                  <div className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2">
-                    <p className="text-xs text-muted-foreground">Qty</p>
-                    <p className="font-medium">{rec.recommendedPackCount} {rec.recommendedPurchaseUnit.toLowerCase()}</p>
+                <div className="grid grid-cols-[auto_1fr] gap-0 border-2 border-foreground">
+                  <div className="border-r-2 border-foreground px-3 py-2">
+                    <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+                      Qty
+                    </p>
+                    <p className="brutal-number mt-0.5 text-lg">
+                      {rec.recommendedPackCount}{" "}
+                      <span className="text-xs text-muted-foreground">
+                        {rec.recommendedPurchaseUnit.toLowerCase()}
+                      </span>
+                    </p>
                   </div>
-                  <div className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2 flex-1">
-                    <p className="text-xs text-muted-foreground">Reason</p>
-                    <p className="text-muted-foreground line-clamp-1">{rec.rationale}</p>
+                  <div className="min-w-0 px-3 py-2">
+                    <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+                      Reason
+                    </p>
+                    <p className="mt-0.5 line-clamp-1 text-sm text-muted-foreground">
+                      {rec.rationale}
+                    </p>
                   </div>
                 </div>
 
@@ -87,29 +110,45 @@ export default async function PurchaseOrdersPage() {
                         type="number"
                         min={1}
                         defaultValue={rec.recommendedPackCount}
-                        className="h-9 w-24 text-sm"
+                        className="h-9 w-24 rounded-none border-2 border-foreground text-sm"
                       />
-                      <Button type="submit" size="sm" className="h-9 text-xs">
+                      <Button
+                        type="submit"
+                        size="sm"
+                        className="h-9 rounded-none border-2 border-foreground bg-[var(--hot)] text-xs font-bold uppercase tracking-[0.14em] text-[var(--hot-foreground)] hover:bg-[var(--hot)]/90"
+                      >
                         Approve
                       </Button>
                     </form>
                     <div className="flex gap-2">
                       <form action={deferRecommendationAction}>
                         <input type="hidden" name="recommendationId" value={rec.id} />
-                        <Button type="submit" variant="outline" size="sm" className="h-8 text-xs">
+                        <Button
+                          type="submit"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-none border-2 border-foreground text-xs font-bold uppercase tracking-[0.14em]"
+                        >
                           Later
                         </Button>
                       </form>
                       <form action={rejectRecommendationAction}>
                         <input type="hidden" name="recommendationId" value={rec.id} />
-                        <Button type="submit" variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
+                        <Button
+                          type="submit"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 rounded-none text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground"
+                        >
                           Reject
                         </Button>
                       </form>
                     </div>
                   </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">Waiting for manager approval</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                    Waiting for manager approval
+                  </p>
                 )}
               </div>
             ))}

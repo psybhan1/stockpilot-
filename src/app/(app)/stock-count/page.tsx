@@ -56,7 +56,7 @@ export default async function StockCountPage() {
             <p className="text-sm text-muted-foreground">Quick row-by-row counting</p>
           </div>
 
-          <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
+          <div className="brutal-card overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -113,7 +113,7 @@ export default async function StockCountPage() {
 
         <div className="space-y-3">
           {priorityItems.map((item) => (
-            <div key={item.id} className="rounded-xl border border-border/50 bg-card p-4">
+            <div key={item.id} className="brutal-card p-4">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div className="flex items-start gap-3 min-w-0">
                   <div className="relative size-12 shrink-0 overflow-hidden rounded-lg border border-border/50 bg-muted">

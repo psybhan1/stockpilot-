@@ -34,7 +34,7 @@ export default async function RecipesPage() {
           <Link
             key={recipe.id}
             href={`/recipes/${recipe.id}`}
-            className="group rounded-xl border border-border/50 bg-card p-4 transition-colors hover:bg-muted/30"
+            className="brutal-card group p-4"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -80,7 +80,7 @@ function MetricCard({
   highlight?: "warning";
 }) {
   return (
-    <div className="rounded-xl border border-border/50 bg-card p-4">
+    <div className="brutal-card p-4">
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
       <p className={`mt-2 text-2xl font-semibold tabular-nums ${highlight === "warning" ? "text-amber-500" : ""}`}>{value}</p>
     </div>

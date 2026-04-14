@@ -70,7 +70,7 @@ export default async function AgentTasksPage() {
               ? (task.output as TaskOutputShape) : null;
 
             return (
-              <div key={task.id} className="rounded-xl border border-border/50 bg-card p-5 space-y-4">
+              <div key={task.id} className="brutal-card p-5 space-y-4">
                 {/* Header */}
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
@@ -201,7 +201,7 @@ export default async function AgentTasksPage() {
 
 function MetricCard({ label, value, highlight }: { label: string; value: number; highlight?: "warning" | "critical" }) {
   return (
-    <div className="rounded-xl border border-border/50 bg-card p-4">
+    <div className="brutal-card p-4">
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
       <p className={`mt-2 text-2xl font-semibold tabular-nums ${
         highlight === "critical" ? "text-red-500" : highlight === "warning" ? "text-amber-500" : ""
