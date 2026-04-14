@@ -1,5 +1,6 @@
 import { BaseUnit, InventoryCategory, MeasurementUnit } from "@/lib/prisma";
 import { db } from "@/lib/db";
+import { buildInventoryImageUrl } from "@/modules/inventory/image-resolver";
 
 import type { AddItemData, WorkflowAdvanceResult, WorkflowContext } from "./types";
 import {
@@ -320,6 +321,15 @@ export async function executeAddItem(
   if (data.usage) noteParts.push(`Used for: ${data.usage}`);
   const notes = noteParts.length > 0 ? noteParts.join(" | ") : null;
 
+  // Resolve a product image — branded items get a brand-specific prompt so
+  // the generated shot looks like that brand's packaging. No network hit here;
+  // the URL is deterministic and the image is generated on first browser fetch.
+  const imageUrl = buildInventoryImageUrl({
+    name,
+    brand: data.brand,
+    category,
+  });
+
   const item = await db.inventoryItem.create({
     data: {
       locationId: context.locationId,
@@ -341,6 +351,7 @@ export async function executeAddItem(
       confidenceScore: 0.9,
       storageLocation: data.storage ?? null,
       notes,
+      imageUrl,
     },
     select: { id: true, name: true },
   });
