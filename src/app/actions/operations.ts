@@ -1303,29 +1303,40 @@ export async function disconnectWhatsAppChannelAction() {
   redirect("/settings?channelConnect=disconnected&channelType=whatsapp");
 }
 
+function smtpSettingsFromEmail(email: string): { host: string; port: number } {
+  const domain = email.split("@")[1]?.toLowerCase() ?? "";
+  if (domain === "gmail.com" || domain === "googlemail.com")
+    return { host: "smtp.gmail.com", port: 587 };
+  if (domain === "outlook.com" || domain === "hotmail.com" || domain === "live.com" || domain === "msn.com")
+    return { host: "smtp-mail.outlook.com", port: 587 };
+  if (domain === "yahoo.com" || domain === "ymail.com")
+    return { host: "smtp.mail.yahoo.com", port: 587 };
+  if (domain === "icloud.com" || domain === "me.com" || domain === "mac.com")
+    return { host: "smtp.mail.me.com", port: 587 };
+  return { host: `smtp.${domain}`, port: 587 };
+}
+
 export async function connectSmtpEmailChannelAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
 
-  const host = String(formData.get("smtp_host") ?? "").trim();
-  const port = Number(formData.get("smtp_port") ?? 587);
-  const user = String(formData.get("smtp_user") ?? "").trim();
-  const pass = String(formData.get("smtp_pass") ?? "").trim();
-  const fromName = String(formData.get("smtp_from_name") ?? "").trim();
-  const fromEmail = String(formData.get("smtp_from_email") ?? "").trim();
+  const email = String(formData.get("email") ?? "").trim();
+  const pass = String(formData.get("password") ?? "").trim();
 
-  if (!host || !user || !pass || !fromEmail) {
-    redirect("/settings?channelConnect=error&channelType=email&channelDetail=Missing+required+SMTP+fields");
+  if (!email || !pass) {
+    redirect("/settings?channelConnect=error&channelType=email&channelDetail=Please+enter+your+email+and+password");
     return;
   }
 
+  const { host, port } = smtpSettingsFromEmail(email);
+
   await connectSmtpEmailChannel(session.locationId, {
     host,
-    port: Number.isFinite(port) && port > 0 ? port : 587,
+    port,
     secure: port === 465,
-    user,
+    user: email,
     pass,
-    fromName: fromName || fromEmail,
-    fromEmail,
+    fromName: email,
+    fromEmail: email,
   });
 
   revalidateOperations();

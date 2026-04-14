@@ -206,42 +206,20 @@ export default async function SettingsPage({
 
         {!locationChannels.email && (
           <div className="rounded-xl border border-border/50 bg-card p-5">
-            <div className="flex items-center gap-2 mb-1">
-              <GmailLogo size={16} />
-              <p className="text-sm font-medium">Connect via SMTP</p>
+            <div className="flex items-center gap-3 mb-4">
+              <GmailLogo size={18} />
+              <div>
+                <p className="text-sm font-medium">Connect email</p>
+                <p className="text-xs text-muted-foreground">Works with Gmail, Outlook, Yahoo, or any provider</p>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground mb-4">Works with Gmail, Outlook, or any SMTP provider</p>
-            <form action={connectSmtpEmailChannelAction} className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">SMTP host</label>
-                <Input name="smtp_host" placeholder="smtp.gmail.com" className="h-9 text-sm" required />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Port</label>
-                <Input name="smtp_port" type="number" defaultValue="587" className="h-9 text-sm" required />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Username / email</label>
-                <Input name="smtp_user" type="email" placeholder="you@gmail.com" className="h-9 text-sm" required />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Password / app password</label>
-                <Input name="smtp_pass" type="password" placeholder="••••••••" className="h-9 text-sm" required />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">From name (optional)</label>
-                <Input name="smtp_from_name" placeholder="StockPilot" className="h-9 text-sm" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">From email</label>
-                <Input name="smtp_from_email" type="email" placeholder="orders@yourdomain.com" className="h-9 text-sm" required />
-              </div>
-              <div className="sm:col-span-2 pt-1">
-                <Button type="submit" size="sm" className="h-9 gap-2 text-xs">
-                  <GmailLogo size={14} />
-                  Connect email
-                </Button>
-              </div>
+            <form action={connectSmtpEmailChannelAction} className="flex flex-col gap-3">
+              <Input name="email" type="email" placeholder="you@gmail.com" className="h-9 text-sm" required />
+              <Input name="password" type="password" placeholder="App password or email password" className="h-9 text-sm" required />
+              <Button type="submit" size="sm" className="h-9 gap-2 text-xs w-fit">
+                <GmailLogo size={14} />
+                Connect email
+              </Button>
             </form>
           </div>
         )}
