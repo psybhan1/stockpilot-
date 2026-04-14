@@ -1,29 +1,21 @@
 "use client";
 
 /**
- * InkCanvas — a real-time generative background that renders in the browser.
+ * InkCanvas — a real-time generative gradient background rendered every
+ * frame on the client. Nine soft "ink drops" drift through a 2D velocity
+ * field driven by two octaves of seeded gradient noise; each frame fades
+ * the prior one toward the current theme background so trails bleed
+ * organically instead of stacking into mud.
  *
- * Approach:
- *   - We simulate a small set of soft, overlapping "ink drops" that drift
- *     through a 2D velocity field defined by two layered Perlin-like
- *     noise functions moving at different frequencies. Each drop leaks
- *     a faint blurred trail behind it, and we clear the canvas each
- *     frame with a low-alpha fill so trails fade organically.
- *   - Drops use accent / chart palette tokens (warm ochre + muted sage)
- *     so the motion picks up the site's editorial color language.
- *   - We throttle to 30fps on low-powered devices and pause when the
- *     element leaves the viewport so it costs nothing when hidden.
- *
- * This is a single-file, zero-dependency alternative to embedding an
- * external video. No network round-trip, no model call — the motion
- * is generated live on the client.
+ * Theme-aware: reads `--background` from CSS so it works cleanly on both
+ * the warm-paper light theme and the near-black dark theme.
+ * Cost-aware: pauses when off-screen or the tab is hidden.
  */
 
 import { useEffect, useRef } from "react";
 
 import { cn } from "@/lib/utils";
 
-// ── Tiny gradient-noise (good enough for smooth drifting fields) ──────────
 function mulberry32(seed: number) {
   return () => {
     let t = (seed += 0x6d2b79f5);
@@ -38,14 +30,12 @@ function makeNoise(seed: number) {
   const grid: number[] = [];
   const SIZE = 256;
   for (let i = 0; i < SIZE * SIZE; i++) grid.push(rand() * Math.PI * 2);
-
   const fade = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
   const at = (x: number, y: number) => {
-    const gx = ((x | 0) % SIZE + SIZE) % SIZE;
-    const gy = ((y | 0) % SIZE + SIZE) % SIZE;
+    const gx = (((x | 0) % SIZE) + SIZE) % SIZE;
+    const gy = (((y | 0) % SIZE) + SIZE) % SIZE;
     return grid[gy * SIZE + gx];
   };
-
   return (x: number, y: number) => {
     const x0 = Math.floor(x);
     const y0 = Math.floor(y);
@@ -65,20 +55,36 @@ type Drop = {
   x: number;
   y: number;
   r: number;
-  hueShift: number;
   vx: number;
   vy: number;
-  palette: number; // index into PALETTE
+  palette: number;
 };
 
-// Editorial palette — warm ochre, muted sage, deep plum, soft rose.
+// Warm, inviting palette — ochre, sage, caramel, rose, sand.
 const PALETTE = [
-  [194, 168, 120], // accent (ochre)
-  [138, 160, 122], // sage
-  [176, 137, 107], // caramel
-  [227, 106, 92], // rose
-  [233, 184, 138], // sand
+  [194, 168, 120],
+  [138, 160, 122],
+  [193, 39, 45],
+  [176, 137, 107],
+  [233, 184, 138],
 ] as const;
+
+function parseCssColor(raw: string): [number, number, number] {
+  const s = raw.trim();
+  if (s.startsWith("#")) {
+    const hex = s.slice(1);
+    const n = hex.length === 3
+      ? hex.split("").map((c) => parseInt(c + c, 16))
+      : [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+    return [n[0] ?? 245, n[1] ?? 243, n[2] ?? 238];
+  }
+  const m = s.match(/rgba?\(([^)]+)\)/);
+  if (m) {
+    const parts = m[1].split(",").map((p) => parseFloat(p.trim()));
+    return [parts[0] ?? 245, parts[1] ?? 243, parts[2] ?? 238];
+  }
+  return [245, 243, 238];
+}
 
 export function InkCanvas({ className }: { className?: string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -108,14 +114,11 @@ export function InkCanvas({ className }: { className?: string }) {
     });
     resizeObserver.observe(canvas);
 
-    // Initialize 9 soft drops at seeded positions so the animation always
-    // opens on the same balanced composition.
     const rand = mulberry32(42);
     const drops: Drop[] = Array.from({ length: 9 }, (_, i) => ({
-      x: rand() * 1200,
-      y: rand() * 800,
-      r: 180 + rand() * 260,
-      hueShift: rand() * 0.15,
+      x: rand() * (width || 1200),
+      y: rand() * (height || 800),
+      r: 280 + rand() * 360,
       vx: (rand() - 0.5) * 0.4,
       vy: (rand() - 0.5) * 0.4,
       palette: i % PALETTE.length,
@@ -129,7 +132,6 @@ export function InkCanvas({ className }: { className?: string }) {
     let last = performance.now();
     let t = 0;
 
-    // Pause when off-screen to save CPU.
     const io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) visible = e.isIntersecting;
@@ -143,26 +145,31 @@ export function InkCanvas({ className }: { className?: string }) {
     };
     document.addEventListener("visibilitychange", handleVis);
 
+    const readThemeBg = (): [number, number, number] => {
+      const styles = getComputedStyle(document.documentElement);
+      const raw = styles.getPropertyValue("--background") || "#F5F3EE";
+      return parseCssColor(raw);
+    };
+
     const step = (now: number) => {
       if (!running) return;
       requestAnimationFrame(step);
       if (!visible) return;
       const dt = Math.min(64, now - last);
       last = now;
-      t += dt * 0.00022;
+      t += dt * 0.00018;
 
-      // Fade the prior frame toward the background — this is what
-      // produces the organic trailing / ink-bleed look.
+      // Fade the prior frame toward the current theme background so the
+      // canvas always reads correctly in light + dark, and trails softly
+      // dissolve instead of building up.
+      const [br, bg, bb] = readThemeBg();
       ctx.globalCompositeOperation = "source-over";
-      ctx.fillStyle = "rgba(10,10,10,0.12)";
+      ctx.fillStyle = `rgba(${br}, ${bg}, ${bb}, 0.12)`;
       ctx.fillRect(0, 0, width, height);
 
-      // Additive blending so overlapping drops add their warmth instead
-      // of occluding each other.
-      ctx.globalCompositeOperation = "lighter";
+      ctx.globalCompositeOperation = "source-over";
 
       for (const d of drops) {
-        // Flow field — two octaves of noise.
         const fx =
           noiseA(d.x * 0.0015 + t * 1.4, d.y * 0.0015 - t * 0.7) * 1.6 +
           noiseB(d.x * 0.0045 - t * 0.8, d.y * 0.0045 + t * 0.3) * 0.5;
@@ -172,11 +179,9 @@ export function InkCanvas({ className }: { className?: string }) {
 
         d.vx = d.vx * 0.985 + Math.cos(fx) * 0.35;
         d.vy = d.vy * 0.985 + Math.sin(fy) * 0.35;
-        d.x += d.vx * dt * 0.06;
-        d.y += d.vy * dt * 0.06;
+        d.x += d.vx * dt * 0.05;
+        d.y += d.vy * dt * 0.05;
 
-        // Wrap softly around the canvas with a margin so we never see
-        // a drop pop in at the edge.
         const m = d.r;
         if (d.x < -m) d.x = width + m;
         if (d.x > width + m) d.x = -m;
@@ -185,8 +190,8 @@ export function InkCanvas({ className }: { className?: string }) {
 
         const rgb = PALETTE[d.palette];
         const grad = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, d.r);
-        grad.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.38)`);
-        grad.addColorStop(0.4, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.18)`);
+        grad.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.35)`);
+        grad.addColorStop(0.4, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.14)`);
         grad.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`);
         ctx.fillStyle = grad;
         ctx.beginPath();
@@ -208,7 +213,7 @@ export function InkCanvas({ className }: { className?: string }) {
   return (
     <canvas
       ref={canvasRef}
-      className={cn("absolute inset-0 size-full", className)}
+      className={cn("pointer-events-none size-full", className)}
       aria-hidden
     />
   );

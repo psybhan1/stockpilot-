@@ -8,6 +8,7 @@ import { useTheme } from "next-themes";
 
 import { logoutAction } from "@/app/actions/auth";
 import { AppLiveRefresh } from "@/components/app/app-live-refresh";
+import { InkCanvas } from "@/components/app/ink-canvas";
 import { Role } from "@/lib/domain-enums";
 import { navigationItems, productName } from "@/lib/navigation";
 import { hasMinimumRole } from "@/lib/permissions";
@@ -42,9 +43,17 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
     .slice(0, 2);
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="relative flex min-h-screen flex-col bg-background">
+      {/* ── Living gradient background — fixed behind everything ──── */}
+      <div
+        className="pointer-events-none fixed inset-0 z-0"
+        aria-hidden
+      >
+        <InkCanvas />
+      </div>
+
       {/* ── Top bar ─────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-border bg-background/75 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-4 px-4 sm:px-6 lg:px-10">
           <Link
             href="/dashboard"
@@ -150,7 +159,7 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
       </header>
 
       {/* ── Content ─────────────────────────────────────────────────── */}
-      <main className="flex-1">
+      <main className="relative z-10 flex-1">
         <div className="mx-auto w-full max-w-[1600px] px-4 py-8 sm:px-6 sm:py-10 lg:px-10 lg:py-12">
           {children}
         </div>
