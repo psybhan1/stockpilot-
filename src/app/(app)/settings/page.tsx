@@ -145,85 +145,143 @@ export default async function SettingsPage({
         </BrandCard>
       </Section>
 
-      {/* ─── Notification Channels ─── */}
-      <Section title="Channels" description="Where alerts and order approvals get delivered">
+      {/* ─── Messaging ─── */}
+      <Section title="Messaging" description="Alerts, reorder commands, and bot interactions">
 
-        {/* Telegram channel */}
-        <BrandCard
-          logo={<TelegramLogo />}
-          name="Telegram"
-          tagline={
-            locationChannels.telegram?.enabled
-              ? `Alerts sent to chat ${locationChannels.telegram.chatId}`
-              : "Receive stock alerts and order updates in Telegram"
-          }
-          status={locationChannels.telegram?.enabled ? "Connected" : "Not connected"}
-          statusTone={locationChannels.telegram?.enabled ? "success" : "info"}
-        >
-          <div className="flex gap-2">
-            <form action={generateTelegramChannelCodeAction}>
-              <Button
-                type="submit"
-                size="sm"
-                className="h-9 gap-2 bg-[#2CA5E0] hover:bg-[#1d96d3] text-white text-xs border-0"
-              >
-                <TelegramLogo size={14} />
-                {locationChannels.telegram?.enabled ? "Reconnect" : "Connect Telegram"}
-              </Button>
-            </form>
-            {locationChannels.telegram?.enabled && (
-              <form action={disconnectTelegramChannelAction}>
-                <Button type="submit" variant="ghost" size="sm" className="h-9 text-xs text-muted-foreground">
-                  Disconnect
-                </Button>
-              </form>
-            )}
+        {/* WhatsApp — single card, both connections */}
+        <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
+          <div className="flex items-center gap-4 px-5 py-4 border-b border-border/50">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/50 bg-background">
+              <WhatsAppLogo />
+            </div>
+            <p className="text-sm font-semibold">WhatsApp</p>
           </div>
-        </BrandCard>
-
-        {/* WhatsApp channel */}
-        <BrandCard
-          logo={<WhatsAppLogo />}
-          name="WhatsApp"
-          tagline={
-            locationChannels.whatsapp?.enabled
-              ? `Notifications sent to ${locationChannels.whatsapp.phone ?? "linked number"}`
-              : env.TWILIO_WHATSAPP_FROM
-                ? `Bot number: ${env.TWILIO_WHATSAPP_FROM}`
-                : "Receive alerts as WhatsApp messages"
-          }
-          status={locationChannels.whatsapp?.enabled ? "Connected" : "Not connected"}
-          statusTone={locationChannels.whatsapp?.enabled ? "success" : "info"}
-        >
-          <div className="flex gap-2">
-            <form action={generateWhatsAppChannelCodeAction}>
-              <Button
-                type="submit"
-                size="sm"
-                className="h-9 gap-2 bg-[#25D366] hover:bg-[#1ebe5d] text-white text-xs border-0"
-              >
-                <WhatsAppLogo size={14} />
-                {locationChannels.whatsapp?.enabled ? "Reconnect" : "Pair WhatsApp"}
-              </Button>
-            </form>
-            {locationChannels.whatsapp?.enabled && (
-              <form action={disconnectWhatsAppChannelAction}>
-                <Button type="submit" variant="ghost" size="sm" className="h-9 text-xs text-muted-foreground">
-                  Disconnect
-                </Button>
-              </form>
-            )}
+          <div className="divide-y divide-border/50">
+            {/* Alert channel row */}
+            <div className="flex items-center justify-between gap-4 px-5 py-3">
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-foreground">Alert channel</p>
+                <p className="text-xs text-muted-foreground">
+                  {locationChannels.whatsapp?.enabled
+                    ? `Alerts sent to ${locationChannels.whatsapp.phone ?? "linked number"}`
+                    : "Receive low-stock alerts as WhatsApp messages"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <StatusBadge
+                  label={locationChannels.whatsapp?.enabled ? "Connected" : "Not connected"}
+                  tone={locationChannels.whatsapp?.enabled ? "success" : "info"}
+                />
+                <form action={generateWhatsAppChannelCodeAction}>
+                  <Button type="submit" size="sm" className="h-8 gap-1.5 bg-[#25D366] hover:bg-[#1ebe5d] text-white text-xs border-0">
+                    <WhatsAppLogo size={12} />
+                    {locationChannels.whatsapp?.enabled ? "Reconnect" : "Pair"}
+                  </Button>
+                </form>
+                {locationChannels.whatsapp?.enabled && (
+                  <form action={disconnectWhatsAppChannelAction}>
+                    <Button type="submit" variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">Disconnect</Button>
+                  </form>
+                )}
+              </div>
+            </div>
+            {/* Personal bot row */}
+            <div className="flex items-center justify-between gap-4 px-5 py-3">
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-foreground">Personal bot</p>
+                <p className="text-xs text-muted-foreground">
+                  {currentManager.phoneNumber
+                    ? `Linked to ${currentManager.phoneNumber}`
+                    : "Send commands and get personal alerts — opens WhatsApp, just tap Send"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <StatusBadge
+                  label={currentManager.phoneNumber ? "Linked" : "Not linked"}
+                  tone={currentManager.phoneNumber ? "success" : "info"}
+                />
+                <form action={startWhatsAppBotConnectAction}>
+                  <Button type="submit" size="sm" className="h-8 gap-1.5 bg-[#25D366] hover:bg-[#1ebe5d] text-white text-xs border-0">
+                    <WhatsAppLogo size={12} />
+                    {currentManager.phoneNumber ? "Relink" : "Connect"}
+                  </Button>
+                </form>
+              </div>
+            </div>
           </div>
-        </BrandCard>
+        </div>
 
-        {/* Email channel */}
+        {/* Telegram — single card, both connections */}
+        <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
+          <div className="flex items-center gap-4 px-5 py-4 border-b border-border/50">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/50 bg-background">
+              <TelegramLogo />
+            </div>
+            <p className="text-sm font-semibold">Telegram</p>
+          </div>
+          <div className="divide-y divide-border/50">
+            {/* Alert channel row */}
+            <div className="flex items-center justify-between gap-4 px-5 py-3">
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-foreground">Alert channel</p>
+                <p className="text-xs text-muted-foreground">
+                  {locationChannels.telegram?.enabled
+                    ? `Alerts sent to chat ${locationChannels.telegram.chatId}`
+                    : "Receive low-stock alerts in a Telegram group or chat"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <StatusBadge
+                  label={locationChannels.telegram?.enabled ? "Connected" : "Not connected"}
+                  tone={locationChannels.telegram?.enabled ? "success" : "info"}
+                />
+                <form action={generateTelegramChannelCodeAction}>
+                  <Button type="submit" size="sm" className="h-8 gap-1.5 bg-[#2CA5E0] hover:bg-[#1d96d3] text-white text-xs border-0">
+                    <TelegramLogo size={12} />
+                    {locationChannels.telegram?.enabled ? "Reconnect" : "Pair"}
+                  </Button>
+                </form>
+                {locationChannels.telegram?.enabled && (
+                  <form action={disconnectTelegramChannelAction}>
+                    <Button type="submit" variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">Disconnect</Button>
+                  </form>
+                )}
+              </div>
+            </div>
+            {/* Personal bot row */}
+            <div className="flex items-center justify-between gap-4 px-5 py-3">
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-foreground">Personal bot</p>
+                <p className="text-xs text-muted-foreground">
+                  {currentManager.telegramChatId
+                    ? `Linked as ${currentManager.telegramUsername ?? currentManager.telegramChatId}`
+                    : "Send commands and get personal alerts — opens Telegram, one tap to link"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <StatusBadge
+                  label={currentManager.telegramChatId ? "Linked" : "Not linked"}
+                  tone={currentManager.telegramChatId ? "success" : "info"}
+                />
+                <form action={startTelegramBotConnectAction}>
+                  <Button type="submit" size="sm" className="h-8 gap-1.5 bg-[#2CA5E0] hover:bg-[#1d96d3] text-white text-xs border-0">
+                    <TelegramLogo size={12} />
+                    {currentManager.telegramChatId ? "Relink" : "Connect"}
+                  </Button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Email */}
         <BrandCard
           logo={<GmailLogo />}
           name="Email"
           tagline={
             locationChannels.email
               ? `Sending from ${locationChannels.email.address ?? locationChannels.email.provider}`
-              : "Send order emails directly from your domain"
+              : "Send order approval emails directly from your domain"
           }
           status={locationChannels.email ? `${locationChannels.email.provider.toUpperCase()} connected` : "Not connected"}
           statusTone={locationChannels.email ? "success" : "info"}
@@ -238,7 +296,6 @@ export default async function SettingsPage({
           ) : null}
         </BrandCard>
 
-        {/* SMTP form — only when no email connected */}
         {!locationChannels.email && (
           <div className="rounded-xl border border-border/50 bg-card p-5">
             <div className="flex items-center gap-2 mb-1">
@@ -280,58 +337,6 @@ export default async function SettingsPage({
             </form>
           </div>
         )}
-      </Section>
-
-      {/* ─── Chat bot (user-level) ─── */}
-      <Section title="Chat bot" description="Your personal bot — get alerts and send reorder commands">
-
-        {/* WhatsApp bot */}
-        <BrandCard
-          logo={<WhatsAppLogo />}
-          name="WhatsApp"
-          tagline={
-            currentManager.phoneNumber
-              ? `Linked to ${currentManager.phoneNumber}`
-              : "Opens WhatsApp with the connect message pre-filled — just tap Send"
-          }
-          status={currentManager.phoneNumber ? "Linked" : "Not linked"}
-          statusTone={currentManager.phoneNumber ? "success" : "info"}
-        >
-          <form action={startWhatsAppBotConnectAction}>
-            <Button
-              type="submit"
-              size="sm"
-              className="h-9 gap-2 bg-[#25D366] hover:bg-[#1ebe5d] text-white text-xs border-0"
-            >
-              <WhatsAppLogo size={14} />
-              {currentManager.phoneNumber ? "Relink WhatsApp" : "Connect on WhatsApp"}
-            </Button>
-          </form>
-        </BrandCard>
-
-        {/* Telegram bot */}
-        <BrandCard
-          logo={<TelegramLogo />}
-          name="Telegram"
-          tagline={
-            currentManager.telegramChatId
-              ? `Linked as ${currentManager.telegramUsername ?? currentManager.telegramChatId}`
-              : "Opens Telegram and starts the bot — one tap to link"
-          }
-          status={currentManager.telegramChatId ? "Linked" : "Not linked"}
-          statusTone={currentManager.telegramChatId ? "success" : "info"}
-        >
-          <form action={startTelegramBotConnectAction}>
-            <Button
-              type="submit"
-              size="sm"
-              className="h-9 gap-2 bg-[#2CA5E0] hover:bg-[#1d96d3] text-white text-xs border-0"
-            >
-              <TelegramLogo size={14} />
-              {currentManager.telegramChatId ? "Relink Telegram" : "Connect on Telegram"}
-            </Button>
-          </form>
-        </BrandCard>
       </Section>
 
       {/* ─── System ─── */}
