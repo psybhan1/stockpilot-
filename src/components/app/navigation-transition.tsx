@@ -89,19 +89,12 @@ export function TransitionLink({
 
 /**
  * Content wrapper that reads the transition state and fades out during
- * navigation. Combined with PageTransition (which fades IN new content
- * on mount), you get full exit-then-enter motion.
+ * navigation. Only defines the OUT direction — when isPending flips back
+ * to false the class is removed, the browser snaps to baseline with no
+ * transition, and PageTransition's pageEnter animation on the newly
+ * mounted content plays cleanly.
  */
 export function NavigationFader({ children }: { children: ReactNode }) {
   const { isPending } = useNavigationTransition();
-  return (
-    <div
-      className={cn(
-        "transition-[opacity,filter,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-        isPending && "pointer-events-none opacity-0 blur-sm -translate-y-1"
-      )}
-    >
-      {children}
-    </div>
-  );
+  return <div className={cn(isPending && "nav-fader-out")}>{children}</div>;
 }

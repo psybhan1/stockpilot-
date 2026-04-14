@@ -177,7 +177,7 @@
 @keyframes pageEnter {
   0% {
     opacity: 0;
-    transform: translateY(18px);
+    transform: translateY(20px);
     filter: blur(6px);
   }
   100% {
@@ -186,16 +186,40 @@
     filter: blur(0);
   }
 }
+
+/* Parent element animates as a whole for the hero/first-impression feel. */
 .page-transition-enter {
-  animation: pageEnter 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: pageEnter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
   will-change: opacity, transform, filter;
 }
 
-/* Stagger: nudge the hero + nested sections so they land in sequence  */
-.page-transition-enter > :nth-child(2) { animation: pageEnter 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.08s both; }
-.page-transition-enter > :nth-child(3) { animation: pageEnter 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.14s both; }
-.page-transition-enter > :nth-child(4) { animation: pageEnter 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.20s both; }
-.page-transition-enter > :nth-child(n+5) { animation: pageEnter 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.26s both; }
+/* Stagger the ACTUAL sections — pages wrap their body in a <div class="space-y-10">,
+   so the sections (PageHero, section, section, ...) are grand-children of
+   .page-transition-enter. Target grandchildren explicitly. */
+.page-transition-enter > * > * {
+  animation: pageEnter 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: opacity, transform, filter;
+}
+.page-transition-enter > * > :nth-child(1) { animation-delay: 0.05s; }
+.page-transition-enter > * > :nth-child(2) { animation-delay: 0.14s; }
+.page-transition-enter > * > :nth-child(3) { animation-delay: 0.22s; }
+.page-transition-enter > * > :nth-child(4) { animation-delay: 0.30s; }
+.page-transition-enter > * > :nth-child(n+5) { animation-delay: 0.36s; }
+
+/* ── Navigation fader (exit only) ─────────────────────────────────── */
+/* Only defines the OUT direction. When the class is removed on route
+   arrival there's no transition back — the browser snaps, and the
+   pageEnter animation on the newly mounted content plays unimpeded. */
+.nav-fader-out {
+  opacity: 0;
+  filter: blur(4px);
+  transform: translateY(-6px);
+  pointer-events: none;
+  transition:
+    opacity 220ms cubic-bezier(0.4, 0, 1, 1),
+    filter 220ms cubic-bezier(0.4, 0, 1, 1),
+    transform 220ms cubic-bezier(0.4, 0, 1, 1);
+}
 
 /* Nav-link ink underline — quick visual feedback when switching tabs */
 @keyframes navActiveIn {
