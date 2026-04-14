@@ -1340,7 +1340,7 @@ export async function connectSmtpEmailChannelAction(formData: FormData) {
   });
 
   revalidateOperations();
-  redirect(`/settings?channelConnect=connected&channelType=email&channelDetail=${encodeURIComponent(fromEmail)}`);
+  redirect(`/settings?channelConnect=connected&channelType=email&channelDetail=${encodeURIComponent(email)}`);
 }
 
 export async function disconnectEmailChannelAction(formData: FormData) {
