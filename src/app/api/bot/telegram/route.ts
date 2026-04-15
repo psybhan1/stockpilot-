@@ -141,12 +141,13 @@ export async function POST(request: Request) {
     await answerCallbackQuery(cb.id, result.toast || undefined);
 
     // Edit the original message in place so the user immediately sees
-    // the action outcome. Drop the keyboard so the action can't be
-    // re-tapped.
+    // the action outcome. The handler tells us what keyboard (if any)
+    // the new message should carry — e.g. a Retry button on a failed
+    // dispatch, or no keyboard on a terminal state.
     if (result.editText && cbChatId && cbMessageId) {
       await editTelegramMessage(String(cbChatId), cbMessageId, result.editText, {
         parseMode: "Markdown",
-        replyMarkup: result.clearKeyboard ? null : undefined,
+        replyMarkup: result.editKeyboard === undefined ? null : result.editKeyboard,
       });
     }
 
@@ -242,10 +243,21 @@ export async function POST(request: Request) {
   });
 
   if (!result.skipSend && result.reply) {
-    // If the bot just created / touched a purchase order, attach an
-    // inline Cancel button so the manager can reverse it in one tap.
+    // If the bot just drafted a purchase order, attach inline approval
+    // buttons so the manager can approve/send or cancel in one tap.
     const keyboard: InlineKeyboard | undefined = result.purchaseOrderId
-      ? [[{ text: "✖ Cancel order", callback_data: `po_cancel:${result.purchaseOrderId}` }]]
+      ? [
+          [
+            {
+              text: "✅ Approve & send",
+              callback_data: `po_approve:${result.purchaseOrderId}`,
+            },
+            {
+              text: "✖ Cancel",
+              callback_data: `po_cancel:${result.purchaseOrderId}`,
+            },
+          ],
+        ]
       : undefined;
     await sendTelegramMessage(String(chatId), result.reply, {
       parseMode: "Markdown",

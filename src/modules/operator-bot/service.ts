@@ -990,56 +990,31 @@ export async function createRestockOrderFromBotMessage(input: {
     };
   }
 
-  // Fallback: direct dispatch (no n8n configured)
-  const finalOrder = await dispatchBotPurchaseOrder({
-    purchaseOrderId: purchaseOrder.id,
-    locationId: input.locationId,
-    userId: input.userId,
-    supplier: supplierContext.supplier,
-    inventoryName: refreshedItem.name,
-    purchaseUnit: refreshedItem.purchaseUnit,
-    packCount: order.recommendedPackCount,
-    orderQuantityBase: order.orderQuantityBase,
-    reportedOnHandBase,
-    parLevelBase: refreshedItem.parLevelBase,
+  // Fallback (no n8n): leave the PO at AWAITING_APPROVAL and let the
+  // user tap Approve on the Telegram inline button. The callback
+  // handler will call approveAndDispatchPurchaseOrder when they do.
+  await db.purchaseOrder.update({
+    where: { id: purchaseOrder.id },
+    data: { status: PurchaseOrderStatus.AWAITING_APPROVAL },
   });
 
+  const displayQty = `${order.recommendedPackCount} ${refreshedItem.purchaseUnit.toLowerCase()}`;
+  const draftReply =
+    `📋 Drafted *${purchaseOrder.orderNumber}* — ${displayQty} of *${refreshedItem.name}* from *${supplierContext.supplier.name}*.\n\n` +
+    `Tap *✅ Approve & send* to send it to the supplier, or *✖ Cancel* to scrap it.`;
+
   return {
-    ok: finalOrder.status !== PurchaseOrderStatus.FAILED,
-    purchaseOrderId: finalOrder.id,
-    orderNumber: finalOrder.orderNumber,
-    reply: buildBotReply({
-      itemName: refreshedItem.name,
-      displayUnit: refreshedItem.displayUnit,
-      itemPackSizeBase: refreshedItem.packSizeBase,
-      reportedOnHandBase,
-      parLevelBase: refreshedItem.parLevelBase,
-      orderedQuantityBase: order.orderQuantityBase,
-      orderedPackCount: order.recommendedPackCount,
-      purchaseUnit: refreshedItem.purchaseUnit,
-      supplierName: supplierContext.supplier.name,
-      supplierOrderingMode: supplierContext.supplier.orderingMode,
-      purchaseOrderId: finalOrder.id,
-      orderNumber: finalOrder.orderNumber,
-      status: finalOrder.status,
-      lastError: readPurchaseOrderFailure(finalOrder.metadata),
-    }),
-    replyScenario: mapPurchaseOrderReplyScenario({
-      supplierOrderingMode: supplierContext.supplier.orderingMode,
-      status: finalOrder.status,
-    }),
+    ok: true,
+    purchaseOrderId: purchaseOrder.id,
+    orderNumber: purchaseOrder.orderNumber,
+    reply: draftReply,
+    replyScenario: "order_awaiting_approval",
     replyFacts: {
       inventoryItemName: refreshedItem.name,
       supplierName: supplierContext.supplier.name,
-      supplierOrderingMode: supplierContext.supplier.orderingMode,
-      reportedOnHandBase,
-      parLevelBase: refreshedItem.parLevelBase,
-      orderedQuantityBase: order.orderQuantityBase,
+      orderNumber: purchaseOrder.orderNumber,
       orderedPackCount: order.recommendedPackCount,
       purchaseUnit: refreshedItem.purchaseUnit,
-      orderNumber: finalOrder.orderNumber,
-      orderStatus: finalOrder.status,
-      lastError: readPurchaseOrderFailure(finalOrder.metadata),
     },
   };
 }
@@ -1133,6 +1108,124 @@ export async function answerStockStatusFromBotMessage(input: {
         daysLeft: item.snapshot?.daysLeft ?? null,
       })),
     },
+  };
+}
+
+/**
+ * Public, callback-friendly approve + dispatch. Loads the PO, moves it
+ * to APPROVED (if not already), then runs the internal dispatch path.
+ *
+ * Returns a compact summary the Telegram callback handler can render.
+ */
+export type ApproveAndDispatchResult = {
+  ok: boolean;
+  status: PurchaseOrderStatus;
+  orderNumber: string;
+  supplierName: string;
+  reason?: string;
+};
+
+export async function approveAndDispatchPurchaseOrder(input: {
+  purchaseOrderId: string;
+  userId: string | null;
+}): Promise<ApproveAndDispatchResult> {
+  const po = await db.purchaseOrder.findUnique({
+    where: { id: input.purchaseOrderId },
+    include: {
+      supplier: true,
+      lines: { include: { inventoryItem: true } },
+    },
+  });
+
+  if (!po) {
+    return {
+      ok: false,
+      status: PurchaseOrderStatus.FAILED,
+      orderNumber: "",
+      supplierName: "",
+      reason: "Order not found.",
+    };
+  }
+
+  if (po.status === PurchaseOrderStatus.SENT) {
+    return {
+      ok: true,
+      status: PurchaseOrderStatus.SENT,
+      orderNumber: po.orderNumber,
+      supplierName: po.supplier.name,
+      reason: "Already sent.",
+    };
+  }
+
+  if (po.status === PurchaseOrderStatus.CANCELLED) {
+    return {
+      ok: false,
+      status: PurchaseOrderStatus.CANCELLED,
+      orderNumber: po.orderNumber,
+      supplierName: po.supplier.name,
+      reason: "Order was cancelled.",
+    };
+  }
+
+  // Transition to APPROVED (or keep if already APPROVED for retry).
+  if (
+    po.status === PurchaseOrderStatus.DRAFT ||
+    po.status === PurchaseOrderStatus.AWAITING_APPROVAL
+  ) {
+    await db.purchaseOrder.update({
+      where: { id: po.id },
+      data: {
+        status: PurchaseOrderStatus.APPROVED,
+        approvedAt: new Date(),
+        approvedById: input.userId ?? undefined,
+      },
+    });
+  }
+
+  // Primary line drives the dispatch template — the bot only creates
+  // single-line POs today.
+  const firstLine = po.lines[0];
+  if (!firstLine) {
+    await db.purchaseOrder.update({
+      where: { id: po.id },
+      data: { status: PurchaseOrderStatus.FAILED },
+    });
+    return {
+      ok: false,
+      status: PurchaseOrderStatus.FAILED,
+      orderNumber: po.orderNumber,
+      supplierName: po.supplier.name,
+      reason: "Order had no line items.",
+    };
+  }
+
+  const result = await dispatchBotPurchaseOrder({
+    purchaseOrderId: po.id,
+    locationId: po.locationId,
+    userId: input.userId ?? "",
+    supplier: {
+      id: po.supplier.id,
+      name: po.supplier.name,
+      email: po.supplier.email,
+      website: po.supplier.website,
+      orderingMode: po.supplier.orderingMode,
+    },
+    inventoryName: firstLine.inventoryItem.name,
+    purchaseUnit: firstLine.purchaseUnit,
+    packCount: firstLine.quantityOrdered,
+    orderQuantityBase: firstLine.expectedQuantityBase,
+    reportedOnHandBase: firstLine.inventoryItem.stockOnHandBase,
+    parLevelBase: firstLine.inventoryItem.parLevelBase,
+  });
+
+  const reason = readPurchaseOrderFailure(result.metadata) ?? undefined;
+
+  return {
+    ok: result.status === PurchaseOrderStatus.SENT,
+    status: result.status,
+    orderNumber: result.orderNumber,
+    supplierName: po.supplier.name,
+    reason: result.status === PurchaseOrderStatus.FAILED ? reason : undefined,
   };
 }
 

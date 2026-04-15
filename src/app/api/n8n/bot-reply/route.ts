@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { verifyN8nRequest } from "@/modules/automation/n8n-auth";
+
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "llama-3.1-8b-instant";
 
@@ -9,13 +11,9 @@ const CONVERSATIONAL_SCENARIOS = new Set(["greeting", "help", "unknown", "defaul
 
 export async function POST(request: NextRequest) {
   try {
-    // Validate webhook secret
-    const secret = process.env.N8N_WEBHOOK_SECRET;
-    if (secret) {
-      const incoming = request.headers.get("X-StockPilot-Webhook-Secret");
-      if (incoming !== secret) {
-        return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-      }
+    const auth = await verifyN8nRequest(request);
+    if (!auth.ok) {
+      return NextResponse.json({ message: auth.reason }, { status: 401 });
     }
 
     const body = await request.json();

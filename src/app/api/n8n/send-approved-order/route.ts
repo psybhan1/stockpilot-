@@ -2,16 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { PurchaseOrderStatus, CommunicationDirection, CommunicationStatus, SupplierOrderingMode } from "@/lib/prisma";
 import { getSupplierOrderProvider } from "@/providers/supplier-order-provider";
-
-function validateSecret(request: NextRequest) {
-  const secret = process.env.N8N_WEBHOOK_SECRET;
-  if (!secret) return true;
-  return request.headers.get("X-StockPilot-Webhook-Secret") === secret;
-}
+import { verifyN8nRequest } from "@/modules/automation/n8n-auth";
 
 export async function POST(request: NextRequest) {
-  if (!validateSecret(request)) {
-    return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+  const auth = await verifyN8nRequest(request);
+  if (!auth.ok) {
+    return NextResponse.json({ message: auth.reason }, { status: 401 });
   }
 
   try {
