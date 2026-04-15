@@ -127,7 +127,7 @@ export default async function PurchaseOrdersPage() {
                           type="submit"
                           variant="outline"
                           size="sm"
-                          className="h-8 rounded-none border-2 border-foreground text-xs font-bold uppercase tracking-[0.14em]"
+                          className="brutal-btn h-8 rounded-none border-2 text-xs font-bold uppercase tracking-[0.14em]"
                         >
                           Later
                         </Button>
@@ -138,7 +138,7 @@ export default async function PurchaseOrdersPage() {
                           type="submit"
                           variant="ghost"
                           size="sm"
-                          className="h-8 rounded-none text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground"
+                          className="brutal-ghost h-8 rounded-none text-xs font-bold uppercase tracking-[0.14em]"
                         >
                           Reject
                         </Button>

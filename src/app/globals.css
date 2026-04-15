@@ -727,13 +727,22 @@ select.editorial-select:focus-visible { outline: none; border-color: var(--foreg
   color: var(--hot);
 }
 
-/* Hot buttons flip to white-on-transparent inside the card */
-.brutal-card .hot-cta {
-  background: #ffffff;
-  color: var(--hot);
-  border-color: #ffffff;
+/* Hot-CTA button — white background, orange text. Works both inside
+   .brutal-card (where it reads as a white button on orange glass) and
+   outside (generic orange-accented CTA). !important-scoped so shadcn
+   Button variant classes like text-primary-foreground don't override. */
+.hot-cta {
+  background: #ffffff !important;
+  color: var(--hot) !important;
+  border-color: #ffffff !important;
 }
-.brutal-card .hot-cta:hover { background: rgba(255, 255, 255, 0.92); }
+.hot-cta:hover,
+.hot-cta:focus-visible {
+  background: rgba(255, 255, 255, 0.92) !important;
+  color: var(--hot) !important;
+}
+/* Any descendant element (span, svg, etc.) inherits the orange text */
+.hot-cta * { color: inherit !important; }
 
 /* Inputs inside orange glass */
 .brutal-card input[type="text"],
@@ -744,6 +753,32 @@ select.editorial-select:focus-visible { outline: none; border-color: var(--foreg
   background: rgba(255, 255, 255, 0.95);
   color: var(--foreground);
   border-color: rgba(255, 255, 255, 0.6) !important;
+}
+
+/* Two button recipes that work on orange glass:
+     .hot-cta      — solid white bg + orange text (primary CTA)
+     .brutal-btn   — transparent bg + white text + white border (secondary)
+     .brutal-ghost — transparent bg + 85% white text (tertiary / link)
+   Use these explicitly on Buttons inside .brutal-card so no button
+   inherits the parent's white color onto its own light bg. */
+.brutal-btn {
+  background: transparent !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.7) !important;
+}
+.brutal-btn:hover {
+  background: rgba(255, 255, 255, 0.18) !important;
+  color: #ffffff !important;
+}
+
+.brutal-ghost {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.85) !important;
+  border-color: transparent !important;
+}
+.brutal-ghost:hover {
+  background: rgba(255, 255, 255, 0.10) !important;
+  color: #ffffff !important;
 }
 
 /* Urgent variant — denser orange, stronger halo */

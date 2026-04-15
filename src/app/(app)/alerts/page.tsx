@@ -88,7 +88,7 @@ export default async function AlertsPage() {
                   {alert.status === "OPEN" && (
                     <form action={acknowledgeAlertAction}>
                       <input type="hidden" name="alertId" value={alert.id} />
-                      <Button type="submit" variant="outline" size="sm" className="h-8 rounded-none border-2 border-foreground text-xs font-bold uppercase tracking-[0.14em]">
+                      <Button type="submit" variant="outline" size="sm" className="brutal-btn h-8 rounded-none border-2 text-xs font-bold uppercase tracking-[0.14em]">
                         Mark seen
                       </Button>
                     </form>
