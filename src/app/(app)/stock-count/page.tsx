@@ -91,7 +91,7 @@ export default async function StockCountPage() {
                         <input type="hidden" name="inventoryItemId" value={item.id} />
                         <input type="hidden" name="countedBase" value={item.stockOnHandBase} />
                         <input type="hidden" name="notes" value="Confirmed from table mode" />
-                        <Button type="submit" size="sm" variant="outline" className="h-8 text-xs">
+                        <Button type="submit" size="sm" variant="outline" className="brutal-btn h-8 text-xs">
                           Looks right
                         </Button>
                       </form>
@@ -160,7 +160,7 @@ export default async function StockCountPage() {
                   <input type="hidden" name="inventoryItemId" value={item.id} />
                   <input type="hidden" name="countedBase" value={item.stockOnHandBase} />
                   <input type="hidden" name="notes" value="Confirmed expected stock from list mode" />
-                  <Button type="submit" size="sm" variant="outline" className="h-7 text-xs">
+                  <Button type="submit" size="sm" variant="outline" className="brutal-btn h-7 text-xs">
                     Looks right
                   </Button>
                 </form>

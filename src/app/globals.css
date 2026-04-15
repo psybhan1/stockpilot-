@@ -786,15 +786,22 @@ select.editorial-select:focus-visible { outline: none; border-color: var(--foreg
 /* Any descendant element (span, svg, etc.) inherits the orange text */
 .hot-cta * { color: inherit !important; }
 
-/* Inputs inside orange glass */
+/* Inputs inside orange glass.
+   Color is pinned dark (not var(--foreground)) because the input bg
+   is always near-white in both themes — cream text on white would be
+   unreadable in dark mode. */
 .brutal-card input[type="text"],
 .brutal-card input[type="number"],
 .brutal-card input[type="email"],
 .brutal-card textarea,
 .brutal-card select {
-  background: rgba(255, 255, 255, 0.95);
-  color: var(--foreground);
+  background: rgba(255, 255, 255, 0.95) !important;
+  color: #0A0A0A !important;
   border-color: rgba(255, 255, 255, 0.6) !important;
+}
+.brutal-card input::placeholder,
+.brutal-card textarea::placeholder {
+  color: rgba(10, 10, 10, 0.5) !important;
 }
 
 /* Two button recipes that work on orange glass:
