@@ -201,6 +201,7 @@ async function pollOneThread(ctx: {
       locationId: ctx.locationId,
       orderNumber: ctx.orderNumber,
       supplierName: ctx.supplierName,
+      purchaseOrderId: ctx.purchaseOrderId,
       bodyText,
       intent,
     });
@@ -298,6 +299,8 @@ async function notifyManagerOfReply(input: {
   locationId: string;
   orderNumber: string;
   supplierName: string;
+  /** The PO the reply belongs to — used to attach a "rescue" button on OOS. */
+  purchaseOrderId: string | null;
   bodyText: string;
   intent: SupplierReplyIntent;
 }) {
@@ -348,15 +351,49 @@ async function notifyManagerOfReply(input: {
       : "replied";
 
   const preview = input.bodyText.slice(0, 300).replace(/\s+/g, " ").trim();
+
+  // On OUT_OF_STOCK, check if we have a backup supplier that carries
+  // every line on the failed PO. If yes, attach a one-tap "Rescue
+  // from X" button so the manager never has to think.
+  let rescueKeyboard: Array<Array<{ text: string; callback_data: string }>> | undefined;
+  let rescueFooter = "";
+  if (input.intent === "OUT_OF_STOCK" && input.purchaseOrderId) {
+    try {
+      const { findAlternateSupplierForOrder } = await import(
+        "@/modules/purchasing/rescue"
+      );
+      const alt = await findAlternateSupplierForOrder(input.purchaseOrderId);
+      if (alt) {
+        rescueKeyboard = [
+          [
+            {
+              text: `↻ Reorder from ${alt.supplier.name}`,
+              callback_data: `po_rescue:${input.purchaseOrderId}`,
+            },
+            {
+              text: "✖ Skip",
+              callback_data: "noop",
+            },
+          ],
+        ];
+        rescueFooter = `\n\n_Backup supplier available: *${alt.supplier.name}*. Tap to auto-reorder the same items — no more thinking needed._`;
+      }
+    } catch (err) {
+      botTelemetry.error("supplier-reply-poller.rescue_lookup", err);
+    }
+  }
+
   const message =
     `${icon} *${input.supplierName}* ${label} on *${input.orderNumber}*.\n\n` +
-    `> ${preview}${input.bodyText.length > 300 ? "…" : ""}`;
+    `> ${preview}${input.bodyText.length > 300 ? "…" : ""}` +
+    rescueFooter;
 
   for (const manager of managers) {
     if (!manager.telegramChatId) continue;
     try {
       await sendTelegramMessage(manager.telegramChatId, message, {
         parseMode: "Markdown",
+        replyMarkup: rescueKeyboard ?? undefined,
       });
     } catch (err) {
       botTelemetry.error("supplier-reply-poller.notify", err, {

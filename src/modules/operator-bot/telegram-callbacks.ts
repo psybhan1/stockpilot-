@@ -51,6 +51,9 @@ export async function handleTelegramCallback(
       case "po_retry":
         result = await retryPurchaseOrderFromBot(resourceId, ctx);
         break;
+      case "po_rescue":
+        result = await rescuePurchaseOrderFromBot(resourceId, ctx);
+        break;
       case "noop":
         result = { ok: true, toast: "", editText: "" };
         break;
@@ -255,6 +258,72 @@ async function cancelPurchaseOrderFromBot(
     ok: true,
     toast: "Cancelled",
     editText: `✖ *${po.orderNumber}* cancelled.\nNothing was sent to ${po.supplier?.name ?? "the supplier"}.`,
+    editKeyboard: null,
+  };
+}
+
+// ── Rescue from alternate supplier ───────────────────────────────────
+
+async function rescuePurchaseOrderFromBot(
+  failedPurchaseOrderId: string,
+  ctx: { chatId: string; userId?: string | null }
+): Promise<CallbackResult> {
+  if (!failedPurchaseOrderId) {
+    return { ok: false, toast: "Missing order id", editText: "" };
+  }
+
+  const { createRescuePurchaseOrder } = await import(
+    "@/modules/purchasing/rescue"
+  );
+  const result = await createRescuePurchaseOrder(
+    failedPurchaseOrderId,
+    ctx.userId ?? null
+  );
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      toast: "Couldn't rescue",
+      editText: `⚠ Couldn't auto-reorder: ${result.reason}`,
+      editKeyboard: null,
+    };
+  }
+
+  if (result.dispatchStatus === PurchaseOrderStatus.SENT) {
+    return {
+      ok: true,
+      toast: "Rescued ✓",
+      editText:
+        `✅ Rescue order *${result.newOrderNumber}* sent to *${result.alternateSupplierName}*.\n\n` +
+        `You'll get a ping when they respond — same pipeline as any other order.`,
+      editKeyboard: null,
+    };
+  }
+
+  if (result.dispatchStatus === PurchaseOrderStatus.FAILED) {
+    return {
+      ok: false,
+      toast: "Rescue dispatch failed",
+      editText:
+        `⚠ Rescue order *${result.newOrderNumber}* was created for *${result.alternateSupplierName}*, ` +
+        `but sending to them failed.\n\n` +
+        (result.dispatchReason ? `*Reason:* ${result.dispatchReason}\n\n` : "") +
+        `Tap *Retry* to try again.`,
+      editKeyboard: [
+        [
+          { text: "🔁 Retry", callback_data: `po_retry:${result.newPurchaseOrderId}` },
+          { text: "✖ Cancel", callback_data: `po_cancel:${result.newPurchaseOrderId}` },
+        ],
+      ],
+    };
+  }
+
+  return {
+    ok: true,
+    toast: "Rescue queued",
+    editText:
+      `📋 Rescue order *${result.newOrderNumber}* for *${result.alternateSupplierName}* is now ` +
+      `in status *${result.dispatchStatus.toLowerCase()}*.`,
     editKeyboard: null,
   };
 }
