@@ -720,6 +720,9 @@ export async function createRestockOrderFromBotMessage(input: {
   channel: ManagerBotChannel;
   inventoryItemId: string;
   reportedOnHandDisplay: number;
+  /** When the user explicitly specified an order quantity, honor it
+   *  verbatim instead of letting par-based math round to a pack. */
+  requestedQuantity?: { value: number; unit: string } | null;
   sourceMessageId: string | null;
   originalText: string;
 }): Promise<BotHandlingResult> {
@@ -819,12 +822,28 @@ export async function createRestockOrderFromBotMessage(input: {
     };
   }
 
-  const order = calculateRestockToParOrder({
-    parLevelBase: refreshedItem.parLevelBase,
-    reportedOnHandBase,
-    packSizeBase: supplierContext.packSizeBase,
-    minimumOrderQuantity: supplierContext.minimumOrderQuantity,
-  });
+  // If the user specified an order quantity verbatim ("order 12 oz"),
+  // honor it exactly. We convert the user's value to base units using
+  // the same conversion logic as everywhere else, then derive a pack
+  // count for display. We DO NOT round to the nearest pack size — if
+  // the user said 12, the order is for 12 of whatever they said.
+  const userOrder = input.requestedQuantity
+    ? buildUserSpecifiedOrder({
+        value: input.requestedQuantity.value,
+        unit: input.requestedQuantity.unit,
+        item: refreshedItem,
+        packSizeBase: supplierContext.packSizeBase,
+      })
+    : null;
+
+  const order =
+    userOrder ??
+    calculateRestockToParOrder({
+      parLevelBase: refreshedItem.parLevelBase,
+      reportedOnHandBase,
+      packSizeBase: supplierContext.packSizeBase,
+      minimumOrderQuantity: supplierContext.minimumOrderQuantity,
+    });
 
   if (order.orderQuantityBase <= 0) {
     return {
@@ -1586,6 +1605,95 @@ async function dispatchBotPurchaseOrder(input: {
     },
   });
 }
+
+/**
+ * Convert a free-text quantity+unit pair (what the user typed) into
+ * the same shape the par-based calculator returns, so downstream
+ * code can treat it identically.
+ *
+ * Rules:
+ *   - Mass / volume units (oz, lb, kg, g, ml, l) convert into the
+ *     item's base unit using fixed factors. We trust the user's
+ *     unit over the item's display unit ("12 oz" stays 12 oz even
+ *     if the item is normally tracked in lb).
+ *   - Pack-style units (bag, case, box, bottle, each, count) use the
+ *     supplier's pack size to compute base quantity.
+ *   - Anything we can't recognise falls back to the item's display
+ *     unit so the user's number is at least preserved.
+ *
+ * Returns null if conversion produced a non-positive amount.
+ */
+function buildUserSpecifiedOrder(input: {
+  value: number;
+  unit: string;
+  item: { displayUnit: MeasurementUnitType; baseUnit: BaseUnitType };
+  packSizeBase: number;
+}): { recommendedPackCount: number; orderQuantityBase: number; shortageBase: number } | null {
+  const value = input.value;
+  if (!Number.isFinite(value) || value <= 0) return null;
+
+  const unit = input.unit.toLowerCase().replace(/\.$/, "").trim();
+  const pack = Math.max(1, input.packSizeBase);
+
+  // Mass → grams
+  const G_PER_OZ = 28.3495;
+  const G_PER_LB = 453.592;
+  // Volume → millilitres
+  const ML_PER_FLOZ = 29.5735;
+  const ML_PER_CUP = 240;
+  const ML_PER_GAL = 3785.41;
+
+  let baseQty: number | null = null;
+
+  if (input.item.baseUnit === "GRAM") {
+    if (unit === "g" || unit === "gram" || unit === "grams") baseQty = value;
+    else if (unit === "kg" || unit === "kilo" || unit === "kilos" || unit === "kilogram" || unit === "kilograms")
+      baseQty = value * 1000;
+    else if (unit === "oz" || unit === "ounce" || unit === "ounces") baseQty = value * G_PER_OZ;
+    else if (unit === "lb" || unit === "lbs" || unit === "pound" || unit === "pounds")
+      baseQty = value * G_PER_LB;
+  } else if (input.item.baseUnit === "MILLILITER") {
+    if (unit === "ml" || unit === "millilitre" || unit === "milliliter") baseQty = value;
+    else if (unit === "l" || unit === "litre" || unit === "liter" || unit === "litres" || unit === "liters")
+      baseQty = value * 1000;
+    else if (unit === "fl oz" || unit === "floz" || unit === "fluid oz") baseQty = value * ML_PER_FLOZ;
+    else if (unit === "cup" || unit === "cups") baseQty = value * ML_PER_CUP;
+    else if (unit === "gal" || unit === "gallon" || unit === "gallons") baseQty = value * ML_PER_GAL;
+  }
+
+  // Pack-style units always multiply by pack size regardless of base.
+  if (
+    baseQty == null &&
+    (unit === "bag" || unit === "bags" ||
+      unit === "case" || unit === "cases" ||
+      unit === "box" || unit === "boxes" ||
+      unit === "bottle" || unit === "bottles" ||
+      unit === "pack" || unit === "packs" ||
+      unit === "each" || unit === "ea" || unit === "count" || unit === "ct" || unit === "")
+  ) {
+    baseQty = value * pack;
+  }
+
+  // Last resort: assume the user's number is already in the item's
+  // base unit. Better than refusing.
+  if (baseQty == null) baseQty = value;
+
+  baseQty = Math.round(baseQty);
+  if (baseQty <= 0) return null;
+
+  const recommendedPackCount = Math.max(1, Math.round(baseQty / pack));
+
+  return {
+    recommendedPackCount,
+    orderQuantityBase: baseQty,
+    shortageBase: baseQty,
+  };
+}
+
+type MeasurementUnitType =
+  | "GRAM" | "KILOGRAM" | "MILLILITER" | "LITER" | "COUNT"
+  | "CASE" | "BOTTLE" | "BAG" | "BOX";
+type BaseUnitType = "GRAM" | "MILLILITER" | "COUNT";
 
 function pickSupplierContext(item: {
   primarySupplier: {

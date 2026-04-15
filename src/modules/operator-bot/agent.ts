@@ -73,15 +73,25 @@ const TOOLS: ToolSchema[] = [
     function: {
       name: "place_restock_order",
       description:
-        "Create a purchase order (PO) for an item. The system computes quantity from par level automatically. Use when the user asks to order/reorder/restock something AND a supplier is linked. If no supplier is linked, tell the user and offer to link one — do NOT call this tool.",
+        "Create a purchase order (PO) for an item. Use when the user asks to order/reorder/restock something AND a supplier is linked. If no supplier is linked, tell the user and offer to link one — do NOT call this tool.\n\nQUANTITY RULES (read carefully):\n- If the user says how much to ORDER ('order 12 oz of ground coffee', 'get me 5 bags', '2 cases of milk'), pass that number+unit in requested_quantity + requested_unit.\n- If the user only reports REMAINING stock ('only 2 left', 'we have 5'), pass that in current_quantity and leave requested_quantity null — the system will compute order size from par.\n- If both: pass both. requested_quantity wins for the order amount; current_quantity updates the stock count.",
       parameters: {
         type: "object",
         properties: {
-          item_id: { type: "string", description: "Inventory item id (from list_inventory)." },
+          item_id: { type: "string", description: "Inventory item id from LIVE DATA. FUZZY-MATCH the user's wording against item names there: 'grinded coffee' → ground coffee, 'oat mlk' → oat milk, 'espresso' → espresso beans. NEVER ask the user to confirm an obvious match." },
           current_quantity: {
             type: "number",
             description:
-              "Current on-hand quantity the user reported, in display units (e.g. '2' if they said '2 left'). If unknown, pass 0.",
+              "Current on-hand quantity the user reported, in display units (e.g. '2' if they said '2 left'). 0 if unknown / not mentioned.",
+          },
+          requested_quantity: {
+            type: "number",
+            description:
+              "OPTIONAL. The exact amount the user wants to ORDER (not what's left). Use the number they spoke, e.g. 12 for 'order 12 oz', 5 for '5 bags'. Omit if the user didn't specify an order quantity.",
+          },
+          requested_unit: {
+            type: "string",
+            description:
+              "OPTIONAL. The unit the user used for requested_quantity. Free text — 'oz', 'lb', 'kg', 'g', 'ml', 'l', 'bag', 'case', 'each', etc. Pass exactly what they said. Required if requested_quantity is set.",
           },
         },
         required: ["item_id", "current_quantity"],
@@ -316,6 +326,14 @@ async function executeTool(
     case "place_restock_order": {
       const itemId = String(args.item_id ?? "");
       const current = Number(args.current_quantity ?? 0);
+      const requestedQty =
+        args.requested_quantity == null
+          ? null
+          : Number(args.requested_quantity);
+      const requestedUnit =
+        typeof args.requested_unit === "string" && args.requested_unit.trim()
+          ? args.requested_unit.trim()
+          : null;
       if (!itemId) return { content: "ERROR: item_id required." };
       const result = await createRestockOrderFromBotMessage({
         locationId: ctx.locationId,
@@ -323,6 +341,10 @@ async function executeTool(
         channel: ctx.channel,
         inventoryItemId: itemId,
         reportedOnHandDisplay: current,
+        requestedQuantity:
+          requestedQty != null && Number.isFinite(requestedQty) && requestedQty > 0
+            ? { value: requestedQty, unit: requestedUnit ?? "each" }
+            : null,
         sourceMessageId: ctx.sourceMessageId,
         originalText: ctx.conversation[ctx.conversation.length - 1]?.content ?? "",
       });
@@ -716,6 +738,9 @@ const SYSTEM_PROMPT_BASE = `You are StockBuddy, a terse, accurate inventory assi
 
 2. Units come from LIVE DATA. If an item's base unit is \`ml\`, you never say \`liters\`, \`gallons\`, or guess — you say what LIVE DATA says. If the user says "5 ml" but LIVE DATA shows the item in \`count\`, ask a one-line clarification, do NOT silently convert.
 
+2b. **FUZZY-MATCH item names.** The user will use casual phrasing — "grinded coffee", "oat mlk", "espresso", "the syrup we use" — and you must map it to the closest item in LIVE DATA. Match on: typos (grinded→ground), abbreviations (mlk→milk), partial names (espresso→espresso beans), descriptions (the syrup we use→the only syrup item). If there's exactly one plausible match in LIVE DATA, USE IT — do not ask "did you mean X?". Only ask if there are 2+ items that could equally match.
+2c. **HONOR the user's quantity and unit verbatim.** If they say "12 oz", pass 12 oz to the tool — do NOT round up to a 16 oz pack, do NOT compute from par. The user's number is the order amount. Only fall back to par-based math when they didn't specify any amount.
+
 3. You have real tools. CALL them for any action:
    - \`place_restock_order\` — create a reorder.
    - \`update_stock_count\` — correct on-hand stock.
@@ -748,7 +773,13 @@ Do NOT write any of these in your reply — they make you sound like a broken ch
 ## EXAMPLES OF GOOD REPLIES
 
 User: "oat milk 2 left"
-You (after calling place_restock_order): "📋 Drafted PO-2026-0412 — 10 L of oat milk from FreshCo. Tap Approve to send."
+You (after calling place_restock_order with current_quantity=2 only — no requested_quantity): "📋 Drafted PO-2026-0412 — 10 L of oat milk from FreshCo. Tap Approve to send."
+
+User: "order 12 oz of grinded coffee"
+You (LIVE DATA has "Ground Coffee Beans". Fuzzy-match grinded→ground, call place_restock_order with item_id of Ground Coffee Beans, current_quantity=0, requested_quantity=12, requested_unit="oz"): "📋 Drafted PO-2026-0413 — 12 oz of Ground Coffee Beans from BeanCo. Tap Approve to send."
+
+User: "get me 5 bags of espresso"
+You (LIVE DATA has "Espresso Beans", call with requested_quantity=5, requested_unit="bag"): "📋 Drafted PO-2026-0414 — 5 bags of Espresso Beans from BeanCo. Tap Approve."
 
 User: "how much coconut syrup do we have"
 You (LIVE DATA shows coconut syrup on_hand=5ml par=3ml): "5 ml of coconut syrup — above par (3 ml)."
