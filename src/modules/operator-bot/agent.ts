@@ -624,7 +624,30 @@ const SYSTEM_PROMPT_BASE = `You are StockBuddy, a terse, accurate inventory assi
 
 7. Never repeat a previous reply. If stuck, ask ONE specific clarifying question.
 
-8. When the user seems confused or is repeating themselves, summarise what you see in LIVE DATA for the item in question in one short sentence, then ask what they want to do — don't restate the same thing you said last time.`;
+8. When the user seems confused or is repeating themselves, summarise what you see in LIVE DATA for the item in question in one short sentence, then ask what they want to do — don't restate the same thing you said last time.
+
+## FORBIDDEN PHRASES
+
+Do NOT write any of these in your reply — they make you sound like a broken chatbot:
+- Tool names: "place_restock_order", "update_stock_count", "list_inventory", "approve_recent_order", etc. The user doesn't know or care what your tools are called.
+- Empty placeholders like \`\`, \`PO-PO-XXXX\`, "the order number is ", "the supplier is ".
+- Narrating your reasoning: "I'll call place_restock_order to...", "Let me check list_inventory for you".
+- Asking for info that's in LIVE DATA: "What's the current stock?" when LIVE DATA shows it.
+- Starting over phrases: "Let's try again", "I'm StockBuddy", "Say reset to start over".
+
+## EXAMPLES OF GOOD REPLIES
+
+User: "oat milk 2 left"
+You (after calling place_restock_order): "📋 Drafted PO-2026-0412 — 10 L of oat milk from FreshCo. Tap Approve to send."
+
+User: "how much coconut syrup do we have"
+You (LIVE DATA shows coconut syrup on_hand=5ml par=3ml): "5 ml of coconut syrup — above par (3 ml)."
+
+User: "approve"
+You (after calling approve_recent_order): "✅ PO-2026-0412 sent to FreshCo."
+
+User: "5 mli coconut syrup"
+You: "Coconut syrup is currently at 5 ml, par is 3 ml — already above par. Want me to raise the par or place a manual order anyway?"`;
 
 // ── Groq client ───────────────────────────────────────────────────────────────
 type GroqToolCall = {
@@ -655,21 +678,22 @@ async function callGroq(messages: GroqMessage[]): Promise<{
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      // openai/gpt-oss-120b is Groq's strongest reasoning-tool-use
-      // model as of this writing — dramatically less prone to
-      // unit/number hallucinations than llama-3.3-70b. Fallback-
-      // friendly via env override if you want to A/B test.
-      model: process.env.GROQ_BOT_MODEL ?? "openai/gpt-oss-120b",
+      // llama-3.3-70b-versatile is Groq's most reliable tool-use model.
+      // gpt-oss-120b sounded smarter on paper but in practice leaked
+      // tool names into user replies and emitted empty placeholder
+      // values like "The order number is ``". 70b is boring and
+      // disciplined — exactly what this bot needs.
+      model: process.env.GROQ_BOT_MODEL ?? "llama-3.3-70b-versatile",
       // Low temperature: we want deterministic data-grounded replies,
       // not creative writing.
       temperature: 0.1,
       top_p: 0.9,
-      max_tokens: 700,
+      max_tokens: 600,
       tools: TOOLS,
       tool_choice: "auto",
       messages,
     }),
-    signal: AbortSignal.timeout(45000),
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!res.ok) {
@@ -785,6 +809,58 @@ async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
   ].join("\n");
 }
 
+// ── Output sanitiser ───────────────────────────────────────────────────────
+// Last-line-of-defence: even with the strongest prompt the model sometimes
+// slips and mentions tool names, leaves empty placeholders, or narrates
+// "I'll now call list_inventory for you". Strip those before the user
+// sees them.
+
+const TOOL_NAME_PATTERN = /\b(place_restock_order|update_stock_count|list_inventory|list_low_stock|list_suppliers|link_supplier_to_item|adjust_par_level|approve_recent_order|cancel_recent_order|start_add_item_flow|start_add_supplier_flow|check_item_stock)\b/gi;
+
+function sanitiseReply(raw: string | null, fallback: string): string {
+  if (!raw) return fallback;
+  let text = raw;
+
+  // Empty inline-code placeholders ("the order is ``", "PO-PO-XXXX").
+  text = text.replace(/``/g, "");
+  text = text.replace(/PO-PO-\w+/g, "");
+  text = text.replace(/\bPO-\d{4}-XXXX\b/gi, "");
+
+  // Tool names bleeding into user text.
+  if (TOOL_NAME_PATTERN.test(text)) {
+    // Rewrite the phrase rather than delete it — readers should still get
+    // SOME signal. Replace the tool name with a neutral verb.
+    text = text.replace(TOOL_NAME_PATTERN, (match) => {
+      const lookup: Record<string, string> = {
+        place_restock_order: "draft an order",
+        update_stock_count: "update the stock",
+        list_inventory: "check your items",
+        list_low_stock: "check what's low",
+        list_suppliers: "check your suppliers",
+        link_supplier_to_item: "link the supplier",
+        adjust_par_level: "change the par",
+        approve_recent_order: "approve the order",
+        cancel_recent_order: "cancel the order",
+        start_add_item_flow: "add an item",
+        start_add_supplier_flow: "add a supplier",
+        check_item_stock: "check the item",
+      };
+      return lookup[match.toLowerCase()] ?? match;
+    });
+  }
+
+  // Narration patterns: "I'll call X to...", "Let me check X for you"
+  text = text.replace(/I'll (call |use |run )(the |a )?[a-z_]+ (tool|function)(\.|,)?/gi, "");
+  text = text.replace(/Let me (call |use |run )(the |a )?[a-z_]+ (tool|function)(\.|,)?/gi, "");
+
+  // Collapse double spaces and trim.
+  text = text.replace(/ {2,}/g, " ").trim();
+
+  // If after sanitisation we have nothing useful, fall back.
+  if (text.length < 2) return fallback;
+  return text;
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult> {
   const liveData = await buildLiveDataBlock(ctx);
@@ -856,6 +932,12 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
     finalReply =
       "I tried a few things but couldn't work out what to do next. Can you rephrase?";
   }
+
+  // Final safety pass: strip tool names, empty placeholders, narration.
+  finalReply = sanitiseReply(
+    finalReply,
+    "Let me know what you want to do — check stock, reorder something, or change a par."
+  );
 
   return {
     ok: true,
