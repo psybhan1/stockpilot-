@@ -20,8 +20,9 @@ import {
   normalizeReceivedPackCount,
   receivedQuantityBaseFromPacks,
 } from "@/modules/purchasing/lifecycle";
-import { getAiProvider } from "@/providers/ai-provider";
-import { getSupplierOrderProvider } from "@/providers/supplier-order-provider";
+import { getSupplierOrderProviderForLocation } from "@/providers/supplier-order-provider";
+import { buildSupplierOrderEmail } from "@/modules/purchasing/email-template";
+import { getGmailCredentials } from "@/modules/channels/service";
 
 function nextOrderNumber() {
   return `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -47,11 +48,18 @@ export async function approveRecommendation(
     include: {
       inventoryItem: true,
       supplier: true,
+      location: { select: { name: true, business: { select: { name: true } } } },
     },
   });
 
-  const supplierOrderProvider = getSupplierOrderProvider();
-  const ai = getAiProvider();
+  const approver = await db.user.findUnique({
+    where: { id: userId },
+    select: { name: true },
+  });
+
+  const supplierOrderProvider = await getSupplierOrderProviderForLocation(
+    recommendation.locationId
+  );
   const orderNumber = nextOrderNumber();
   const approvedPackCount = Number.isFinite(overridePackCount) && overridePackCount && overridePackCount > 0
     ? Math.max(1, Math.round(overridePackCount))
@@ -130,20 +138,32 @@ export async function approveRecommendation(
     unit: recommendation.recommendedPurchaseUnit.toLowerCase(),
   };
 
-  const draft =
+  // Build the same branded HTML email as the bot path uses, so
+  // suppliers see one consistent template no matter how the order
+  // was approved.
+  const gmailCreds =
+    recommendation.supplier.orderingMode === "EMAIL"
+      ? await getGmailCredentials(recommendation.locationId).catch(() => null)
+      : null;
+
+  const composed =
     recommendation.supplier.orderingMode === "WEBSITE"
       ? null
-      : (await ai.draftSupplierMessage({
+      : buildSupplierOrderEmail({
           supplierName: recommendation.supplier.name,
+          businessName:
+            recommendation.location?.business?.name?.trim() || "Our team",
+          locationName: recommendation.location?.name?.trim() || null,
           orderNumber,
+          orderedByName: approver?.name?.trim() || null,
+          replyToEmail: gmailCreds?.email?.trim() || "",
           lines: [line],
-        })) ??
-        (await supplierOrderProvider.createDraft({
-          supplierName: recommendation.supplier.name,
-          mode: recommendation.supplier.orderingMode,
-          orderNumber,
-          lines: [line],
-        }));
+          notes: recommendation.rationale ?? null,
+        });
+
+  const draft = composed
+    ? { subject: composed.subject, body: composed.text, html: composed.html }
+    : null;
 
   if (recommendation.supplier.orderingMode === "EMAIL") {
     try {
@@ -151,6 +171,7 @@ export async function approveRecommendation(
         recipient: recommendation.supplier.email ?? "orders@example.com",
         subject: draft?.subject ?? `PO ${orderNumber} from StockPilot`,
         body: draft?.body ?? recommendation.rationale,
+        html: draft?.html,
       });
 
       await db.$transaction(async (tx) => {
@@ -172,6 +193,13 @@ export async function approveRecommendation(
             body: draft?.body ?? recommendation.rationale,
             status: "SENT",
             providerMessageId: sendResult.providerMessageId,
+            metadata: {
+              ...(("metadata" in sendResult && sendResult.metadata
+                ? (sendResult.metadata as Record<string, unknown>)
+                : {})),
+              ...(draft?.html ? { html: draft.html } : {}),
+              recipient: recommendation.supplier.email ?? "orders@example.com",
+            } satisfies Prisma.InputJsonValue,
             sentAt: new Date(),
           },
         });
