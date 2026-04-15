@@ -1,5 +1,5 @@
 {
-  "name": "01 - Order Approval Flow",
+  "name": "01 - Low Stock Notification",
   "nodes": [
     {
       "parameters": {
@@ -9,7 +9,7 @@
         "options": {}
       },
       "id": "webhook-trigger",
-      "name": "Order Approval Webhook",
+      "name": "Low Stock Alert Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [240, 300]
@@ -28,10 +28,10 @@
     },
     {
       "parameters": {
-        "jsCode": "const d = $input.first().json.body ?? $input.first().json;\nconst poId = d.purchaseOrderId;\nconst supplier = d.supplierName;\nconst item = d.itemName;\nconst qty = d.quantity;\nconst unit = d.purchaseUnit;\nconst orderNum = d.orderNumber;\nconst chatId = d.telegramChatId;\n\nreturn [{ json: { poId, supplier, item, qty, unit, orderNum, chatId,\n  message: `🔔 *Low Stock Alert — Restock Needed*\\n\\n📦 Item: *${item}*\\n🏪 Supplier: *${supplier}*\\n📋 Order: ${orderNum}\\n📊 Quantity: ${qty} ${unit}\\n\\nReply *YES* to send the order, or *NO* to cancel.` } }];"
+        "jsCode": "const d = $input.first().json.body ?? $input.first().json;\nconst supplier = d.supplierName ?? 'a supplier';\nconst item = d.itemName ?? 'an item';\nconst qty = d.quantity ?? '?';\nconst unit = d.purchaseUnit ?? '';\nconst orderNum = d.orderNumber ?? '(pending)';\nconst chatId = d.telegramChatId ?? $env.MANAGER_TELEGRAM_CHAT_ID;\n\nreturn [{ json: { chatId,\n  message: `🔔 *Low Stock — Restock drafted*\\n\\n📦 ${item}: *${qty} ${unit}*\\n🏪 ${supplier}\\n📋 ${orderNum}\\n\\nApprove from the Telegram quick-action buttons or in the StockPilot app.` } }];"
       },
       "id": "format-message",
-      "name": "Format Approval Message",
+      "name": "Format Notification",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [480, 380]
@@ -41,142 +41,26 @@
         "authentication": "credentials",
         "chatId": "={{ $json.chatId }}",
         "text": "={{ $json.message }}",
-        "additionalFields": {
-          "parse_mode": "Markdown"
-        }
+        "additionalFields": { "parse_mode": "Markdown" }
       },
-      "id": "send-telegram-approval",
-      "name": "Send Approval Request",
+      "id": "send-telegram",
+      "name": "Notify Manager",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1,
       "position": [720, 380]
-    },
-    {
-      "parameters": {
-        "amount": 24,
-        "unit": "hours"
-      },
-      "id": "wait-for-response",
-      "name": "Wait 24h for Response",
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1,
-      "position": [960, 380],
-      "webhookId": "order-approval-response"
-    },
-    {
-      "parameters": {
-        "url": "={{ $env.STOCKBUDDY_BASE_URL }}/api/n8n/purchase-order/{{ $('Format Approval Message').first().json.poId }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "options": {}
-      },
-      "id": "check-order-status",
-      "name": "Check Order Status",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1200, 380]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": { "caseSensitive": false },
-          "conditions": [
-            {
-              "id": "approved-check",
-              "leftValue": "={{ $json.purchaseOrder.status }}",
-              "rightValue": "APPROVED",
-              "operator": { "type": "string", "operation": "equals" }
-            }
-          ]
-        }
-      },
-      "id": "check-approved",
-      "name": "Was Approved?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [1440, 380]
-    },
-    {
-      "parameters": {
-        "url": "={{ $env.STOCKBUDDY_BASE_URL }}/api/n8n/send-approved-order",
-        "method": "POST",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-StockPilot-Webhook-Secret", "value": "={{ $env.STOCKBUDDY_WEBHOOK_SECRET }}" },
-            { "name": "Content-Type", "value": "application/json" }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "purchaseOrderId", "value": "={{ $('Format Approval Message').first().json.poId }}" }
-          ]
-        },
-        "options": {}
-      },
-      "id": "send-order",
-      "name": "Send Order to Supplier",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1680, 260]
-    },
-    {
-      "parameters": {
-        "authentication": "credentials",
-        "chatId": "={{ $('Format Approval Message').first().json.chatId }}",
-        "text": "✅ Order *{{ $('Format Approval Message').first().json.orderNum }}* sent to *{{ $('Format Approval Message').first().json.supplier }}*!\n\nI'll let you know when they confirm.",
-        "additionalFields": { "parse_mode": "Markdown" }
-      },
-      "id": "notify-sent",
-      "name": "Notify Order Sent",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1,
-      "position": [1920, 260]
-    },
-    {
-      "parameters": {
-        "authentication": "credentials",
-        "chatId": "={{ $('Format Approval Message').first().json.chatId }}",
-        "text": "❌ Order *{{ $('Format Approval Message').first().json.orderNum }}* was not approved in time and has been cancelled.",
-        "additionalFields": { "parse_mode": "Markdown" }
-      },
-      "id": "notify-cancelled",
-      "name": "Notify Cancelled",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1,
-      "position": [1680, 500]
     }
   ],
   "connections": {
-    "Order Approval Webhook": {
+    "Low Stock Alert Webhook": {
       "main": [
         [
           { "node": "Respond OK", "type": "main", "index": 0 },
-          { "node": "Format Approval Message", "type": "main", "index": 0 }
+          { "node": "Format Notification", "type": "main", "index": 0 }
         ]
       ]
     },
-    "Format Approval Message": {
-      "main": [[{ "node": "Send Approval Request", "type": "main", "index": 0 }]]
-    },
-    "Send Approval Request": {
-      "main": [[{ "node": "Wait 24h for Response", "type": "main", "index": 0 }]]
-    },
-    "Wait 24h for Response": {
-      "main": [[{ "node": "Check Order Status", "type": "main", "index": 0 }]]
-    },
-    "Check Order Status": {
-      "main": [[{ "node": "Was Approved?", "type": "main", "index": 0 }]]
-    },
-    "Was Approved?": {
-      "main": [
-        [{ "node": "Send Order to Supplier", "type": "main", "index": 0 }],
-        [{ "node": "Notify Cancelled", "type": "main", "index": 0 }]
-      ]
-    },
-    "Send Order to Supplier": {
-      "main": [[{ "node": "Notify Order Sent", "type": "main", "index": 0 }]]
+    "Format Notification": {
+      "main": [[{ "node": "Notify Manager", "type": "main", "index": 0 }]]
     }
   },
   "settings": { "executionOrder": "v1" },
