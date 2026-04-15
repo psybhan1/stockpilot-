@@ -10,6 +10,7 @@ import {
   markPurchaseOrderSentAction,
 } from "@/app/actions/operations";
 import { StatusBadge } from "@/components/app/status-badge";
+import { SupplierConversation } from "@/components/app/supplier-conversation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -210,36 +211,25 @@ export default async function PurchaseOrderDetailPage({
 
           <div className="grid gap-6 lg:grid-cols-2">
             <Panel
-              title="Supplier communications"
-              description="Email drafts, sends, and manual notes attached to this order."
+              title="Supplier conversation"
+              description="The exact email we sent and every reply from the supplier — with intent automatically classified."
             >
-              <div className="space-y-3">
-                {purchaseOrder.communications.length ? (
-                  purchaseOrder.communications.map((communication) => (
-                    <div
-                      key={communication.id}
-                      className="notif-card p-4"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-medium">
-                            {communication.subject ?? "Supplier update"}
-                          </p>
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {communication.body}
-                          </p>
-                        </div>
-                        <StatusBadge label={communication.status} tone="info" />
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <EmptyState
-                    title="No supplier communications yet"
-                    description="Messages connected to this order will appear here."
-                  />
-                )}
-              </div>
+              <SupplierConversation
+                supplierEmail={purchaseOrder.supplier.email}
+                entries={purchaseOrder.communications.map((c) => ({
+                  id: c.id,
+                  direction: c.direction,
+                  subject: c.subject,
+                  body: c.body,
+                  status: c.status,
+                  createdAt: c.createdAt.toISOString(),
+                  sentAt: c.sentAt ? c.sentAt.toISOString() : null,
+                  metadata:
+                    c.metadata && typeof c.metadata === "object"
+                      ? (c.metadata as Record<string, unknown>)
+                      : null,
+                }))}
+              />
             </Panel>
 
             <Panel
