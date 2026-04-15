@@ -6,8 +6,6 @@ import { getSupplierOrderProviderForLocation } from "@/providers/supplier-order-
 import { verifyN8nRequest } from "@/modules/automation/n8n-auth";
 import { buildSupplierOrderEmail } from "@/modules/purchasing/email-template";
 import { getGmailCredentials } from "@/modules/channels/service";
-import { buildSupplierActionUrl } from "@/lib/supplier-action-token";
-import { env as appEnv } from "@/lib/env";
 
 export async function POST(request: NextRequest) {
   const auth = await verifyN8nRequest(request);
@@ -70,9 +68,6 @@ export async function POST(request: NextRequest) {
       replyToEmail: gmailCreds?.email?.trim() || "",
       lines,
       notes: po.notes ?? null,
-      actionUrl: appEnv.APP_URL
-        ? buildSupplierActionUrl(appEnv.APP_URL, po.id)
-        : null,
     });
 
     // Send it

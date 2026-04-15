@@ -41,12 +41,6 @@ export type SupplierOrderEmailInput = {
   requestedDeliveryDate?: string | null;
   /** Optional free-text note (PO terms, special instructions). */
   notes?: string | null;
-  /**
-   * When provided, renders a "one-click response" button block at the
-   * top of the email pointing the supplier to the public action page.
-   * Format: full URL to /suppliers/<signed-token>.
-   */
-  actionUrl?: string | null;
 };
 
 export type SupplierOrderEmail = {
@@ -85,17 +79,14 @@ export function buildSupplierOrderEmail(
 
   const text =
     `Hi ${greetingName},\n\n` +
-    `Please confirm the following purchase order from ${businessLine}:\n\n` +
+    `Could you confirm the order below? Just hit reply with pricing, availability, ` +
+    `and the delivery date you can commit to. If anything is short or back-ordered, ` +
+    `let me know what you can substitute.\n\n` +
     `Order number: ${input.orderNumber}\n` +
     `Requested delivery: ${requestedBy}\n\n` +
     `Items\n${textLines}\n\n` +
     (input.notes ? `Notes: ${input.notes}\n\n` : "") +
-    (input.actionUrl
-      ? `Fastest response — one-click action page:\n  ${input.actionUrl}\n\n` +
-        `(or reply to this email if you prefer)\n\n`
-      : `Please reply to this email to confirm pricing, availability, and the delivery window. ` +
-        `If anything is short or back-ordered, let us know what you can substitute.\n\n`) +
-    `Thanks,\n${orderedBy}\n${businessLine}\n${input.replyToEmail}`;
+    `Thanks,\n${orderedBy}\n${businessLine}`;
 
   // ── HTML version ───────────────────────────────────────────────
   const rowsHtml = input.lines
@@ -149,32 +140,9 @@ export function buildSupplierOrderEmail(
             <tr>
               <td style="padding:20px 32px 0 32px;font-size:15px;line-height:1.55;color:#111827">
                 <p style="margin:0 0 12px 0">Hi ${escapeHtml(greetingName)},</p>
-                <p style="margin:0 0 16px 0">Please confirm the order below. The fastest way is to tap one of the buttons — no email reply needed.</p>
+                <p style="margin:0 0 16px 0">Could you confirm the order below? Just hit reply with pricing, availability, and the delivery date you can commit to. If anything is short or back-ordered, let me know what you can substitute.</p>
               </td>
             </tr>
-
-            ${
-              input.actionUrl
-                ? `<tr>
-              <td style="padding:4px 32px 0 32px">
-                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:separate">
-                  <tr>
-                    <td align="center" style="padding:4px">
-                      <a href="${escapeAttr(input.actionUrl)}?a=confirm" style="display:block;background:#059669;color:#ffffff;text-decoration:none;padding:12px 14px;border-radius:10px;font-weight:600;font-size:14px;text-align:center;white-space:nowrap">&#x2705; Confirm order</a>
-                    </td>
-                    <td align="center" style="padding:4px">
-                      <a href="${escapeAttr(input.actionUrl)}?a=delayed" style="display:block;background:#b45309;color:#ffffff;text-decoration:none;padding:12px 14px;border-radius:10px;font-weight:600;font-size:14px;text-align:center;white-space:nowrap">&#x23F0; Delayed</a>
-                    </td>
-                    <td align="center" style="padding:4px">
-                      <a href="${escapeAttr(input.actionUrl)}?a=oos" style="display:block;background:#b91c1c;color:#ffffff;text-decoration:none;padding:12px 14px;border-radius:10px;font-weight:600;font-size:14px;text-align:center;white-space:nowrap">&#x26A0;&#xFE0F; Out of stock</a>
-                    </td>
-                  </tr>
-                </table>
-                <div style="margin-top:8px;font-size:12px;color:#6b7280;text-align:center">Tapping any button opens a secure page where you can add a delivery date or note — no login needed.</div>
-              </td>
-            </tr>`
-                : ""
-            }
 
             <tr>
               <td style="padding:8px 32px 0 32px">
@@ -224,16 +192,10 @@ export function buildSupplierOrderEmail(
             </tr>
 
             <tr>
-              <td style="padding:24px 32px 28px 32px;font-size:14px;line-height:1.55;color:#111827">
+              <td style="padding:24px 32px 32px 32px;font-size:14px;line-height:1.55;color:#111827">
                 <p style="margin:0 0 4px 0">Thanks,</p>
                 <p style="margin:0;font-weight:600">${escapeHtml(orderedBy)}</p>
                 <p style="margin:2px 0 0 0;color:#6b7280">${escapeHtml(businessLine)}</p>
-              </td>
-            </tr>
-
-            <tr>
-              <td style="padding:14px 32px 22px 32px;border-top:1px solid #f1f5f9;font-size:12px;color:#9ca3af">
-                Sent via StockPilot. Replies go straight to ${escapeHtml(input.replyToEmail)}.
               </td>
             </tr>
           </table>
