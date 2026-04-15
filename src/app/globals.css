@@ -219,24 +219,31 @@
 .page-transition-enter > * > :nth-child(6) { animation-delay: 0.60s; }
 .page-transition-enter > * > :nth-child(n+7) { animation-delay: 0.68s; }
 
-/* ── Scroll-triggered card reveal ──────────────────────────────────
-   Every card (.notif-card / .brutal-card / [data-reveal]) starts
-   hidden and transitions to visible when it crosses the viewport.
-   ScrollRevealController (client component) toggles .in-view via
-   IntersectionObserver. Cards above the fold fire immediately on
-   mount; cards below the fold fire as you scroll to them. */
+/* ── Scroll-driven card reveal ─────────────────────────────────────
+   Two layers:
 
+   1) Fallback (all browsers): IntersectionObserver adds .in-view.
+      Cards transition from hidden → visible once when they intersect.
+
+   2) Progressive enhancement (Chrome/Edge 115+, Opera): CSS scroll-
+      driven animations via `animation-timeline: view()`. The card's
+      opacity/translate/blur are CONTINUOUSLY driven by scroll
+      position — you see the card progressively resolve as you scroll
+      toward it, and reverse as it leaves the top. Proper scroll-tied
+      interactivity, not binary visible/invisible. */
+
+/* Baseline hidden state for the IO fallback */
 .notif-card,
 .brutal-card,
 [data-reveal] {
   opacity: 0;
-  transform: translateY(32px);
-  filter: blur(6px);
+  transform: translateY(48px) scale(0.985);
+  filter: blur(8px);
   transition:
-    opacity 0.75s cubic-bezier(0.16, 1, 0.3, 1),
-    transform 0.75s cubic-bezier(0.16, 1, 0.3, 1),
-    filter 0.75s cubic-bezier(0.16, 1, 0.3, 1),
-    /* Keep the existing liquid-glass hover transitions */
+    opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+    /* Keep existing liquid-glass hover transitions */
     background 280ms cubic-bezier(0.22, 1, 0.36, 1),
     border-color 280ms cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 280ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -246,42 +253,69 @@
 .brutal-card.in-view,
 [data-reveal].in-view {
   opacity: 1;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
   filter: blur(0);
 }
 
-/* Slight cascade on the first screen — direct-sibling cards stagger
-   so neighbors don't all land on the exact same frame. Delays only
-   apply to the initial paint; subsequent scroll-in reveals fire at
-   their own pace. */
-[class*="space-y"] > .notif-card:nth-child(1),
-[class*="space-y"] > .brutal-card:nth-child(1),
-[class*="grid"] > .notif-card:nth-child(1),
-[class*="grid"] > .brutal-card:nth-child(1) { transition-delay: 0ms; }
-[class*="space-y"] > .notif-card:nth-child(2),
-[class*="space-y"] > .brutal-card:nth-child(2),
-[class*="grid"] > .notif-card:nth-child(2),
-[class*="grid"] > .brutal-card:nth-child(2) { transition-delay: 60ms; }
-[class*="space-y"] > .notif-card:nth-child(3),
-[class*="space-y"] > .brutal-card:nth-child(3),
-[class*="grid"] > .notif-card:nth-child(3),
-[class*="grid"] > .brutal-card:nth-child(3) { transition-delay: 120ms; }
-[class*="space-y"] > .notif-card:nth-child(4),
-[class*="space-y"] > .brutal-card:nth-child(4),
-[class*="grid"] > .notif-card:nth-child(4),
-[class*="grid"] > .brutal-card:nth-child(4) { transition-delay: 180ms; }
-[class*="space-y"] > .notif-card:nth-child(n+5),
-[class*="space-y"] > .brutal-card:nth-child(n+5),
-[class*="grid"] > .notif-card:nth-child(n+5),
-[class*="grid"] > .brutal-card:nth-child(n+5) { transition-delay: 220ms; }
+/* Progressive enhancement — scroll-linked animation where supported.
+   Overrides the IO transition approach with a scroll-timeline-driven
+   animation so cards progressively resolve as you scroll, and gently
+   resolve back to fully-faded at the bottom edge to feel alive. */
+@supports (animation-timeline: view()) {
+  .notif-card,
+  .brutal-card,
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    animation: cardScrollReveal linear both;
+    animation-timeline: view();
+    /* Animation plays across: the first 40% of the entry phase (card
+       rising into view from bottom) and the last 20% of the exit
+       phase (card falling out top). */
+    animation-range: entry 0% entry 50%, exit 80% exit 100%;
+  }
 
-/* Reduced-motion users get the stagger zeroed out. */
+  /* .in-view class is redundant under scroll-timeline but keep it
+     transparent in case the IO mutates it. */
+  .notif-card.in-view,
+  .brutal-card.in-view,
+  [data-reveal].in-view {
+    /* no-op */
+  }
+}
+
+@keyframes cardScrollReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(70px) scale(0.97);
+    filter: blur(10px);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  80% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0.4;
+    transform: translateY(-20px) scale(0.99);
+    filter: blur(2px);
+  }
+}
+
+/* Reduced-motion users see cards immediately, no motion. */
 @media (prefers-reduced-motion: reduce) {
   .notif-card, .brutal-card, [data-reveal] {
     opacity: 1 !important;
     transform: none !important;
     filter: none !important;
     transition: none !important;
+    animation: none !important;
   }
 }
 
