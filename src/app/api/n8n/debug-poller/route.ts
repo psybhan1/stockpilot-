@@ -10,6 +10,7 @@ import { CommunicationDirection, SupplierOrderingMode } from "@/lib/prisma";
 import { verifyN8nRequest } from "@/modules/automation/n8n-auth";
 import { backfillGmailThreadIds } from "@/modules/purchasing/backfill-gmail-threads";
 import { pollSupplierReplies } from "@/modules/purchasing/supplier-reply-poller";
+import { sendTelegramMessage } from "@/lib/telegram-bot";
 
 export async function GET(request: NextRequest) {
   const auth = await verifyN8nRequest(request);
@@ -61,6 +62,57 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    const inboundRecent = await db.supplierCommunication.findMany({
+      where: {
+        direction: CommunicationDirection.INBOUND,
+        channel: SupplierOrderingMode.EMAIL,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: {
+        id: true,
+        createdAt: true,
+        body: true,
+        metadata: true,
+        purchaseOrder: {
+          select: { orderNumber: true },
+        },
+      },
+    });
+    const inboundList = inboundRecent.map((c) => {
+      const meta = (c.metadata ?? {}) as Record<string, unknown>;
+      return {
+        id: c.id,
+        orderNumber: c.purchaseOrder?.orderNumber,
+        intent: meta.intent ?? null,
+        fromHeader: meta.fromHeader ?? null,
+        bodyPreview: c.body.slice(0, 200).replace(/\s+/g, " ").trim(),
+        createdAt: c.createdAt.toISOString(),
+      };
+    });
+
+    // Direct Telegram send test to the first paired manager.
+    const manager = await db.user.findFirst({
+      where: { telegramChatId: { not: null } },
+      select: { telegramChatId: true, name: true },
+    });
+    let telegramTest: Record<string, unknown> = { skipped: true };
+    if (manager?.telegramChatId) {
+      try {
+        const result = await sendTelegramMessage(
+          manager.telegramChatId,
+          `🔧 Debug test from StockPilot at ${new Date().toISOString()}. If you see this, the bot→you pipe is working.`,
+          { parseMode: "Markdown" }
+        );
+        telegramTest = { ok: true, sent: true, result: result as unknown };
+      } catch (err) {
+        telegramTest = {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+
     const backfillResult = await backfillGmailThreadIds(100).catch((e) => ({
       error: e instanceof Error ? e.message : String(e),
     }));
@@ -77,6 +129,8 @@ export async function GET(request: NextRequest) {
         inboundRecorded: inboundCount,
       },
       outbound,
+      inboundList,
+      telegramTest,
       backfillResult,
       pollResult,
     });
