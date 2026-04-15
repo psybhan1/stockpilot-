@@ -7,6 +7,7 @@ import {
   rejectRecommendationAction,
 } from "@/app/actions/operations";
 import { PageHero } from "@/components/app/page-hero";
+import { PendingButton } from "@/components/app/pending-button";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -112,13 +113,13 @@ export default async function PurchaseOrdersPage() {
                         defaultValue={rec.recommendedPackCount}
                         className="h-9 w-24 rounded-none border-2 border-foreground text-sm"
                       />
-                      <Button
-                        type="submit"
+                      <PendingButton
                         size="sm"
+                        pendingLabel="Approving…"
                         className="hot-cta h-9 rounded-none border-2 text-xs font-bold uppercase tracking-[0.14em]"
                       >
                         Approve
-                      </Button>
+                      </PendingButton>
                     </form>
                     <div className="flex gap-2">
                       <form action={deferRecommendationAction}>
@@ -208,8 +209,8 @@ function MetricCard({ label, value }: { label: string; value: number }) {
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-border/50 px-4 py-8 text-center">
-      <p className="text-sm text-muted-foreground">{text}</p>
+    <div className="empty-state">
+      <span className="empty-state-hint">{text}</span>
     </div>
   );
 }

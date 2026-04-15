@@ -18,6 +18,7 @@ import {
 } from "@/components/app/navigation-transition";
 import { PageTransition } from "@/components/app/page-transition";
 import { ScrollRevealController } from "@/components/app/scroll-reveal-controller";
+import { Toaster } from "@/components/app/toaster";
 import { Role } from "@/lib/domain-enums";
 import { navigationItems, productName } from "@/lib/navigation";
 import { hasMinimumRole } from "@/lib/permissions";
@@ -54,6 +55,14 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
   return (
     <NavigationTransitionProvider>
     <div className="relative flex min-h-screen flex-col bg-background">
+      {/* Skip-to-content for keyboard users */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-foreground focus:px-4 focus:py-2 focus:font-mono focus:text-xs focus:font-bold focus:uppercase focus:tracking-[0.18em] focus:text-background"
+      >
+        Skip to content
+      </a>
+
       {/* Global SVG filter defs for liquid-glass refraction. */}
       <GlassFilter />
       {/* Global pointer tracker — feeds specular highlight on hovered cards. */}
@@ -178,7 +187,7 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
       </header>
 
       {/* ── Content ─────────────────────────────────────────────────── */}
-      <main className="relative z-10 flex-1">
+      <main id="main-content" className="relative z-10 flex-1">
         <div className="mx-auto w-full max-w-[1600px] px-4 py-8 sm:px-6 sm:py-10 lg:px-10 lg:py-12">
           <NavigationFader>
             <PageTransition>{children}</PageTransition>
@@ -187,6 +196,7 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
       </main>
 
       <AppLiveRefresh intervalMs={autoRefreshMs} />
+      <Toaster />
     </div>
     </NavigationTransitionProvider>
   );

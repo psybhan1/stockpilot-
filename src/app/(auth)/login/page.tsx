@@ -1,104 +1,72 @@
 import { BellRing, ClipboardCheck, ShoppingBasket } from "lucide-react";
+
+import { GlassFilter } from "@/components/app/glass-filter";
+import { InkCanvas } from "@/components/app/ink-canvas";
 import { LoginForm } from "@/components/app/login-form";
+import { PointerGloss } from "@/components/app/pointer-gloss";
 
 export const dynamic = "force-dynamic";
 
+const features = [
+  {
+    icon: BellRing,
+    label: "Alerts",
+    note: "Low stock, missing counts, sync issues — surfaced before the rush.",
+  },
+  {
+    icon: ClipboardCheck,
+    label: "Count",
+    note: "Confirm uncertain items with swipe or table mode in seconds.",
+  },
+  {
+    icon: ShoppingBasket,
+    label: "Orders",
+    note: "AI-drafted restocks wait for your approval before anything ships.",
+  },
+];
+
 export default function LoginPage() {
   return (
-    <main style={{ minHeight:"100vh", background:"#07080F", position:"relative", overflow:"hidden" }}>
-      {/* Background gradient blobs */}
-      <div style={{ position:"absolute", top:"-120px", right:"-80px", width:"600px", height:"600px",
-        borderRadius:"50%", pointerEvents:"none",
-        background:"radial-gradient(circle, rgba(91,115,247,0.18) 0%, transparent 65%)",
-        filter:"blur(60px)" }} />
-      <div style={{ position:"absolute", bottom:"-80px", left:"-60px", width:"400px", height:"400px",
-        borderRadius:"50%", pointerEvents:"none",
-        background:"radial-gradient(circle, rgba(91,115,247,0.09) 0%, transparent 70%)",
-        filter:"blur(50px)" }} />
-      {/* Dot grid */}
-      <div style={{ position:"absolute", inset:0, pointerEvents:"none",
-        backgroundImage:"radial-gradient(circle, rgba(255,255,255,0.035) 1px, transparent 1px)",
-        backgroundSize:"24px 24px" }} />
+    <main className="relative min-h-screen overflow-hidden bg-background">
+      <div className="pointer-events-none fixed inset-0 z-0" aria-hidden>
+        <InkCanvas />
+      </div>
+      <GlassFilter />
+      <PointerGloss />
 
-      <div style={{ position:"relative", maxWidth:"1200px", margin:"0 auto",
-        padding:"0 24px", minHeight:"100vh",
-        display:"grid", gridTemplateColumns:"1fr", alignItems:"center",
-        gap:"48px" }}
-        className="lg:grid-cols-[1fr_400px]">
-
-        {/* Left — value prop */}
-        <section className="anim-fade-up" style={{ paddingTop:"48px", paddingBottom:"48px" }}>
-          {/* Eyebrow */}
-          <span style={{ display:"inline-flex", alignItems:"center", gap:"6px",
-            border:"1px solid rgba(91,115,247,0.30)",
-            background:"rgba(91,115,247,0.10)",
-            borderRadius:"100px", padding:"5px 14px",
-            fontSize:"11px", fontWeight:700, letterSpacing:"0.14em",
-            textTransform:"uppercase", color:"#7B93FF" }}>
+      <div className="relative z-10 mx-auto grid min-h-screen w-full max-w-[1400px] items-center gap-12 px-4 py-12 sm:px-6 lg:grid-cols-[1.1fr_minmax(0,440px)] lg:gap-20 lg:px-10">
+        <section className="flex flex-col gap-8">
+          <p className="font-mono text-[10px] font-medium uppercase tracking-[0.28em] text-muted-foreground">
+            <span className="mr-2 inline-block h-px w-6 align-middle bg-current opacity-60" />
             Inventory operating system
-          </span>
-
-          {/* Headline */}
-          <h1 style={{ marginTop:"28px",
-            fontSize:"clamp(2.8rem, 6vw, 4.2rem)", fontWeight:800,
-            letterSpacing:"-0.05em", lineHeight:"1.02",
-            background:"linear-gradient(160deg, #ffffff 0%, rgba(255,255,255,0.55) 100%)",
-            WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent",
-            backgroundClip:"text", maxWidth:"640px" }}>
-            Run your cafe inventory with the clarity it deserves.
-          </h1>
-
-          <p style={{ marginTop:"20px", fontSize:"16px", lineHeight:1.65,
-            color:"#5A6285", maxWidth:"460px" }}>
-            See what needs attention, count what looks off, and approve supplier orders —
-            without digging through heavy back-office screens.
           </p>
 
-          {/* Feature pills */}
-          <div style={{ marginTop:"36px", display:"flex", flexWrap:"wrap", gap:"10px" }}>
-            {[
-              { icon:BellRing,       label:"Smart alerts" },
-              { icon:ClipboardCheck, label:"Fast stock counts" },
-              { icon:ShoppingBasket, label:"Approval-first orders" },
-            ].map(({ icon: Icon, label }) => (
-              <div key={label} style={{ display:"flex", alignItems:"center", gap:"8px",
-                borderRadius:"100px", padding:"8px 16px",
-                border:"1px solid rgba(255,255,255,0.08)",
-                background:"rgba(255,255,255,0.03)" }}>
-                <Icon style={{ width:13, height:13, color:"#7B93FF" }} />
-                <span style={{ fontSize:"13px", fontWeight:500, color:"#A0AACC" }}>{label}</span>
-              </div>
-            ))}
-          </div>
+          <h1 className="font-extrabold uppercase leading-[0.95] tracking-[-0.035em] text-[clamp(2.75rem,8vw,6rem)]">
+            Stock,
+            <br />
+            handled.
+          </h1>
 
-          {/* Flow steps */}
-          <div style={{ marginTop:"48px", display:"grid", gridTemplateColumns:"repeat(3,1fr)",
-            gap:"20px", maxWidth:"480px" }}>
-            {[
-              { n:"01", title:"Open Home",    body:"Check what's urgent." },
-              { n:"02", title:"Count fast",   body:"Swipe or list mode." },
-              { n:"03", title:"Approve",      body:"Review, adjust, send." },
-            ].map(({ n, title, body }) => (
-              <div key={n} style={{
-                borderRadius:"14px", padding:"1px",
-                background:"linear-gradient(145deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.03) 55%, rgba(91,115,247,0.12) 100%)",
-              }}>
-                <div style={{ borderRadius:"13px", background:"#0D0E1A", padding:"18px 16px" }}>
-                  <p style={{ fontSize:"10px", fontWeight:800, color:"#7B93FF", letterSpacing:"0.1em",
-                    fontVariantNumeric:"tabular-nums" }}>{n}</p>
-                  <p style={{ marginTop:"10px", fontSize:"13px", fontWeight:700,
-                    letterSpacing:"-0.02em", color:"#F0F2FC" }}>{title}</p>
-                  <p style={{ marginTop:"4px", fontSize:"12px", color:"#5A6285" }}>{body}</p>
-                </div>
+          <p className="max-w-lg text-sm leading-relaxed text-muted-foreground sm:text-base">
+            StockPilot watches your inventory, drafts reorders, counts what
+            matters, and only acts when you say so. Sign in with a demo role
+            to take a look.
+          </p>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            {features.map((f) => (
+              <div key={f.label} className="notif-card p-4">
+                <f.icon className="size-5" />
+                <p className="mt-3 text-sm font-semibold">{f.label}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{f.note}</p>
               </div>
             ))}
           </div>
         </section>
 
-        {/* Right — login form */}
-        <div className="anim-fade-up d-150" style={{ paddingTop:"48px", paddingBottom:"48px" }}>
+        <section className="w-full">
           <LoginForm />
-        </div>
+        </section>
       </div>
     </main>
   );

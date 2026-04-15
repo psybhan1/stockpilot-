@@ -1,5 +1,6 @@
 import { type ReactNode } from "react";
 
+import { Sparkline } from "@/components/app/sparkline";
 import { cn } from "@/lib/utils";
 
 /**
@@ -12,6 +13,8 @@ export type HeroStat = {
   label: string;
   value: string | number;
   highlight?: boolean;
+  /** Optional trend data for a subtle sparkline under the value */
+  trend?: number[];
 };
 
 type PageHeroProps = {
@@ -71,14 +74,27 @@ export function PageHero({
               <p className="font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
                 {s.label}
               </p>
-              <p
-                className={cn(
-                  "mt-1.5 text-3xl font-bold tabular-nums leading-none",
-                  s.highlight && "text-accent"
+              <div className="mt-1.5 flex items-end gap-3">
+                <p
+                  className={cn(
+                    "text-3xl font-bold tabular-nums leading-none",
+                    s.highlight && "text-accent"
+                  )}
+                >
+                  {s.value}
+                </p>
+                {s.trend && s.trend.length > 1 && (
+                  <Sparkline
+                    values={s.trend}
+                    width={80}
+                    height={22}
+                    className={cn(
+                      "opacity-70",
+                      s.highlight ? "text-accent" : "text-muted-foreground"
+                    )}
+                  />
                 )}
-              >
-                {s.value}
-              </p>
+              </div>
             </div>
           ))}
         </div>

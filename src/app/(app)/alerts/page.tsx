@@ -3,6 +3,7 @@ import {
   resolveAlertAction,
 } from "@/app/actions/operations";
 import { PageHero } from "@/components/app/page-hero";
+import { PendingButton } from "@/components/app/pending-button";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Role } from "@/lib/domain-enums";
@@ -95,23 +96,25 @@ export default async function AlertsPage() {
                   )}
                   <form action={resolveAlertAction}>
                     <input type="hidden" name="alertId" value={alert.id} />
-                    <Button
-                      type="submit"
+                    <PendingButton
                       size="sm"
+                      pendingLabel="Resolving…"
                       className="hot-cta h-8 rounded-none border-2 text-xs font-bold uppercase tracking-[0.14em]"
                     >
                       Resolve
-                    </Button>
+                    </PendingButton>
                   </form>
                 </div>
               )}
             </div>
           ))
         ) : (
-          <div className="brutal-card p-8 text-center">
-            <p className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">
-              No alerts right now
-            </p>
+          <div className="empty-state">
+            <span className="empty-state-title">All clear</span>
+            <span className="empty-state-hint">
+              No active alerts. Stock is tracked in the background and we'll
+              surface anything that needs attention the moment it does.
+            </span>
           </div>
         )}
       </section>

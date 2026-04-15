@@ -126,15 +126,44 @@
 }
 
 @layer base {
-  * { @apply border-border outline-ring/50; }
+  * { @apply border-border; }
   body {
     @apply bg-background text-foreground antialiased;
     letter-spacing: -0.011em;
   }
-  html { font-family: var(--font-sans); }
+  html {
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+  }
   h1, h2, h3, h4 {
     letter-spacing: -0.024em;
     font-weight: 700;
+  }
+
+  /* ── Unified focus rings ─────────────────────────────────────
+     Single system-wide focus style so every interactive element
+     lights up the same way. Soft on cream/glass, warm on orange.
+     (:focus-visible only, so pointer clicks don't draw rings.) */
+  *:focus { outline: none; }
+  *:focus-visible {
+    outline: 2px solid var(--foreground);
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+  /* On orange-glass cards flip to white outline */
+  .brutal-card *:focus-visible,
+  .hot-cta:focus-visible,
+  .brutal-btn:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 2px;
+  }
+}
+
+/* ── Safe-area insets for mobile ──────────────────────────────── */
+@supports (padding: env(safe-area-inset-top)) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
 
@@ -176,6 +205,152 @@
   letter-spacing: -0.03em;
   line-height: 0.95;
   text-transform: uppercase;
+}
+
+/* ── Editorial table treatment inside brutal-card ─────────────── */
+.brutal-card table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.brutal-card thead th,
+.brutal-card [data-slot="table-header"] th {
+  font-family: var(--font-mono);
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: rgba(255, 255, 255, 0.85) !important;
+  padding: 14px 16px !important;
+  border-bottom: 1.5px solid rgba(255, 255, 255, 0.35) !important;
+  background: transparent !important;
+}
+.brutal-card tbody tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  transition: background 200ms ease;
+}
+.brutal-card tbody tr:last-child { border-bottom: 0; }
+.brutal-card tbody tr:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.brutal-card tbody td {
+  padding: 14px 16px !important;
+  color: #ffffff;
+  font-size: 13px;
+}
+.brutal-card tbody td .text-muted-foreground {
+  color: rgba(255, 255, 255, 0.72) !important;
+}
+
+/* ── Unified empty state ──────────────────────────────────────── */
+.empty-state {
+  position: relative;
+  padding: 48px 24px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--muted-foreground);
+}
+.dark .empty-state {
+  background: rgba(255, 255, 255, 0.04);
+}
+.empty-state-title {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--foreground);
+  margin-bottom: 6px;
+}
+.empty-state-hint {
+  display: block;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  max-width: 34ch;
+  margin: 0 auto;
+  line-height: 1.5;
+}
+
+/* ── Shadcn primitive theming (Popover / Dialog / DropdownMenu) ─ */
+[data-slot="popover-content"],
+[data-slot="dialog-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="select-content"],
+[data-slot="command"] {
+  border-radius: 16px !important;
+  border-color: var(--border) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  box-shadow:
+    0 0 0 0.5px rgba(10, 10, 10, 0.04),
+    0 4px 12px rgba(10, 10, 10, 0.06),
+    0 24px 60px -14px rgba(10, 10, 10, 0.18) !important;
+}
+.dark [data-slot="popover-content"],
+.dark [data-slot="dialog-content"],
+.dark [data-slot="dropdown-menu-content"],
+.dark [data-slot="select-content"],
+.dark [data-slot="command"] {
+  background: rgba(22, 22, 22, 0.82) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+[data-slot="tooltip-content"] {
+  border-radius: 8px !important;
+  background: var(--foreground) !important;
+  color: var(--background) !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  padding: 4px 8px !important;
+}
+
+/* ── Pending button spinner ───────────────────────────────────── */
+.pending-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 999px;
+  animation: spin 0.8s linear infinite;
+  margin-right: 6px;
+  vertical-align: -2px;
+  opacity: 0.8;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Performance gate for low-end devices ─────────────────────── */
+/* Drop the expensive displacement + dome gloss + saturation boost
+   on devices that signal low device-memory or that ask for reduced
+   motion. Falls back to a simple translucent glass that's cheap
+   to composite. */
+@media (prefers-reduced-motion: reduce) {
+  .notif-card,
+  .brutal-card {
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+  }
+  .notif-card::before,
+  .notif-card::after,
+  .brutal-card::before,
+  .brutal-card::after {
+    display: none !important;
+  }
+}
+
+/* On small screens (<=420px), cut backdrop blur strength to half so
+   phones with weaker GPUs don't dip below 60fps. */
+@media (max-width: 420px) {
+  .notif-card,
+  .brutal-card {
+    backdrop-filter: blur(16px) saturate(160%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(160%) !important;
+  }
 }
 
 /* ── Page transitions (route-keyed) ───────────────────────────────── */
@@ -640,6 +815,23 @@ textarea[data-slot="textarea"]:focus-visible {
 .dark input[data-slot="input"]:focus-visible,
 .dark textarea[data-slot="textarea"]:focus-visible {
   box-shadow: 0 0 0 3px rgba(245, 243, 238, 0.08) !important;
+}
+
+/* Inputs inside glass cards (notif-card): slightly translucent with
+   subtle inset shadow so they feel built into the glass surface. */
+.notif-card input[data-slot="input"],
+.notif-card textarea[data-slot="textarea"],
+.notif-card select {
+  background: rgba(255, 255, 255, 0.6) !important;
+  border-color: rgba(10, 10, 10, 0.10) !important;
+  box-shadow: inset 0 1px 1px rgba(10, 10, 10, 0.02);
+}
+.dark .notif-card input[data-slot="input"],
+.dark .notif-card textarea[data-slot="textarea"],
+.dark .notif-card select {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+  color: var(--foreground);
 }
 
 /* Native <select> styling to match */

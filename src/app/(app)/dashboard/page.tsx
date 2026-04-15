@@ -253,8 +253,8 @@ function SectionLabel({ children, className }: { children: React.ReactNode; clas
 
 function EmptyCard({ text }: { text: string }) {
   return (
-    <div className="rounded-[22px] border border-dashed border-border/60 bg-background/40 p-6 text-center backdrop-blur">
-      <p className="text-xs text-muted-foreground">{text}</p>
+    <div className="empty-state">
+      <span className="empty-state-hint">{text}</span>
     </div>
   );
 }
