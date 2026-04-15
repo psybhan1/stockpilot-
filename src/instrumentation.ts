@@ -82,4 +82,70 @@ export async function register() {
       /* ignore — instrumentation must never crash boot */
     }
   })();
+
+  // 3) Run the worker loop in-process so background jobs and the
+  //    supplier-reply poller actually execute on Railway (which only
+  //    starts the Next.js server, not a separate worker process).
+  //    Opt-out with WORKER_IN_PROCESS=false if you ever split the
+  //    worker into its own service.
+  if (process.env.WORKER_IN_PROCESS !== "false") {
+    void (async () => {
+      try {
+        const [
+          { runPendingJobs },
+          { pollInboundBotChannels },
+          { pollSupplierReplies },
+        ] = await Promise.all([
+          import("@/modules/jobs/dispatcher"),
+          import("@/modules/operator-bot/polling"),
+          import("@/modules/purchasing/supplier-reply-poller"),
+        ]);
+
+        const JOB_TICK_MS = 5_000;
+        const SUPPLIER_REPLY_INTERVAL_MS = 5 * 60 * 1000;
+        let lastSupplierReplyAt = 0;
+        let running = false;
+
+        const tick = async () => {
+          if (running) return;
+          running = true;
+          try {
+            await runPendingJobs(10).catch((err) =>
+              console.error("[in-proc-worker] jobs", err)
+            );
+            await pollInboundBotChannels().catch((err) =>
+              console.error("[in-proc-worker] bot polling", err)
+            );
+
+            const now = Date.now();
+            if (now - lastSupplierReplyAt >= SUPPLIER_REPLY_INTERVAL_MS) {
+              lastSupplierReplyAt = now;
+              const replies = await pollSupplierReplies().catch((err) => {
+                console.error("[in-proc-worker] supplier reply poll", err);
+                return 0;
+              });
+              if (replies > 0) {
+                console.log(
+                  `[in-proc-worker] supplier replies handled: ${replies}`
+                );
+              }
+            }
+          } finally {
+            running = false;
+          }
+        };
+
+        // First pass after a short delay so the server is fully up.
+        setTimeout(tick, 3_000);
+        setInterval(tick, JOB_TICK_MS);
+        console.log(
+          `[in-proc-worker] started (jobs every ${JOB_TICK_MS}ms, supplier replies every ${
+            SUPPLIER_REPLY_INTERVAL_MS / 1000
+          }s)`
+        );
+      } catch (err) {
+        console.error("[in-proc-worker] failed to start:", err);
+      }
+    })();
+  }
 }
