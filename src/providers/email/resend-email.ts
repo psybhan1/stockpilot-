@@ -53,14 +53,17 @@ export class ResendEmailProvider
     orderNumber: string;
     lines: Array<{ description: string; quantity: number; unit: string }>;
   }) {
-    const lines = input.lines
-      .map((line) => `- ${line.description}: ${line.quantity} ${line.unit}`)
-      .join("\n");
-
-    return {
-      subject: `PO ${input.orderNumber} from StockPilot`,
-      body: `Hello ${input.supplierName},\n\nPlease confirm the following order:\n${lines}\n\nThank you,\nStockPilot`,
-    };
+    const { buildSupplierOrderEmail } = await import(
+      "@/modules/purchasing/email-template"
+    );
+    const composed = buildSupplierOrderEmail({
+      supplierName: input.supplierName,
+      businessName: "Our team",
+      orderNumber: input.orderNumber,
+      replyToEmail: "",
+      lines: input.lines,
+    });
+    return { subject: composed.subject, body: composed.text };
   }
 
   async sendApprovedOrder(input: {

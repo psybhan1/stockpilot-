@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { PurchaseOrderStatus, CommunicationDirection, CommunicationStatus, SupplierOrderingMode } from "@/lib/prisma";
-import { getSupplierOrderProvider } from "@/providers/supplier-order-provider";
+import type { Prisma } from "@/lib/prisma";
+import { getSupplierOrderProviderForLocation } from "@/providers/supplier-order-provider";
 import { verifyN8nRequest } from "@/modules/automation/n8n-auth";
+import { buildSupplierOrderEmail } from "@/modules/purchasing/email-template";
+import { getGmailCredentials } from "@/modules/channels/service";
 
 export async function POST(request: NextRequest) {
   const auth = await verifyN8nRequest(request);
@@ -25,7 +28,9 @@ export async function POST(request: NextRequest) {
         lines: {
           include: { inventoryItem: true },
         },
-        location: true,
+        location: { include: { business: true } },
+        approvedBy: { select: { name: true } },
+        placedBy: { select: { name: true } },
       },
     });
 
@@ -37,7 +42,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, message: "Already sent", orderNumber: po.orderNumber });
     }
 
-    const supplierOrderProvider = getSupplierOrderProvider();
+    const supplierOrderProvider = await getSupplierOrderProviderForLocation(
+      po.locationId
+    );
 
     const lines = po.lines.map((l) => ({
       description: l.description,
@@ -45,20 +52,31 @@ export async function POST(request: NextRequest) {
       unit: l.purchaseUnit.toLowerCase(),
     }));
 
-    // Draft the email
-    const draft = await supplierOrderProvider.createDraft({
+    // Build the same branded HTML email as every other path
+    const gmailCreds =
+      po.supplier.orderingMode === SupplierOrderingMode.EMAIL
+        ? await getGmailCredentials(po.locationId).catch(() => null)
+        : null;
+
+    const composed = buildSupplierOrderEmail({
       supplierName: po.supplier.name,
-      mode: po.supplier.orderingMode,
+      businessName: po.location?.business?.name?.trim() || "Our team",
+      locationName: po.location?.name?.trim() || null,
       orderNumber: po.orderNumber,
+      orderedByName:
+        po.approvedBy?.name?.trim() || po.placedBy?.name?.trim() || null,
+      replyToEmail: gmailCreds?.email?.trim() || "",
       lines,
+      notes: po.notes ?? null,
     });
 
     // Send it
     if (po.supplier.orderingMode === SupplierOrderingMode.EMAIL && po.supplier.email) {
       const sendResult = await supplierOrderProvider.sendApprovedOrder({
         recipient: po.supplier.email,
-        subject: draft.subject,
-        body: draft.body,
+        subject: composed.subject,
+        body: composed.text,
+        html: composed.html,
       });
 
       // Mark PO as SENT
@@ -76,10 +94,17 @@ export async function POST(request: NextRequest) {
             purchaseOrderId: po.id,
             channel: SupplierOrderingMode.EMAIL,
             direction: CommunicationDirection.OUTBOUND,
-            subject: draft.subject,
-            body: draft.body,
+            subject: composed.subject,
+            body: composed.text,
             status: CommunicationStatus.SENT,
             providerMessageId: sendResult.providerMessageId ?? null,
+            metadata: {
+              ...(("metadata" in sendResult && sendResult.metadata
+                ? (sendResult.metadata as Record<string, unknown>)
+                : {})),
+              html: composed.html,
+              recipient: po.supplier.email,
+            } satisfies Prisma.InputJsonValue,
             sentAt: new Date(),
           },
         }),
@@ -90,7 +115,7 @@ export async function POST(request: NextRequest) {
         orderNumber: po.orderNumber,
         supplierEmail: po.supplier.email,
         supplierName: po.supplier.name,
-        subject: draft.subject,
+        subject: composed.subject,
         providerMessageId: sendResult.providerMessageId ?? null,
       });
     }
