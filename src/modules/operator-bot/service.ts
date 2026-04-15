@@ -1259,7 +1259,10 @@ export async function approveAndDispatchPurchaseOrder(input: {
   const result = await dispatchBotPurchaseOrder({
     purchaseOrderId: po.id,
     locationId: po.locationId,
-    userId: input.userId ?? "",
+    // null is valid for "no authenticated user" (e.g. a Telegram
+    // callback tap from a paired chat) — empty string is NOT, because
+    // the audit log has a FK constraint on User.id.
+    userId: input.userId ?? null,
     supplier: {
       id: po.supplier.id,
       name: po.supplier.name,
@@ -1291,7 +1294,10 @@ export async function approveAndDispatchPurchaseOrder(input: {
 async function dispatchBotPurchaseOrder(input: {
   purchaseOrderId: string;
   locationId: string;
-  userId: string;
+  // Callers can pass null when the action is bot-driven and no
+  // authenticated StockPilot user is in the loop (e.g. a Telegram
+  // inline-button tap). The audit log's User FK accepts null.
+  userId: string | null;
   supplier: {
     id: string;
     name: string;
