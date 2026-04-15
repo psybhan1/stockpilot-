@@ -301,8 +301,11 @@ async function notifyManagerOfReply(input: {
   bodyText: string;
   intent: SupplierReplyIntent;
 }) {
-  // Users belong to locations through UserLocationRole, not directly.
-  const managers = await db.user.findMany({
+  // First try to find managers scoped to the PO's location. If none
+  // match (stale role link, schema weirdness, single-location setup
+  // without location assignment), fall back to ALL managers with a
+  // Telegram chat id — better to over-notify than silently swallow.
+  let managers = await db.user.findMany({
     where: {
       telegramChatId: { not: null },
       roles: { some: { locationId: input.locationId } },
@@ -310,6 +313,17 @@ async function notifyManagerOfReply(input: {
     select: { telegramChatId: true },
     take: 3,
   });
+  if (managers.length === 0) {
+    managers = await db.user.findMany({
+      where: { telegramChatId: { not: null } },
+      select: { telegramChatId: true },
+      take: 5,
+    });
+    botTelemetry.event("supplier-reply-poller.notify_fallback_all_managers", {
+      locationId: input.locationId,
+      count: managers.length,
+    });
+  }
 
   const icon =
     input.intent === "CONFIRMED"

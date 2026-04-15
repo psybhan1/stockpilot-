@@ -99,9 +99,52 @@ export async function GET(request: NextRequest) {
     let telegramTest: Record<string, unknown> = { skipped: true };
     if (manager?.telegramChatId) {
       try {
+        // Replay the LATEST inbound supplier reply as a Telegram ping
+        // so the user sees what they should have been getting all along.
+        const latestInbound = await db.supplierCommunication.findFirst({
+          where: {
+            direction: CommunicationDirection.INBOUND,
+            channel: SupplierOrderingMode.EMAIL,
+          },
+          orderBy: { createdAt: "desc" },
+          select: {
+            body: true,
+            metadata: true,
+            purchaseOrder: {
+              select: {
+                orderNumber: true,
+                supplier: { select: { name: true } },
+              },
+            },
+          },
+        });
+        let messageText: string;
+        if (latestInbound?.purchaseOrder) {
+          const meta = (latestInbound.metadata ?? {}) as Record<string, unknown>;
+          const intent = String(meta.intent ?? "OTHER").toUpperCase();
+          const icon =
+            intent === "CONFIRMED" ? "✅"
+            : intent === "OUT_OF_STOCK" ? "⚠️"
+            : intent === "DELAYED" ? "⏰"
+            : intent === "QUESTION" ? "❓"
+            : "📨";
+          const label =
+            intent === "CONFIRMED" ? "confirmed"
+            : intent === "OUT_OF_STOCK" ? "out of stock"
+            : intent === "DELAYED" ? "delayed"
+            : intent === "QUESTION" ? "asked a question"
+            : "replied";
+          const preview = latestInbound.body.slice(0, 300).replace(/\s+/g, " ").trim();
+          messageText =
+            `${icon} *${latestInbound.purchaseOrder.supplier.name}* ${label} on *${latestInbound.purchaseOrder.orderNumber}*.\n\n` +
+            `> ${preview}${latestInbound.body.length > 300 ? "…" : ""}\n\n` +
+            `_(replayed via debug-poller — supplier-reply notifications are live going forward)_`;
+        } else {
+          messageText = `🔧 Debug test from StockPilot at ${new Date().toISOString()}. If you see this, the bot→you pipe is working.`;
+        }
         const result = await sendTelegramMessage(
           manager.telegramChatId,
-          `🔧 Debug test from StockPilot at ${new Date().toISOString()}. If you see this, the bot→you pipe is working.`,
+          messageText,
           { parseMode: "Markdown" }
         );
         telegramTest = { ok: true, sent: true, result: result as unknown };
