@@ -91,12 +91,19 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // Direct Telegram send test to the first paired manager.
-    const manager = await db.user.findFirst({
-      where: { telegramChatId: { not: null } },
-      select: { telegramChatId: true, name: true },
-    });
-    let telegramTest: Record<string, unknown> = { skipped: true };
+    // Telegram replay is OPT-IN to avoid spamming the manager on
+    // every debug call. Hit `?replay=1` to trigger it manually.
+    const replay = request.nextUrl.searchParams.get("replay") === "1";
+    const manager = replay
+      ? await db.user.findFirst({
+          where: { telegramChatId: { not: null } },
+          select: { telegramChatId: true, name: true },
+        })
+      : null;
+    let telegramTest: Record<string, unknown> = {
+      skipped: true,
+      hint: "pass ?replay=1 to send a Telegram replay of the latest reply",
+    };
     if (manager?.telegramChatId) {
       try {
         // Replay the LATEST inbound supplier reply as a Telegram ping
