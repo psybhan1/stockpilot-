@@ -74,7 +74,7 @@ async function updateWorkflow(id, payload) {
   return res.json();
 }
 
-function sanitizeWorkflow(raw) {
+function sanitizeWorkflow(raw, credentials) {
   // n8n's PUT / POST accepts the shape it exports: name, nodes,
   // connections, settings, staticData. Strip out fields that are
   // only valid on the wire from the REST GET.
@@ -88,7 +88,78 @@ function sanitizeWorkflow(raw) {
   if (!name || !Array.isArray(nodes)) {
     throw new Error("Workflow file is missing name or nodes.");
   }
-  return { name, nodes, connections: connections ?? {}, settings, staticData };
+
+  // Wire credentials into any node whose type matches one we have an
+  // auto-created credential for. This lets the import actually
+  // publish; otherwise n8n rejects the workflow for missing creds.
+  const patchedNodes = nodes.map((node) => {
+    if (!node || typeof node !== "object") return node;
+    const nodeType = String(node.type ?? "");
+    // Telegram nodes need telegramApi
+    if (nodeType.includes("telegram") && credentials.telegramApi) {
+      return {
+        ...node,
+        credentials: {
+          ...(node.credentials ?? {}),
+          telegramApi: {
+            id: credentials.telegramApi.id,
+            name: credentials.telegramApi.name,
+          },
+        },
+      };
+    }
+    return node;
+  });
+
+  return {
+    name,
+    nodes: patchedNodes,
+    connections: connections ?? {},
+    settings,
+    staticData,
+  };
+}
+
+async function findExistingCredential(type) {
+  // n8n's public API doesn't expose GET /credentials, so we can't
+  // lookup by type. We rely on environment vars to identify the
+  // credential we just created or recognise one that was pre-made.
+  return null;
+}
+
+async function createTelegramCredentialIfNeeded() {
+  // If an existing credential id is provided, reuse it. Check this
+  // FIRST so callers that already ran the create can skip it on
+  // re-imports.
+  if (process.env.N8N_TELEGRAM_CRED_ID && process.env.N8N_TELEGRAM_CRED_NAME) {
+    return {
+      id: process.env.N8N_TELEGRAM_CRED_ID,
+      name: process.env.N8N_TELEGRAM_CRED_NAME,
+    };
+  }
+
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    console.warn(
+      "  (no TELEGRAM_BOT_TOKEN and no N8N_TELEGRAM_CRED_ID — Telegram nodes will import as drafts)"
+    );
+    return null;
+  }
+  const res = await fetch(`${N8N_URL}/api/v1/credentials`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      name: "StockBuddy Telegram",
+      type: "telegramApi",
+      data: { accessToken: token, baseUrl: "https://api.telegram.org" },
+    }),
+  });
+  if (!res.ok) {
+    console.warn(`  (credential create failed: ${res.status})`);
+    return null;
+  }
+  const body = await res.json();
+  return { id: body.id, name: body.name };
 }
 
 async function main() {
@@ -103,13 +174,19 @@ async function main() {
 
   console.log(`Importing ${files.length} workflow file(s) into ${N8N_URL}…`);
 
+  const telegram = await createTelegramCredentialIfNeeded();
+  const credentials = telegram ? { telegramApi: telegram } : {};
+  if (telegram) {
+    console.log(`  (Telegram credential: ${telegram.id} / ${telegram.name})`);
+  }
+
   const existing = await listWorkflows();
   const byName = new Map(existing.map((w) => [w.name, w]));
 
   for (const file of files) {
     const full = path.join(here, file);
     const raw = JSON.parse(await fs.readFile(full, "utf8"));
-    const sanitized = sanitizeWorkflow(raw);
+    const sanitized = sanitizeWorkflow(raw, credentials);
     const match = byName.get(sanitized.name);
 
     try {
