@@ -95,11 +95,30 @@ export async function register() {
           { runPendingJobs },
           { pollInboundBotChannels },
           { pollSupplierReplies },
+          { backfillGmailThreadIds },
         ] = await Promise.all([
           import("@/modules/jobs/dispatcher"),
           import("@/modules/operator-bot/polling"),
           import("@/modules/purchasing/supplier-reply-poller"),
+          import("@/modules/purchasing/backfill-gmail-threads"),
         ]);
+
+        // One-time backfill on boot so historical POs (sent before
+        // we persisted gmailThreadId) become trackable by the reply
+        // poller. Idempotent — already-stamped rows are skipped.
+        setTimeout(() => {
+          backfillGmailThreadIds(200)
+            .then((r) => {
+              if (r.matched > 0) {
+                console.log(
+                  `[gmail-thread-backfill] matched=${r.matched} scanned=${r.scanned} skipped=${r.skipped}`
+                );
+              }
+            })
+            .catch((err) =>
+              console.error("[gmail-thread-backfill] failed:", err)
+            );
+        }, 6_000);
 
         const JOB_TICK_MS = 5_000;
         const SUPPLIER_REPLY_INTERVAL_MS = 5 * 60 * 1000;
