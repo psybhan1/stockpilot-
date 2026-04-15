@@ -1122,6 +1122,7 @@ export type ApproveAndDispatchResult = {
   status: PurchaseOrderStatus;
   orderNumber: string;
   supplierName: string;
+  supplierOrderingMode: SupplierOrderingMode;
   reason?: string;
 };
 
@@ -1143,6 +1144,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
       status: PurchaseOrderStatus.FAILED,
       orderNumber: "",
       supplierName: "",
+      supplierOrderingMode: SupplierOrderingMode.EMAIL,
       reason: "Order not found.",
     };
   }
@@ -1153,6 +1155,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
       status: PurchaseOrderStatus.SENT,
       orderNumber: po.orderNumber,
       supplierName: po.supplier.name,
+      supplierOrderingMode: po.supplier.orderingMode,
       reason: "Already sent.",
     };
   }
@@ -1163,6 +1166,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
       status: PurchaseOrderStatus.CANCELLED,
       orderNumber: po.orderNumber,
       supplierName: po.supplier.name,
+      supplierOrderingMode: po.supplier.orderingMode,
       reason: "Order was cancelled.",
     };
   }
@@ -1202,6 +1206,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
         status: fresh?.status ?? PurchaseOrderStatus.APPROVED,
         orderNumber: fresh?.orderNumber ?? po.orderNumber,
         supplierName: fresh?.supplier?.name ?? po.supplier.name,
+        supplierOrderingMode: po.supplier.orderingMode,
         reason: "Already being processed.",
       };
     }
@@ -1214,6 +1219,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
       status: po.status,
       orderNumber: po.orderNumber,
       supplierName: po.supplier.name,
+      supplierOrderingMode: po.supplier.orderingMode,
       reason: `Can't dispatch from ${po.status.toLowerCase()}.`,
     };
   }
@@ -1231,6 +1237,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
       status: PurchaseOrderStatus.FAILED,
       orderNumber: po.orderNumber,
       supplierName: po.supplier.name,
+      supplierOrderingMode: po.supplier.orderingMode,
       reason: "Order had no line items.",
     };
   }
@@ -1261,6 +1268,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
     status: result.status,
     orderNumber: result.orderNumber,
     supplierName: po.supplier.name,
+    supplierOrderingMode: po.supplier.orderingMode,
     reason: result.status === PurchaseOrderStatus.FAILED ? reason : undefined,
   };
 }

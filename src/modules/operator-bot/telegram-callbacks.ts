@@ -9,12 +9,13 @@
  * and editing.
  */
 
-import { PurchaseOrderStatus, type Prisma } from "@/lib/prisma";
+import { PurchaseOrderStatus, SupplierOrderingMode, type Prisma } from "@/lib/prisma";
 import { botTelemetry } from "@/lib/bot-telemetry";
 import { db } from "@/lib/db";
 import { createAuditLogTx } from "@/lib/audit";
 import { canCancelPurchaseOrder } from "@/modules/purchasing/lifecycle";
 import { approveAndDispatchPurchaseOrder } from "@/modules/operator-bot/service";
+import { isRealEmailProviderConfigured } from "@/providers/email/provider-status";
 import type { InlineKeyboard } from "@/lib/telegram-bot";
 
 export type CallbackResult = {
@@ -86,6 +87,24 @@ async function approvePurchaseOrderFromBot(
   });
 
   if (result.status === PurchaseOrderStatus.SENT) {
+    // Was dispatch actually performed, or did the console/mock email
+    // provider just simulate it? Be honest with the user — don't
+    // claim the supplier got anything if no real email went out.
+    const realProvider = isRealEmailProviderConfigured();
+    const supplierOrderingMode = result.supplierOrderingMode;
+
+    if (!realProvider && supplierOrderingMode === SupplierOrderingMode.EMAIL) {
+      return {
+        ok: true,
+        toast: "Approved (test mode)",
+        editText:
+          `✅ *${result.orderNumber}* approved.\n\n` +
+          `⚠ *Test mode:* the email provider isn't configured, so *${result.supplierName}* did not receive a real order. ` +
+          `Go to *Settings → Integrations → Email* to wire Resend before going live.`,
+        editKeyboard: null,
+      };
+    }
+
     return {
       ok: true,
       toast: "Sent to supplier",

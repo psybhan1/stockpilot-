@@ -45,9 +45,17 @@ export class ConsoleEmailProvider implements NotificationProvider, SupplierOrder
   }
 
   async sendApprovedOrder(input: { recipient: string; subject: string; body: string }) {
+    console.warn(
+      "[ConsoleEmailProvider] TEST MODE — NO EMAIL WAS ACTUALLY SENT.\n" +
+        "Configure a real email provider:\n" +
+        "  DEFAULT_EMAIL_PROVIDER=resend + RESEND_API_KEY=re_..."
+    );
     console.info("[ConsoleEmailProvider] supplier-order", input);
     return {
       providerMessageId: `console-order-${Date.now()}`,
+      // Signal to callers that this is a simulated send so UIs can be
+      // honest with the user (see isRealEmailProviderConfigured()).
+      simulated: true as const,
     };
   }
 
