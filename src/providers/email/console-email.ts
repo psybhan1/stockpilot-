@@ -44,7 +44,12 @@ export class ConsoleEmailProvider implements NotificationProvider, SupplierOrder
     };
   }
 
-  async sendApprovedOrder(input: { recipient: string; subject: string; body: string }) {
+  async sendApprovedOrder(input: {
+    recipient: string;
+    subject: string;
+    body: string;
+    html?: string;
+  }) {
     console.warn(
       "[ConsoleEmailProvider] TEST MODE — NO EMAIL WAS ACTUALLY SENT.\n" +
         "Configure a real email provider:\n" +

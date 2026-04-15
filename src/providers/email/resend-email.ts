@@ -63,7 +63,12 @@ export class ResendEmailProvider
     };
   }
 
-  async sendApprovedOrder(input: { recipient: string; subject: string; body: string }) {
+  async sendApprovedOrder(input: {
+    recipient: string;
+    subject: string;
+    body: string;
+    html?: string;
+  }) {
     return this.sendEmail(input);
   }
 
@@ -130,6 +135,7 @@ export class ResendEmailProvider
     recipient: string;
     subject: string;
     body: string;
+    html?: string;
   }) {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -144,6 +150,7 @@ export class ResendEmailProvider
         to: [input.recipient],
         subject: input.subject,
         text: input.body,
+        ...(input.html ? { html: input.html } : {}),
       }),
     });
 

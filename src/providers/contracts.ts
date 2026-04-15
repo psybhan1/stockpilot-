@@ -223,6 +223,8 @@ export interface SupplierOrderProvider {
     recipient: string;
     subject: string;
     body: string;
+    /** Optional rich HTML body — providers that support it (e.g. Gmail) send multipart/alternative. */
+    html?: string;
   }): Promise<{
     providerMessageId?: string;
     /** Provider-specific metadata (e.g. Gmail threadId) — persisted

@@ -23,6 +23,8 @@ import { postStockMovementTx, refreshOperationalState } from "@/modules/inventor
 import { enqueueJobTx } from "@/modules/jobs/dispatcher";
 import { calculateRestockToParOrder } from "@/modules/operator-bot/order";
 import { parseManagerRestockMessage } from "@/modules/operator-bot/parser";
+import { buildSupplierOrderEmail } from "@/modules/purchasing/email-template";
+import { getGmailCredentials } from "@/modules/channels/service";
 import {
   completeBotMessageReceipt,
   failBotMessageReceipt,
@@ -38,7 +40,6 @@ import { startAddItem } from "@/modules/operator-bot/workflows/add-item";
 import { startAddSupplier } from "@/modules/operator-bot/workflows/add-supplier";
 import { startAddRecipe } from "@/modules/operator-bot/workflows/add-recipe";
 import { startUpdateItem } from "@/modules/operator-bot/workflows/update-item";
-import { getAiProvider } from "@/providers/ai-provider";
 import { getBotLanguageProvider } from "@/providers/bot-language-provider";
 import {
   getSupplierOrderProvider,
@@ -1319,7 +1320,6 @@ async function dispatchBotPurchaseOrder(input: {
   const supplierOrderProvider = await getSupplierOrderProviderForLocation(
     input.locationId
   );
-  const ai = getAiProvider();
 
   const line = {
     description: input.inventoryName,
@@ -1327,42 +1327,63 @@ async function dispatchBotPurchaseOrder(input: {
     unit: input.purchaseUnit.toLowerCase(),
   };
 
-  const draft =
-    input.supplier.orderingMode === SupplierOrderingMode.WEBSITE
-      ? null
-      : (await ai.draftSupplierMessage({
-          supplierName: input.supplier.name,
-          orderNumber: (
-            await db.purchaseOrder.findUniqueOrThrow({
-              where: { id: input.purchaseOrderId },
-              select: { orderNumber: true },
-            })
-          ).orderNumber,
-          lines: [line],
-        })) ??
-        (await supplierOrderProvider.createDraft({
-          supplierName: input.supplier.name,
-          mode: input.supplier.orderingMode,
-          orderNumber: (
-            await db.purchaseOrder.findUniqueOrThrow({
-              where: { id: input.purchaseOrderId },
-              select: { orderNumber: true },
-            })
-          ).orderNumber,
-          lines: [line],
-        }));
-
+  // Pull richer context for the email (business name, location name,
+  // who approved, sender's Gmail address) so the supplier sees a
+  // proper PO from a real cafe — not a bland one-line "please
+  // confirm" from "StockPilot".
   const currentPurchaseOrder = await db.purchaseOrder.findUniqueOrThrow({
-    where: {
-      id: input.purchaseOrderId,
-    },
+    where: { id: input.purchaseOrderId },
     select: {
       id: true,
       orderNumber: true,
       notes: true,
       status: true,
+      approvedBy: { select: { name: true } },
+      placedBy: { select: { name: true } },
+      location: {
+        select: {
+          name: true,
+          business: { select: { name: true } },
+        },
+      },
     },
   });
+
+  // Sender email = the connected Gmail address for the location, when
+  // we're using GmailEmailProvider. Falls back to a no-op string for
+  // simulated providers (the template just renders without it).
+  const gmailCreds =
+    input.supplier.orderingMode === SupplierOrderingMode.EMAIL
+      ? await getGmailCredentials(input.locationId).catch(() => null)
+      : null;
+
+  const businessName =
+    currentPurchaseOrder.location?.business?.name?.trim() || "Our team";
+  const locationName =
+    currentPurchaseOrder.location?.name?.trim() || null;
+  const orderedByName =
+    currentPurchaseOrder.approvedBy?.name?.trim() ||
+    currentPurchaseOrder.placedBy?.name?.trim() ||
+    null;
+  const replyToEmail = gmailCreds?.email?.trim() || "";
+
+  const composed =
+    input.supplier.orderingMode === SupplierOrderingMode.WEBSITE
+      ? null
+      : buildSupplierOrderEmail({
+          supplierName: input.supplier.name,
+          businessName,
+          locationName,
+          orderNumber: currentPurchaseOrder.orderNumber,
+          orderedByName,
+          replyToEmail,
+          lines: [line],
+          notes: currentPurchaseOrder.notes ?? null,
+        });
+
+  const draft = composed
+    ? { subject: composed.subject, body: composed.text, html: composed.html }
+    : null;
 
   if (input.supplier.orderingMode === SupplierOrderingMode.EMAIL) {
     try {
@@ -1382,6 +1403,7 @@ async function dispatchBotPurchaseOrder(input: {
             body:
               draft?.body ??
               `Please confirm ${line.quantity} ${line.unit} of ${line.description}.`,
+            html: draft?.html,
           }),
         { attempts: 3, baseDelayMs: 400 }
       );

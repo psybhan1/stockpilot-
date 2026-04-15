@@ -59,6 +59,8 @@ export class GmailEmailProvider
     recipient: string;
     subject?: string;
     body: string;
+    /** When provided, sent as the multipart/alternative HTML part. */
+    html?: string;
   }) {
     if (input.channel !== NotificationChannel.EMAIL) {
       // Only email is supported; let the dispatcher route other
@@ -71,6 +73,7 @@ export class GmailEmailProvider
       to: input.recipient,
       subject: input.subject ?? "StockPilot notification",
       body: input.body,
+      html: input.html,
     });
     return {
       providerMessageId: id,
@@ -78,12 +81,18 @@ export class GmailEmailProvider
     };
   }
 
-  async sendAlert(input: { recipient: string; subject: string; body: string }) {
+  async sendAlert(input: {
+    recipient: string;
+    subject: string;
+    body: string;
+    html?: string;
+  }) {
     return this.sendNotification({
       channel: NotificationChannel.EMAIL,
       recipient: input.recipient,
       subject: input.subject,
       body: input.body,
+      html: input.html,
     });
   }
 
@@ -107,11 +116,14 @@ export class GmailEmailProvider
     recipient: string;
     subject: string;
     body: string;
+    /** Optional HTML body — when present, sent as multipart/alternative. */
+    html?: string;
   }) {
     const sent = await this.deliverFull({
       to: input.recipient,
       subject: input.subject,
       body: input.body,
+      html: input.html,
     });
     return {
       providerMessageId: sent.id,
@@ -153,6 +165,7 @@ export class GmailEmailProvider
     to: string;
     subject: string;
     body: string;
+    html?: string;
   }): Promise<string> {
     const full = await this.deliverFull(input);
     return full.id;
@@ -162,19 +175,49 @@ export class GmailEmailProvider
     to: string;
     subject: string;
     body: string;
+    html?: string;
   }): Promise<{ id: string; threadId: string }> {
     const creds = await this.ensureFreshToken();
 
-    // Build RFC 2822 / RFC 5322 message.
-    const rfc822 =
+    const headers =
       `From: ${creds.email}\r\n` +
       `To: ${input.to}\r\n` +
+      `Reply-To: ${creds.email}\r\n` +
       `Subject: ${sanitizeHeader(input.subject)}\r\n` +
-      `MIME-Version: 1.0\r\n` +
-      `Content-Type: text/plain; charset=UTF-8\r\n` +
-      `Content-Transfer-Encoding: 7bit\r\n` +
-      `\r\n` +
-      input.body;
+      `MIME-Version: 1.0\r\n`;
+
+    let rfc822: string;
+    if (input.html && input.html.trim().length > 0) {
+      // Multipart/alternative: text first (fallback), HTML second
+      // (preferred). Boundary is a random string per send.
+      const boundary = `=_sp_${Date.now().toString(36)}_${Math.random()
+        .toString(36)
+        .slice(2, 10)}`;
+      const textBase64 = Buffer.from(input.body, "utf8").toString("base64");
+      const htmlBase64 = Buffer.from(input.html, "utf8").toString("base64");
+      rfc822 =
+        headers +
+        `Content-Type: multipart/alternative; boundary="${boundary}"\r\n` +
+        `\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Type: text/plain; charset=UTF-8\r\n` +
+        `Content-Transfer-Encoding: base64\r\n` +
+        `\r\n` +
+        wrapBase64(textBase64) +
+        `\r\n--${boundary}\r\n` +
+        `Content-Type: text/html; charset=UTF-8\r\n` +
+        `Content-Transfer-Encoding: base64\r\n` +
+        `\r\n` +
+        wrapBase64(htmlBase64) +
+        `\r\n--${boundary}--\r\n`;
+    } else {
+      rfc822 =
+        headers +
+        `Content-Type: text/plain; charset=UTF-8\r\n` +
+        `Content-Transfer-Encoding: 7bit\r\n` +
+        `\r\n` +
+        input.body;
+    }
 
     const raw = Buffer.from(rfc822, "utf8").toString("base64url");
 
@@ -280,4 +323,10 @@ export class GmailEmailProvider
 function sanitizeHeader(value: string): string {
   // Strip CR/LF so no one can inject extra headers via the subject.
   return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+function wrapBase64(value: string): string {
+  // RFC 2045 wants base64 lines ≤76 chars. Gmail accepts long lines
+  // but some downstream MTAs are strict, so be polite.
+  return value.replace(/(.{76})/g, "$1\r\n");
 }
