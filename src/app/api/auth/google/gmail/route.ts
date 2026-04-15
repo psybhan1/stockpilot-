@@ -4,8 +4,15 @@ import { requireSession } from "@/modules/auth/session";
 import { Role } from "@/lib/domain-enums";
 import { env } from "@/lib/env";
 
+// Use the narrow sensitive scopes (send + readonly) instead of the
+// full-mailbox restricted scope `https://mail.google.com/`. The
+// restricted scope is silently downgraded for unverified apps,
+// which causes 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT on send.
+//   - gmail.send      → users.messages.send (PO emails out)
+//   - gmail.readonly  → threads.get          (supplier reply poller)
 const GMAIL_SCOPES = [
-  "https://mail.google.com/",
+  "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/userinfo.email",
 ].join(" ");
 

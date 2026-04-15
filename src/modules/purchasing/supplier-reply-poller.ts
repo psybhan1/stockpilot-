@@ -185,7 +185,7 @@ async function pollOneThread(ctx: {
         direction: CommunicationDirection.INBOUND,
         subject: null,
         body: bodyText,
-        status: CommunicationStatus.DELIVERED,
+        status: CommunicationStatus.SENT,
         providerMessageId: msg.id,
         metadata: {
           gmailThreadId: ctx.threadId,
@@ -301,10 +301,11 @@ async function notifyManagerOfReply(input: {
   bodyText: string;
   intent: SupplierReplyIntent;
 }) {
+  // Users belong to locations through UserLocationRole, not directly.
   const managers = await db.user.findMany({
     where: {
-      locationId: input.locationId,
       telegramChatId: { not: null },
+      roles: { some: { locationId: input.locationId } },
     },
     select: { telegramChatId: true },
     take: 3,

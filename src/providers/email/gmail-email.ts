@@ -189,6 +189,15 @@ export class GmailEmailProvider
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      // 403 with insufficient scopes happens when the connected
+      // Gmail account was authorised before we narrowed the OAuth
+      // scopes to gmail.send + gmail.readonly. The fix is a one-tap
+      // reconnect — give the manager that instruction directly.
+      if (res.status === 403 && /insufficient.*scope/i.test(text)) {
+        throw new Error(
+          `Gmail is connected but doesn't have permission to send. Go to Settings → Channels → Gmail and click Reconnect to grant send access.`
+        );
+      }
       throw new Error(
         `Gmail send failed (${res.status}) for ${creds.email} → ${input.to}: ${text}`
       );
