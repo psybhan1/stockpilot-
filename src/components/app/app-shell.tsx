@@ -17,6 +17,7 @@ import {
   TransitionLink,
 } from "@/components/app/navigation-transition";
 import { PageTransition } from "@/components/app/page-transition";
+import { ScrollRevealController } from "@/components/app/scroll-reveal-controller";
 import { Role } from "@/lib/domain-enums";
 import { navigationItems, productName } from "@/lib/navigation";
 import { hasMinimumRole } from "@/lib/permissions";
@@ -57,6 +58,8 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
       <GlassFilter />
       {/* Global pointer tracker — feeds specular highlight on hovered cards. */}
       <PointerGloss />
+      {/* Global scroll-reveal — cards animate in as they cross the viewport. */}
+      <ScrollRevealController />
 
       {/* ── Living gradient background — fixed behind everything ──── */}
       <div

@@ -219,29 +219,71 @@
 .page-transition-enter > * > :nth-child(6) { animation-delay: 0.60s; }
 .page-transition-enter > * > :nth-child(n+7) { animation-delay: 0.68s; }
 
-/* Nested list / grid children — cards inside a section cascade so each
-   row doesn't pop in all at once. Applies to any .space-y-*, .grid, or
-   [class*="grid"] container that's a descendant of a page section. */
-.page-transition-enter > * > * .notif-card,
-.page-transition-enter > * > * .brutal-card,
-.page-transition-enter > * > * [class*="space-y"] > *,
-.page-transition-enter > * > * [class*="grid"] > * {
-  animation: pageEnter 0.75s cubic-bezier(0.16, 1, 0.3, 1) both;
+/* ── Scroll-triggered card reveal ──────────────────────────────────
+   Every card (.notif-card / .brutal-card / [data-reveal]) starts
+   hidden and transitions to visible when it crosses the viewport.
+   ScrollRevealController (client component) toggles .in-view via
+   IntersectionObserver. Cards above the fold fire immediately on
+   mount; cards below the fold fire as you scroll to them. */
+
+.notif-card,
+.brutal-card,
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(32px);
+  filter: blur(6px);
+  transition:
+    opacity 0.75s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.75s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.75s cubic-bezier(0.16, 1, 0.3, 1),
+    /* Keep the existing liquid-glass hover transitions */
+    background 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.page-transition-enter > * > * [class*="space-y"] > :nth-child(1),
-.page-transition-enter > * > * [class*="grid"] > :nth-child(1) { animation-delay: 0.06s; }
-.page-transition-enter > * > * [class*="space-y"] > :nth-child(2),
-.page-transition-enter > * > * [class*="grid"] > :nth-child(2) { animation-delay: 0.12s; }
-.page-transition-enter > * > * [class*="space-y"] > :nth-child(3),
-.page-transition-enter > * > * [class*="grid"] > :nth-child(3) { animation-delay: 0.18s; }
-.page-transition-enter > * > * [class*="space-y"] > :nth-child(4),
-.page-transition-enter > * > * [class*="grid"] > :nth-child(4) { animation-delay: 0.24s; }
-.page-transition-enter > * > * [class*="space-y"] > :nth-child(5),
-.page-transition-enter > * > * [class*="grid"] > :nth-child(5) { animation-delay: 0.30s; }
-.page-transition-enter > * > * [class*="space-y"] > :nth-child(6),
-.page-transition-enter > * > * [class*="grid"] > :nth-child(6) { animation-delay: 0.36s; }
-.page-transition-enter > * > * [class*="space-y"] > :nth-child(n+7),
-.page-transition-enter > * > * [class*="grid"] > :nth-child(n+7) { animation-delay: 0.40s; }
+
+.notif-card.in-view,
+.brutal-card.in-view,
+[data-reveal].in-view {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+}
+
+/* Slight cascade on the first screen — direct-sibling cards stagger
+   so neighbors don't all land on the exact same frame. Delays only
+   apply to the initial paint; subsequent scroll-in reveals fire at
+   their own pace. */
+[class*="space-y"] > .notif-card:nth-child(1),
+[class*="space-y"] > .brutal-card:nth-child(1),
+[class*="grid"] > .notif-card:nth-child(1),
+[class*="grid"] > .brutal-card:nth-child(1) { transition-delay: 0ms; }
+[class*="space-y"] > .notif-card:nth-child(2),
+[class*="space-y"] > .brutal-card:nth-child(2),
+[class*="grid"] > .notif-card:nth-child(2),
+[class*="grid"] > .brutal-card:nth-child(2) { transition-delay: 60ms; }
+[class*="space-y"] > .notif-card:nth-child(3),
+[class*="space-y"] > .brutal-card:nth-child(3),
+[class*="grid"] > .notif-card:nth-child(3),
+[class*="grid"] > .brutal-card:nth-child(3) { transition-delay: 120ms; }
+[class*="space-y"] > .notif-card:nth-child(4),
+[class*="space-y"] > .brutal-card:nth-child(4),
+[class*="grid"] > .notif-card:nth-child(4),
+[class*="grid"] > .brutal-card:nth-child(4) { transition-delay: 180ms; }
+[class*="space-y"] > .notif-card:nth-child(n+5),
+[class*="space-y"] > .brutal-card:nth-child(n+5),
+[class*="grid"] > .notif-card:nth-child(n+5),
+[class*="grid"] > .brutal-card:nth-child(n+5) { transition-delay: 220ms; }
+
+/* Reduced-motion users get the stagger zeroed out. */
+@media (prefers-reduced-motion: reduce) {
+  .notif-card, .brutal-card, [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+    transition: none !important;
+  }
+}
 
 /* ── Liquid-glass notification card ───────────────────────────────── */
 /* A proper glossy liquid-glass treatment inspired by iOS / macOS Aqua:
