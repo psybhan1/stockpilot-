@@ -1,101 +1,140 @@
 import {
   AlertTriangle,
-  BellRing,
+  Bell,
   Blocks,
-  LayoutDashboard,
+  ClipboardCheck,
+  Home,
   PackageOpen,
-  ReceiptText,
+  Receipt,
   ScanBarcode,
-  Settings2,
+  Settings,
   ShoppingCart,
   Store,
+  Users,
   Workflow,
 } from "lucide-react";
+
 import { Role } from "@/lib/domain-enums";
 
-export const navigationItems = [
+/**
+ * The app has two tiers of navigation:
+ *
+ *   primaryNav   — 4 big tabs you see in the top bar. Reflect the
+ *                  jobs-to-be-done: see what needs doing, count stock,
+ *                  approve orders, manage the menu.
+ *
+ *   secondaryNav — surfaced behind a gear icon dropdown. Config +
+ *                  less-frequent flows (suppliers, POS mapping,
+ *                  notifications, alerts history, settings).
+ *
+ * The old 11-item flat list was overwhelming. Users don't want to
+ * think about "POS mapping" or "Agent tasks" — they want to see
+ * what's urgent and act. Primary nav is task-led; secondary is for
+ * tinkering with setup.
+ */
+
+export type NavItem = {
+  href: string;
+  label: string;
+  shortLabel?: string;
+  icon: typeof Home;
+  minimumRole: Role;
+  primaryMobile?: boolean;
+  description?: string;
+};
+
+export const primaryNav: readonly NavItem[] = [
   {
     href: "/dashboard",
-    label: "Home",
-    shortLabel: "Home",
-    icon: LayoutDashboard,
-    minimumRole: Role.SUPERVISOR,
+    label: "Today",
+    icon: Home,
+    minimumRole: Role.STAFF,
     primaryMobile: true,
+    description: "What needs your attention right now.",
   },
   {
     href: "/inventory",
-    label: "Inventory",
-    shortLabel: "Stock",
+    label: "Stock",
     icon: PackageOpen,
-    minimumRole: Role.SUPERVISOR,
-    primaryMobile: true,
-  },
-  {
-    href: "/stock-count",
-    label: "Count",
-    shortLabel: "Count",
-    icon: ScanBarcode,
     minimumRole: Role.STAFF,
     primaryMobile: true,
+    description: "Every item, live stock levels, counts.",
   },
   {
     href: "/purchase-orders",
     label: "Orders",
-    shortLabel: "Orders",
-    icon: ReceiptText,
+    icon: Receipt,
     minimumRole: Role.SUPERVISOR,
     primaryMobile: true,
-  },
-  {
-    href: "/alerts",
-    label: "Alerts",
-    shortLabel: "Alerts",
-    icon: AlertTriangle,
-    minimumRole: Role.SUPERVISOR,
+    description: "Approve reorders and track deliveries.",
   },
   {
     href: "/recipes",
-    label: "Recipes",
-    shortLabel: "Recipes",
+    label: "Menu",
     icon: Blocks,
     minimumRole: Role.SUPERVISOR,
+    primaryMobile: true,
+    description: "Dishes, drinks, and what they use.",
   },
+] as const;
+
+export const secondaryNav: readonly NavItem[] = [
   {
-    href: "/pos-mapping",
-    label: "POS Mapping",
-    shortLabel: "POS",
-    icon: Store,
-    minimumRole: Role.MANAGER,
+    href: "/stock-count",
+    label: "Count",
+    icon: ClipboardCheck,
+    minimumRole: Role.STAFF,
+    description: "Confirm uncertain stock levels.",
   },
   {
     href: "/suppliers",
     label: "Suppliers",
-    shortLabel: "Suppliers",
-    icon: ShoppingCart,
+    icon: Users,
     minimumRole: Role.MANAGER,
+    description: "Contacts, lead times, ordering mode.",
+  },
+  {
+    href: "/alerts",
+    label: "Alerts",
+    icon: AlertTriangle,
+    minimumRole: Role.SUPERVISOR,
+    description: "Low stock + issues requiring review.",
   },
   {
     href: "/notifications",
-    label: "Notifications",
-    shortLabel: "Notify",
-    icon: BellRing,
+    label: "Messages",
+    icon: Bell,
     minimumRole: Role.MANAGER,
+    description: "Delivery status of bot + email notices.",
   },
   {
     href: "/agent-tasks",
-    label: "Agent Tasks",
-    shortLabel: "Tasks",
+    label: "Assistant",
     icon: Workflow,
     minimumRole: Role.MANAGER,
+    description: "Automated ordering queue.",
+  },
+  {
+    href: "/pos-mapping",
+    label: "Sales link",
+    icon: Store,
+    minimumRole: Role.MANAGER,
+    description: "Connect menu items to POS products.",
   },
   {
     href: "/settings",
     label: "Settings",
-    shortLabel: "Settings",
-    icon: Settings2,
+    icon: Settings,
     minimumRole: Role.MANAGER,
+    description: "Integrations, channels, account.",
   },
 ] as const;
+
+/** Back-compat alias (old code imports `navigationItems`). */
+export const navigationItems: readonly NavItem[] = [
+  ...primaryNav,
+  ...secondaryNav,
+];
 
 export const assistantPrompts = [
   "What are we likely to run out of this weekend?",
@@ -104,4 +143,3 @@ export const assistantPrompts = [
 ];
 
 export const productName = "StockPilot";
-

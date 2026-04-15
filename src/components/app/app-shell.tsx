@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { type ReactNode, useMemo, useState } from "react";
-import { Menu, Moon, SunMedium, X } from "lucide-react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Menu, Moon, MoreHorizontal, SunMedium, X } from "lucide-react";
 import { useTheme } from "next-themes";
 
 import { logoutAction } from "@/app/actions/auth";
@@ -20,7 +20,7 @@ import { PageTransition } from "@/components/app/page-transition";
 import { ScrollRevealController } from "@/components/app/scroll-reveal-controller";
 import { Toaster } from "@/components/app/toaster";
 import { Role } from "@/lib/domain-enums";
-import { navigationItems, productName } from "@/lib/navigation";
+import { primaryNav, productName, secondaryNav } from "@/lib/navigation";
 import { hasMinimumRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
@@ -40,10 +40,36 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const visibleItems = useMemo(
-    () => navigationItems.filter((item) => hasMinimumRole(session.role, item.minimumRole)),
+  const visiblePrimary = useMemo(
+    () => primaryNav.filter((item) => hasMinimumRole(session.role, item.minimumRole)),
     [session.role]
   );
+  const visibleSecondary = useMemo(
+    () => secondaryNav.filter((item) => hasMinimumRole(session.role, item.minimumRole)),
+    [session.role]
+  );
+  const allVisible = useMemo(
+    () => [...visiblePrimary, ...visibleSecondary],
+    [visiblePrimary, visibleSecondary]
+  );
+
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMoreOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [moreOpen]);
 
   const initials = session.userName
     .split(" ")
@@ -91,8 +117,8 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
             <span className="hidden sm:inline">{productName}</span>
           </Link>
 
-          <nav className="hidden lg:flex lg:flex-1 lg:items-center lg:gap-0.5 lg:px-4">
-            {visibleItems.map((item) => {
+          <nav className="hidden lg:flex lg:flex-1 lg:items-center lg:gap-1 lg:px-4">
+            {visiblePrimary.map((item) => {
               const active =
                 pathname === item.href || pathname.startsWith(`${item.href}/`);
               return (
@@ -100,7 +126,7 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
                   key={item.href}
                   href={item.href}
                   className={cn(
-                    "relative rounded-md px-3 py-1.5 font-mono text-[11px] font-medium uppercase tracking-[0.14em]",
+                    "relative rounded-md px-3 py-1.5 text-sm font-medium tracking-tight",
                     "hover:text-foreground",
                     active ? "text-foreground" : "text-muted-foreground"
                   )}
@@ -112,6 +138,67 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
                 </TransitionLink>
               );
             })}
+
+            {/* "More" dropdown for secondary nav */}
+            {visibleSecondary.length > 0 && (
+              <div ref={moreRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setMoreOpen((o) => !o)}
+                  aria-expanded={moreOpen}
+                  aria-haspopup="menu"
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium tracking-tight text-muted-foreground hover:text-foreground",
+                    moreOpen && "text-foreground"
+                  )}
+                >
+                  More
+                  <MoreHorizontal className="size-3.5" />
+                </button>
+                {moreOpen && (
+                  <div
+                    role="menu"
+                    className="notif-card absolute left-0 top-full z-50 mt-2 w-64 p-2 !opacity-100 !translate-y-0 !blur-0"
+                    style={{ animation: "toastIn 0.22s cubic-bezier(0.22,1,0.36,1) both" }}
+                  >
+                    {visibleSecondary.map((item) => {
+                      const active =
+                        pathname === item.href || pathname.startsWith(`${item.href}/`);
+                      return (
+                        <TransitionLink
+                          key={item.href}
+                          href={item.href}
+                          onClick={() => setMoreOpen(false)}
+                          role="menuitem"
+                          className={cn(
+                            "flex items-start gap-3 rounded-lg px-2.5 py-2 text-sm transition-colors",
+                            active
+                              ? "bg-foreground/[0.06] text-foreground"
+                              : "text-foreground/80 hover:bg-foreground/[0.04] hover:text-foreground"
+                          )}
+                        >
+                          <item.icon className="mt-0.5 size-4 shrink-0 opacity-70" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-medium">{item.label}</span>
+                            {item.description && (
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {item.description}
+                              </span>
+                            )}
+                          </span>
+                        </TransitionLink>
+                      );
+                    })}
+                    <style>{`
+                      @keyframes toastIn {
+                        from { opacity: 0; transform: translateY(-4px); }
+                        to { opacity: 1; transform: translateY(0); }
+                      }
+                    `}</style>
+                  </div>
+                )}
+              </div>
+            )}
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
@@ -161,24 +248,33 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
 
         {mobileOpen && (
           <div className="border-t border-border lg:hidden">
-            <nav className="mx-auto flex max-w-[1600px] flex-col gap-1 p-4">
-              {visibleItems.map((item) => {
+            <nav className="mx-auto flex max-w-[1600px] flex-col p-4">
+              {allVisible.map((item, idx) => {
+                const isFirstSecondary =
+                  idx === visiblePrimary.length && visibleSecondary.length > 0;
                 const active =
                   pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
-                  <TransitionLink
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setMobileOpen(false)}
-                    className={cn(
-                      "rounded-md px-3 py-2 font-mono text-xs uppercase tracking-[0.16em] transition-colors",
-                      active
-                        ? "bg-foreground text-background"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  <div key={item.href}>
+                    {isFirstSecondary && (
+                      <p className="mt-3 mb-1 px-3 font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+                        More
+                      </p>
                     )}
-                  >
-                    {item.label}
-                  </TransitionLink>
+                    <TransitionLink
+                      href={item.href}
+                      onClick={() => setMobileOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors",
+                        active
+                          ? "bg-foreground text-background"
+                          : "text-foreground/80 hover:bg-muted hover:text-foreground"
+                      )}
+                    >
+                      <item.icon className="size-4 opacity-80" />
+                      {item.label}
+                    </TransitionLink>
+                  </div>
                 );
               })}
             </nav>

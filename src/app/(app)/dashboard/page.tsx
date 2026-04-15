@@ -1,15 +1,19 @@
 import Link from "next/link";
 import {
-  ArrowUpRight,
+  ArrowRight,
+  CheckCircle2,
   ClipboardCheck,
+  MessageSquare,
   Package,
-  RefreshCcw,
+  PackageOpen,
+  Receipt,
   ShoppingCart,
   Store,
+  TrendingDown,
+  Zap,
 } from "lucide-react";
 
 import { connectSquareAction, runJobsAction, syncSalesAction } from "@/app/actions/operations";
-import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Role } from "@/lib/domain-enums";
@@ -19,116 +23,208 @@ import { requireSession } from "@/modules/auth/session";
 import { getDashboardData } from "@/modules/dashboard/queries";
 import { formatQuantityBase } from "@/modules/inventory/units";
 
-const quickActions = [
-  { href: "/stock-count", icon: ClipboardCheck, title: "Count stock", desc: "Confirm uncertain items" },
-  { href: "/inventory", icon: Package, title: "Inventory", desc: "Search and review items" },
-  { href: "/purchase-orders", icon: ShoppingCart, title: "Orders", desc: "Review supplier actions" },
-] as const;
-
-export default async function DashboardPage() {
-  const session = await requireSession(Role.SUPERVISOR);
+/**
+ * Today — the task-first landing.
+ *
+ * Design rule: the top of this page must answer one question only —
+ * "what do I need to do right now?" — not "what's the state of the
+ * business?". Stats come later, actions come first.
+ */
+export default async function TodayPage() {
+  const session = await requireSession(Role.STAFF);
   const data = await getDashboardData(session.locationId);
   const firstName = session.userName.split(" ")[0];
 
-  return (
-    <div className="space-y-10">
-      <PageHero
-        eyebrow={`Dashboard · ${session.locationName}`}
-        title={`Hello, ${firstName}`}
-        description="Here's what needs your attention today."
-        stats={[
-          { label: "Items", value: data.metrics.inventoryCount },
-          {
-            label: "Running low",
-            value: data.metrics.lowStockCount,
-            highlight: data.metrics.lowStockCount > 0,
-          },
-          {
-            label: "Urgent",
-            value: data.metrics.criticalCount,
-            highlight: data.metrics.criticalCount > 0,
-          },
-          {
-            label: "Pending review",
-            value: data.metrics.pendingRecommendations + data.metrics.pendingRecipes,
-          },
-        ]}
-      />
+  const pendingCount = data.recommendations.length;
+  const criticalCount = data.metrics.criticalCount;
+  const lowCount = data.metrics.lowStockCount;
+  const openAlerts = data.alerts.length;
+  const itemsTotal = data.metrics.inventoryCount;
 
-      {/* Quick actions */}
+  // Compose prioritised task list
+  type Task = {
+    kind: "approve" | "critical" | "alert" | "count" | "watch";
+    title: string;
+    hint: string;
+    cta: string;
+    href: string;
+    tone: "urgent" | "warn" | "info";
+    icon: typeof Zap;
+  };
+  const tasks: Task[] = [];
+
+  if (session.role === Role.MANAGER && pendingCount > 0) {
+    tasks.push({
+      kind: "approve",
+      title: `${pendingCount} order${pendingCount === 1 ? "" : "s"} waiting for your OK`,
+      hint: "Review and approve so StockBuddy can send them to suppliers.",
+      cta: "Review orders",
+      href: "/purchase-orders",
+      tone: "urgent",
+      icon: Zap,
+    });
+  }
+
+  if (criticalCount > 0) {
+    tasks.push({
+      kind: "critical",
+      title: `${criticalCount} item${criticalCount === 1 ? "" : "s"} about to run out`,
+      hint: "These will stock out before the next delivery unless we act.",
+      cta: "See items",
+      href: "/inventory",
+      tone: "urgent",
+      icon: TrendingDown,
+    });
+  }
+
+  if (openAlerts > 0) {
+    tasks.push({
+      kind: "alert",
+      title: `${openAlerts} alert${openAlerts === 1 ? "" : "s"} need${openAlerts === 1 ? "s" : ""} a look`,
+      hint: "Sync issues, missing counts, or stock warnings.",
+      cta: "Open alerts",
+      href: "/alerts",
+      tone: "warn",
+      icon: MessageSquare,
+    });
+  }
+
+  if (lowCount > criticalCount && lowCount > 0) {
+    tasks.push({
+      kind: "watch",
+      title: `${lowCount - criticalCount} item${lowCount - criticalCount === 1 ? "" : "s"} getting low`,
+      hint: "Not urgent yet, but worth a glance.",
+      cta: "Watch list",
+      href: "/inventory",
+      tone: "info",
+      icon: Package,
+    });
+  }
+
+  // Only show Count task if user is staff-role AND no higher-priority tasks
+  if (tasks.length === 0 && itemsTotal > 0) {
+    tasks.push({
+      kind: "count",
+      title: "Quick count",
+      hint: "Keep the numbers honest. Takes 2 minutes.",
+      cta: "Count now",
+      href: "/stock-count",
+      tone: "info",
+      icon: ClipboardCheck,
+    });
+  }
+
+  const allClear = tasks.length === 0;
+
+  return (
+    <div className="space-y-12">
+      {/* ── Greeting ──────────────────────────────────────────────── */}
       <section>
-        <SectionLabel>Quick actions</SectionLabel>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          {quickActions.map((a) => (
-            <Link
-              key={a.href}
-              href={a.href}
-              className="notif-card group flex items-center gap-4 p-4"
-            >
-              <div className="flex size-11 items-center justify-center rounded-2xl bg-foreground/[0.06] backdrop-blur">
-                <a.icon className="size-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold">{a.title}</p>
-                <p className="truncate text-xs text-muted-foreground">{a.desc}</p>
-              </div>
-              <ArrowUpRight className="size-4 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-foreground" />
-            </Link>
-          ))}
+        <p className="text-sm text-muted-foreground">
+          {new Date().toLocaleDateString(undefined, {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+          })}
+          {" · "}
+          <span>{session.locationName}</span>
+        </p>
+        <h1 className="mt-2 text-[clamp(2rem,5vw,3.5rem)] font-bold leading-[1.05] tracking-[-0.025em]">
+          {greetingFor(new Date())}, {firstName}.
+        </h1>
+      </section>
+
+      {/* ── What needs doing ──────────────────────────────────────── */}
+      {allClear ? (
+        <AllClearState firstItems={itemsTotal === 0} />
+      ) : (
+        <section className="space-y-3">
+          <SectionLabel>What needs your attention</SectionLabel>
+          <div className="space-y-3">
+            {tasks.map((task) => (
+              <Link
+                key={task.kind}
+                href={task.href}
+                className={cn(
+                  "notif-card group flex items-start gap-4 p-5",
+                  task.tone === "urgent" && "notif-card-urgent"
+                )}
+              >
+                <div
+                  className={cn(
+                    "flex size-11 shrink-0 items-center justify-center rounded-2xl",
+                    task.tone === "urgent"
+                      ? "bg-[var(--destructive)]/10 text-[var(--destructive)]"
+                      : task.tone === "warn"
+                      ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                      : "bg-foreground/[0.06] text-foreground/80"
+                  )}
+                >
+                  <task.icon className="size-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-base font-semibold leading-tight">{task.title}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{task.hint}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1 text-sm font-medium text-foreground/80 group-hover:text-foreground">
+                  {task.cta}
+                  <ArrowRight className="size-4" />
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── Quick access ──────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <SectionLabel>Jump to</SectionLabel>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Link href="/stock-count" className="notif-card group flex items-center gap-3 p-4">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-foreground/[0.06]">
+              <ClipboardCheck className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">Count stock</p>
+              <p className="truncate text-xs text-muted-foreground">
+                Confirm what's actually on the shelf
+              </p>
+            </div>
+          </Link>
+          <Link href="/inventory" className="notif-card group flex items-center gap-3 p-4">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-foreground/[0.06]">
+              <PackageOpen className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">Stock</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {itemsTotal} item{itemsTotal === 1 ? "" : "s"} tracked
+              </p>
+            </div>
+          </Link>
+          <Link href="/purchase-orders" className="notif-card group flex items-center gap-3 p-4">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-foreground/[0.06]">
+              <Receipt className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">Orders</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {pendingCount > 0 ? `${pendingCount} waiting approval` : "All caught up"}
+              </p>
+            </div>
+          </Link>
         </div>
       </section>
 
-      {/* Alerts + Watch list */}
-      <div className="grid gap-8 lg:grid-cols-2">
-        <section>
-          <SectionLabel>Alerts</SectionLabel>
-          <p className="mt-1 text-xs text-muted-foreground">Issues requiring attention now</p>
-          <div className="mt-4 space-y-2.5">
-            {data.alerts.length ? (
-              data.alerts.map((alert) => (
-                <div
-                  key={alert.id}
-                  className={cn(
-                    "notif-card flex items-start justify-between gap-3 p-4",
-                    alert.severity === "CRITICAL" && "notif-card-urgent"
-                  )}
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">{alert.title}</p>
-                    <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                      {alert.message}
-                    </p>
-                  </div>
-                  <StatusBadge
-                    label={
-                      alert.severity === "CRITICAL"
-                        ? "Urgent"
-                        : alert.severity === "WARNING"
-                        ? "Watch"
-                        : "Info"
-                    }
-                    tone={
-                      alert.severity === "CRITICAL"
-                        ? "critical"
-                        : alert.severity === "WARNING"
-                        ? "warning"
-                        : "info"
-                    }
-                  />
-                </div>
-              ))
-            ) : (
-              <EmptyCard text="All clear — no active alerts" />
-            )}
-          </div>
-        </section>
-
-        <section>
-          <SectionLabel>Watch list</SectionLabel>
-          <p className="mt-1 text-xs text-muted-foreground">Items running low on stock</p>
-          <div className="mt-4 space-y-2.5">
-            {data.inventory.slice(0, 6).length ? (
-              data.inventory.slice(0, 6).map((item) => (
+      {/* ── Watch list snapshot (only when you have data + things to watch) ── */}
+      {data.inventory.length > 0 && criticalCount + lowCount > 0 && (
+        <section className="space-y-3">
+          <SectionLabel>Running low</SectionLabel>
+          <div className="space-y-2">
+            {data.inventory
+              .filter((i) => i.snapshot?.urgency !== "INFO")
+              .slice(0, 5)
+              .map((item) => (
                 <Link
                   key={item.id}
                   href={`/inventory/${item.id}`}
@@ -164,78 +260,49 @@ export default async function DashboardPage() {
                     }
                   />
                 </Link>
-              ))
-            ) : (
-              <EmptyCard text="All stocked — nothing needs your attention" />
-            )}
-          </div>
-        </section>
-      </div>
-
-      {/* Pending orders */}
-      {data.recommendations.length > 0 && (
-        <section>
-          <SectionLabel>Pending orders</SectionLabel>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Recommendations waiting for your approval
-          </p>
-          <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
-            {data.recommendations.map((rec) => (
-              <Link
-                key={rec.id}
-                href="/purchase-orders"
-                className={cn(
-                  "notif-card flex items-start justify-between gap-3 p-4",
-                  rec.urgency === "CRITICAL" && "notif-card-urgent"
-                )}
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{rec.inventoryItem.name}</p>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {rec.supplier.name}
-                  </p>
-                </div>
-                <StatusBadge
-                  label={
-                    rec.urgency === "CRITICAL"
-                      ? "Urgent"
-                      : rec.urgency === "WARNING"
-                      ? "Soon"
-                      : "Planned"
-                  }
-                  tone={
-                    rec.urgency === "CRITICAL"
-                      ? "critical"
-                      : rec.urgency === "WARNING"
-                      ? "warning"
-                      : "info"
-                  }
-                />
-              </Link>
-            ))}
+              ))}
           </div>
         </section>
       )}
 
-      {/* Manager actions */}
+      {/* ── Manager actions ───────────────────────────────────────── */}
       {session.role === Role.MANAGER && (
-        <section className="border-t border-border pt-8">
+        <section className="space-y-3 border-t border-border pt-8">
           <SectionLabel>Maintenance</SectionLabel>
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
             <form action={connectSquareAction}>
-              <PillButton icon={Store} label="Connect Square" />
+              <Button type="submit" variant="outline" size="sm" className="h-8 rounded-full text-xs">
+                <Store className="mr-1.5 size-3.5" />
+                Connect Square
+              </Button>
             </form>
             <form action={syncSalesAction}>
-              <PillButton icon={ShoppingCart} label="Sync sales" />
+              <Button type="submit" variant="outline" size="sm" className="h-8 rounded-full text-xs">
+                <ShoppingCart className="mr-1.5 size-3.5" />
+                Sync sales
+              </Button>
             </form>
             <form action={runJobsAction}>
-              <PillButton icon={RefreshCcw} label="Run jobs" />
+              <Button type="submit" variant="outline" size="sm" className="h-8 rounded-full text-xs">
+                Run jobs
+              </Button>
             </form>
           </div>
         </section>
       )}
     </div>
   );
+}
+
+// ── Bits ────────────────────────────────────────────────────────────────
+
+function greetingFor(d: Date) {
+  const h = d.getHours();
+  if (h < 5) return "Still up";
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  if (h < 22) return "Good evening";
+  return "Good night";
 }
 
 function SectionLabel({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -251,19 +318,52 @@ function SectionLabel({ children, className }: { children: React.ReactNode; clas
   );
 }
 
-function EmptyCard({ text }: { text: string }) {
-  return (
-    <div className="empty-state">
-      <span className="empty-state-hint">{text}</span>
-    </div>
-  );
-}
+function AllClearState({ firstItems }: { firstItems: boolean }) {
+  if (firstItems) {
+    return (
+      <section className="notif-card p-8 sm:p-12">
+        <div className="flex size-14 items-center justify-center rounded-2xl bg-foreground/[0.06]">
+          <Package className="size-7" />
+        </div>
+        <h2 className="mt-6 text-2xl font-bold tracking-tight sm:text-3xl">
+          Add your first item to get started
+        </h2>
+        <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+          Tell StockBuddy what you sell, and it&apos;ll watch stock, flag low
+          items, and draft reorders for your approval. You can text it on
+          Telegram or WhatsApp — just say&nbsp;
+          <span className="font-medium text-foreground">&ldquo;add oat milk&rdquo;</span> and it&apos;ll walk
+          you through.
+        </p>
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Link
+            href="/settings"
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-foreground px-4 text-sm font-semibold text-background"
+          >
+            Connect the bot
+            <ArrowRight className="size-4" />
+          </Link>
+          <Link
+            href="/inventory"
+            className="inline-flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm font-semibold"
+          >
+            Add items manually
+          </Link>
+        </div>
+      </section>
+    );
+  }
 
-function PillButton({ icon: Icon, label }: { icon: typeof Store; label: string }) {
   return (
-    <Button type="submit" variant="outline" size="sm" className="h-8 rounded-full text-xs">
-      <Icon className="mr-1.5 size-3.5" />
-      {label}
-    </Button>
+    <section className="notif-card p-8 text-center">
+      <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+        <CheckCircle2 className="size-7" />
+      </div>
+      <h2 className="mt-5 text-2xl font-bold tracking-tight">All clear</h2>
+      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+        Stock is healthy, no orders need approval, no active alerts.
+        StockBuddy is watching — we&apos;ll ping you the moment something needs a decision.
+      </p>
+    </section>
   );
 }
