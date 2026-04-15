@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Role } from "@/lib/domain-enums";
 import { ChannelType, NotificationChannel, MovementType, SupplierOrderingMode } from "@/lib/prisma";
+import type { Prisma } from "@/lib/prisma";
 
 import { createAuditLogTx } from "@/lib/audit";
 import { db } from "@/lib/db";
@@ -1352,3 +1353,210 @@ export async function disconnectEmailChannelAction(formData: FormData) {
   redirect("/settings?channelConnect=disconnected&channelType=email");
 }
 
+
+/**
+ * Photo count: accepts a JSON string "counts" of
+ * [{inventoryItemId, count}] from the camera flow and submits
+ * each as a count entry on the current session.
+ */
+export async function applyPhotoCountsAction(formData: FormData) {
+  const session = await requireSession(Role.STAFF);
+  const raw = String(formData.get("counts") ?? "[]");
+  let parsed: Array<{ inventoryItemId?: string; count?: number }> = [];
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return;
+
+  let countSession = await db.stockCountSession.findFirst({
+    where: { locationId: session.locationId, status: "IN_PROGRESS" },
+    orderBy: { startedAt: "desc" },
+  });
+  if (!countSession) {
+    countSession = await db.stockCountSession.create({
+      data: {
+        locationId: session.locationId,
+        createdById: session.userId,
+        status: "IN_PROGRESS",
+        mode: "SWIPE",
+      },
+    });
+  }
+
+  for (const entry of parsed) {
+    if (!entry.inventoryItemId) continue;
+    const n = Number(entry.count);
+    if (!Number.isFinite(n) || n < 0) continue;
+    try {
+      await submitCountEntry({
+        sessionId: countSession.id,
+        inventoryItemId: String(entry.inventoryItemId),
+        countedBase: Math.round(n),
+        userId: session.userId,
+        notes: "Applied via photo-count (vision)",
+      });
+    } catch (err) {
+      console.warn("[applyPhotoCounts] failed for item", entry.inventoryItemId, err);
+    }
+  }
+
+  revalidateOperations();
+}
+
+/**
+ * CSV bulk import for inventory items. Accepts a "csv" form field —
+ * a CSV string with header row. Columns we understand (others ignored):
+ *   name, sku, category, baseUnit, displayUnit, packSize, par, onHand, supplierName
+ *
+ * Creates missing suppliers by name inline so a single paste can
+ * bootstrap both items and their suppliers.
+ */
+export async function importInventoryCsvAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const csv = String(formData.get("csv") ?? "").trim();
+  if (!csv) return;
+
+  const rows = parseCsv(csv);
+  if (rows.length < 2) return; // header + at least 1 data row
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const idx = (name: string) => header.indexOf(name);
+
+  const nameIdx = idx("name");
+  if (nameIdx < 0) return;
+
+  const skuIdx = idx("sku");
+  const categoryIdx = idx("category");
+  const baseUnitIdx = idx("baseunit");
+  const displayUnitIdx = idx("displayunit");
+  const packSizeIdx = idx("packsize");
+  const parIdx = idx("par");
+  const onHandIdx = idx("onhand");
+  const supplierIdx = idx("suppliername");
+
+  const supplierCache = new Map<string, string>();
+  let created = 0;
+  let skipped = 0;
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const name = (row[nameIdx] ?? "").trim();
+    if (!name) {
+      skipped += 1;
+      continue;
+    }
+    const sku = (skuIdx >= 0 ? row[skuIdx] : "").trim() ||
+      `IMP-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const category = normaliseCategory((categoryIdx >= 0 ? row[categoryIdx] : "")) ?? "SUPPLY";
+    const baseUnit = normaliseBaseUnit((baseUnitIdx >= 0 ? row[baseUnitIdx] : "")) ?? "COUNT";
+    const displayUnit = normaliseMeasurementUnit((displayUnitIdx >= 0 ? row[displayUnitIdx] : "")) ?? "COUNT";
+    const packSize = Math.max(1, Math.round(Number((packSizeIdx >= 0 ? row[packSizeIdx] : "1") || "1")));
+    const par = Math.max(0, Math.round(Number((parIdx >= 0 ? row[parIdx] : "0") || "0")));
+    const onHand = Math.max(0, Math.round(Number((onHandIdx >= 0 ? row[onHandIdx] : "0") || "0")));
+    const supplierName = (supplierIdx >= 0 ? row[supplierIdx] : "").trim();
+
+    let supplierId: string | null = null;
+    if (supplierName) {
+      const cached = supplierCache.get(supplierName.toLowerCase());
+      if (cached) {
+        supplierId = cached;
+      } else {
+        const existing = await db.supplier.findFirst({
+          where: {
+            locationId: session.locationId,
+            name: { equals: supplierName, mode: "insensitive" },
+          },
+          select: { id: true },
+        });
+        if (existing) {
+          supplierId = existing.id;
+        } else {
+          const created = await db.supplier.create({
+            data: {
+              locationId: session.locationId,
+              name: supplierName,
+              orderingMode: "EMAIL",
+              leadTimeDays: 2,
+            },
+            select: { id: true },
+          });
+          supplierId = created.id;
+        }
+        supplierCache.set(supplierName.toLowerCase(), supplierId);
+      }
+    }
+
+    try {
+      await db.inventoryItem.create({
+        data: {
+          locationId: session.locationId,
+          name,
+          sku,
+          category: category as Prisma.InventoryItemCreateInput["category"],
+          baseUnit: baseUnit as Prisma.InventoryItemCreateInput["baseUnit"],
+          displayUnit: displayUnit as Prisma.InventoryItemCreateInput["displayUnit"],
+          countUnit: displayUnit as Prisma.InventoryItemCreateInput["countUnit"],
+          purchaseUnit: displayUnit as Prisma.InventoryItemCreateInput["purchaseUnit"],
+          packSizeBase: packSize,
+          stockOnHandBase: onHand,
+          parLevelBase: par,
+          safetyStockBase: Math.max(1, Math.round(par * 0.2)),
+          lowStockThresholdBase: Math.max(1, Math.round(par * 0.4)),
+          primarySupplierId: supplierId,
+        },
+      });
+      created += 1;
+    } catch (err) {
+      console.warn("[importInventoryCsv] failed to create", name, err);
+      skipped += 1;
+    }
+  }
+
+  revalidateOperations();
+}
+
+function parseCsv(input: string): string[][] {
+  const lines = input.replace(/\r\n?/g, "\n").split("\n");
+  return lines
+    .filter((l) => l.trim().length > 0)
+    .map((l) => l.split(",").map((c) => c.trim().replace(/^"|"$/g, "")));
+}
+
+function normaliseCategory(v: string): string | null {
+  const k = v.trim().toUpperCase().replace(/\s+/g, "_");
+  const allow = [
+    "COFFEE",
+    "DAIRY",
+    "ALT_DAIRY",
+    "SYRUP",
+    "BAKERY_INGREDIENT",
+    "PACKAGING",
+    "CLEANING",
+    "PAPER_GOODS",
+    "RETAIL",
+    "SEASONAL",
+    "SUPPLY",
+  ];
+  return allow.includes(k) ? k : null;
+}
+function normaliseBaseUnit(v: string): string | null {
+  const k = v.trim().toUpperCase();
+  return ["GRAM", "MILLILITER", "COUNT"].includes(k) ? k : null;
+}
+function normaliseMeasurementUnit(v: string): string | null {
+  const k = v.trim().toUpperCase();
+  return [
+    "GRAM",
+    "KILOGRAM",
+    "MILLILITER",
+    "LITER",
+    "COUNT",
+    "CASE",
+    "BOTTLE",
+    "BAG",
+    "BOX",
+  ].includes(k)
+    ? k
+    : null;
+}
