@@ -1,14 +1,36 @@
 import { env } from "@/lib/env";
 
+export type SendWhatsAppOptions = {
+  /**
+   * Twilio Content SID of a pre-approved WhatsApp Content Template
+   * with Quick Reply buttons. When set, Twilio uses this template
+   * instead of the raw text body (text becomes the fallback preview).
+   * Requires a template approved by Meta.
+   */
+  contentSid?: string;
+  /** Variables substituted into the approved template body. */
+  contentVariables?: Record<string, string>;
+};
+
 /**
  * Send a WhatsApp message proactively via the Twilio REST API.
- * Used for outbound notifications (alerts, order approvals) and bot replies
- * outside of a TwiML response window.
+ * Used for outbound notifications (alerts, order approvals) and bot
+ * replies outside of a TwiML response window.
  *
  * `to` can be a plain E.164 number (+14155551234) or already prefixed
  * with "whatsapp:" — both are normalised automatically.
+ *
+ * When options.contentSid is provided, uses Twilio's Content API so
+ * the message can include Quick Reply buttons (requires a Meta-
+ * approved template). Without it, falls back to plain text — the
+ * conversation path still works because the bot agent understands
+ * plain-language "approve" / "cancel" replies via its tools.
  */
-export async function sendWhatsAppMessage(to: string, text: string) {
+export async function sendWhatsAppMessage(
+  to: string,
+  text: string,
+  options?: SendWhatsAppOptions
+) {
   const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM } = env;
 
   if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_WHATSAPP_FROM) {
@@ -18,7 +40,20 @@ export async function sendWhatsAppMessage(to: string, text: string) {
   const from = normalizeWhatsAppAddress(TWILIO_WHATSAPP_FROM);
   const toAddress = normalizeWhatsAppAddress(to);
 
-  const body = new URLSearchParams({ From: from, To: toAddress, Body: text });
+  const params = new URLSearchParams({ From: from, To: toAddress });
+
+  if (options?.contentSid) {
+    // Use pre-approved Content Template (can include Quick Reply buttons).
+    params.set("ContentSid", options.contentSid);
+    if (options.contentVariables) {
+      params.set("ContentVariables", JSON.stringify(options.contentVariables));
+    }
+    // Body still required as a fallback for clients that can't render
+    // interactive messages.
+    params.set("Body", text);
+  } else {
+    params.set("Body", text);
+  }
 
   const response = await fetch(
     `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`,
@@ -30,7 +65,7 @@ export async function sendWhatsAppMessage(to: string, text: string) {
         ).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body,
+      body: params,
     }
   );
 

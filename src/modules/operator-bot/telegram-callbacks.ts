@@ -10,6 +10,7 @@
  */
 
 import { PurchaseOrderStatus, type Prisma } from "@/lib/prisma";
+import { botTelemetry } from "@/lib/bot-telemetry";
 import { db } from "@/lib/db";
 import { createAuditLogTx } from "@/lib/audit";
 import { canCancelPurchaseOrder } from "@/modules/purchasing/lifecycle";
@@ -32,22 +33,40 @@ export async function handleTelegramCallback(
 ): Promise<CallbackResult> {
   const [action, ...rest] = data.split(":");
   const resourceId = rest.join(":");
+  const stop = botTelemetry.start(`telegram.callback.${action}`, {
+    purchaseOrderId: resourceId,
+    senderId: ctx.senderId,
+  });
 
-  switch (action) {
-    case "po_approve":
-      return approvePurchaseOrderFromBot(resourceId, ctx);
-    case "po_cancel":
-      return cancelPurchaseOrderFromBot(resourceId, ctx);
-    case "po_retry":
-      return retryPurchaseOrderFromBot(resourceId, ctx);
-    case "noop":
-      return { ok: true, toast: "", editText: "" };
-    default:
-      return {
-        ok: false,
-        toast: "Unknown action",
-        editText: "",
-      };
+  try {
+    let result: CallbackResult;
+    switch (action) {
+      case "po_approve":
+        result = await approvePurchaseOrderFromBot(resourceId, ctx);
+        break;
+      case "po_cancel":
+        result = await cancelPurchaseOrderFromBot(resourceId, ctx);
+        break;
+      case "po_retry":
+        result = await retryPurchaseOrderFromBot(resourceId, ctx);
+        break;
+      case "noop":
+        result = { ok: true, toast: "", editText: "" };
+        break;
+      default:
+        result = { ok: false, toast: "Unknown action", editText: "" };
+    }
+    stop({ ok: result.ok, toast: result.toast });
+    return result;
+  } catch (err) {
+    botTelemetry.error(`telegram.callback.${action}`, err, {
+      purchaseOrderId: resourceId,
+    });
+    return {
+      ok: false,
+      toast: "Something went wrong",
+      editText: "⚠ Something went wrong. Try again in a moment.",
+    };
   }
 }
 

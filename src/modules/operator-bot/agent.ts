@@ -12,7 +12,10 @@ import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import { formatQuantityBase } from "@/modules/inventory/units";
 
+import { PurchaseOrderStatus } from "@/lib/prisma";
+
 import {
+  approveAndDispatchPurchaseOrder,
   createRestockOrderFromBotMessage,
   updateStockCountFromBotMessage,
   toBotChannel,
@@ -196,6 +199,24 @@ const TOOLS: ToolSchema[] = [
         },
         required: ["item_id", "new_par_base"],
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "approve_recent_order",
+      description:
+        "Approve the user's most recent AWAITING_APPROVAL purchase order at this location and send it to the supplier. Use when the user replies with 'approve', 'yes send it', 'go ahead', 'confirm', 'send the order' etc. — the universal YES path when a PO is waiting. Works on both Telegram and WhatsApp.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cancel_recent_order",
+      description:
+        "Cancel the user's most recent AWAITING_APPROVAL (or DRAFT / APPROVED) purchase order at this location. Use when the user replies with 'cancel', 'no don't send it', 'scrap that order', 'nevermind', etc. — the universal NO path when a PO is waiting.",
+      parameters: { type: "object", properties: {}, required: [] },
     },
   },
 ];
@@ -453,6 +474,95 @@ async function executeTool(
       };
     }
 
+    case "approve_recent_order": {
+      const recent = await db.purchaseOrder.findFirst({
+        where: {
+          locationId: ctx.locationId,
+          status: { in: [PurchaseOrderStatus.AWAITING_APPROVAL, PurchaseOrderStatus.DRAFT] },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, orderNumber: true },
+      });
+      if (!recent) {
+        return {
+          content: "No pending order to approve — nothing is currently waiting for your decision.",
+          finalReply: "👀 Nothing waiting for approval right now.",
+        };
+      }
+      const result = await approveAndDispatchPurchaseOrder({
+        purchaseOrderId: recent.id,
+        userId: ctx.userId,
+      });
+      if (result.status === PurchaseOrderStatus.SENT) {
+        return {
+          content: `Approved and dispatched ${result.orderNumber} to ${result.supplierName}.`,
+          finalReply: `✅ *${result.orderNumber}* approved and sent to *${result.supplierName}*.`,
+          purchaseOrderId: recent.id,
+          orderNumber: result.orderNumber,
+        };
+      }
+      if (result.status === PurchaseOrderStatus.FAILED) {
+        return {
+          content: `Approval succeeded but dispatch failed: ${result.reason ?? "unknown reason"}.`,
+          finalReply: `⚠ *${result.orderNumber}* approved, but the dispatch to *${result.supplierName}* failed.\n${result.reason ? `Reason: ${result.reason}\n` : ""}Reply *retry* to try again.`,
+          purchaseOrderId: recent.id,
+          orderNumber: result.orderNumber,
+        };
+      }
+      return {
+        content: `Approved ${result.orderNumber}; current status ${result.status}.`,
+        finalReply: `✅ *${result.orderNumber}* approved — ${result.supplierName} has a manual / website ordering mode, task created.`,
+        purchaseOrderId: recent.id,
+        orderNumber: result.orderNumber,
+      };
+    }
+
+    case "cancel_recent_order": {
+      const recent = await db.purchaseOrder.findFirst({
+        where: {
+          locationId: ctx.locationId,
+          status: {
+            in: [
+              PurchaseOrderStatus.AWAITING_APPROVAL,
+              PurchaseOrderStatus.DRAFT,
+              PurchaseOrderStatus.APPROVED,
+            ],
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, orderNumber: true, supplier: { select: { name: true } } },
+      });
+      if (!recent) {
+        return {
+          content: "No pending order to cancel.",
+          finalReply: "👀 Nothing to cancel — no pending orders.",
+        };
+      }
+      await db.purchaseOrder.update({
+        where: { id: recent.id },
+        data: { status: PurchaseOrderStatus.CANCELLED },
+      });
+      await db.auditLog.create({
+        data: {
+          locationId: ctx.locationId,
+          userId: ctx.userId,
+          action: "purchase_order.cancelled_via_bot_text",
+          entityType: "purchaseOrder",
+          entityId: recent.id,
+          details: {
+            channel: ctx.channel,
+            orderNumber: recent.orderNumber,
+          },
+        },
+      });
+      return {
+        content: `Cancelled ${recent.orderNumber}.`,
+        finalReply: `✖ *${recent.orderNumber}* cancelled.\nNothing was sent to ${recent.supplier?.name ?? "the supplier"}.`,
+        purchaseOrderId: recent.id,
+        orderNumber: recent.orderNumber,
+      };
+    }
+
     case "adjust_par_level": {
       const itemId = String(args.item_id ?? "");
       const newPar = Number(args.new_par_base ?? 0);
@@ -499,7 +609,10 @@ Rules:
 - If the user just chats ("hi", "how are you", "thanks"), reply naturally in one sentence. Don't spam tools for greetings.
 - Never repeat your previous message verbatim. If you already said it, say something different or ask a specific follow-up.
 - Use short, human phrasing. No bullet lists unless presenting multiple items/suppliers.
-- Never invent item names, quantities, or PO numbers — only use values returned by tools.`;
+- Never invent item names, quantities, or PO numbers — only use values returned by tools.
+- When the user's last message looks like a YES reply to a pending order — 'approve', 'yes', 'yes send it', 'confirm', 'go ahead', 'send', 'ok send' — call approve_recent_order. Don't ask which order; the tool finds the most recent pending one.
+- When the user's last message looks like a NO / abort — 'cancel', 'no', 'no don't send', 'scrap that', 'nvm', 'nevermind' — call cancel_recent_order.
+- If the user says just 'retry' and the previous exchange mentioned a failed dispatch, call approve_recent_order (it handles re-dispatch).`;
 
 // ── Groq client ───────────────────────────────────────────────────────────────
 type GroqToolCall = {
