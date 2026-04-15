@@ -98,7 +98,7 @@ export default async function AlertsPage() {
                     <Button
                       type="submit"
                       size="sm"
-                      className="h-8 rounded-none border-2 border-foreground bg-[var(--hot)] text-xs font-bold uppercase tracking-[0.14em] text-[var(--hot-foreground)] hover:bg-[var(--hot)]/90"
+                      className="hot-cta h-8 rounded-none border-2 text-xs font-bold uppercase tracking-[0.14em]"
                     >
                       Resolve
                     </Button>

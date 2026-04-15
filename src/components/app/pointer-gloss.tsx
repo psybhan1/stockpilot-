@@ -27,7 +27,7 @@ export function PointerGloss() {
       if (!e) return;
 
       const target = (e.target as HTMLElement | null)?.closest<HTMLElement>(
-        ".notif-card"
+        ".notif-card, .brutal-card"
       );
 
       // Clear the previous card's gloss when the cursor leaves it.
