@@ -22,6 +22,8 @@ import {
 } from "@/modules/purchasing/lifecycle";
 import { getSupplierOrderProviderForLocation } from "@/providers/supplier-order-provider";
 import { buildSupplierOrderEmail } from "@/modules/purchasing/email-template";
+import { buildSupplierActionUrl } from "@/lib/supplier-action-token";
+import { env as appEnv } from "@/lib/env";
 import { getGmailCredentials } from "@/modules/channels/service";
 
 function nextOrderNumber() {
@@ -159,6 +161,9 @@ export async function approveRecommendation(
           replyToEmail: gmailCreds?.email?.trim() || "",
           lines: [line],
           notes: recommendation.rationale ?? null,
+          actionUrl: appEnv.APP_URL
+            ? buildSupplierActionUrl(appEnv.APP_URL, purchaseOrder.id)
+            : null,
         });
 
   const draft = composed

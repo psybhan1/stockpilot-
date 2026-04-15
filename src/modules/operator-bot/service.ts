@@ -24,6 +24,8 @@ import { enqueueJobTx } from "@/modules/jobs/dispatcher";
 import { calculateRestockToParOrder } from "@/modules/operator-bot/order";
 import { parseManagerRestockMessage } from "@/modules/operator-bot/parser";
 import { buildSupplierOrderEmail } from "@/modules/purchasing/email-template";
+import { buildSupplierActionUrl } from "@/lib/supplier-action-token";
+import { env as appEnv } from "@/lib/env";
 import { getGmailCredentials } from "@/modules/channels/service";
 import {
   completeBotMessageReceipt,
@@ -1398,6 +1400,9 @@ async function dispatchBotPurchaseOrder(input: {
           replyToEmail,
           lines: [line],
           notes: currentPurchaseOrder.notes ?? null,
+          actionUrl: appEnv.APP_URL
+            ? buildSupplierActionUrl(appEnv.APP_URL, currentPurchaseOrder.id)
+            : null,
         });
 
   const draft = composed
