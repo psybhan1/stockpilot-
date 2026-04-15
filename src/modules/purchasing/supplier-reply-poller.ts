@@ -176,6 +176,7 @@ async function pollOneThread(ctx: {
     if (fromHeader?.toLowerCase().includes(creds.email.toLowerCase())) continue;
 
     const intent = await classifyReplyIntent(bodyText);
+    const priceSignal = await extractPriceSignal(bodyText).catch(() => null);
 
     await db.supplierCommunication.create({
       data: {
@@ -192,6 +193,7 @@ async function pollOneThread(ctx: {
           gmailMessageId: msg.id,
           fromHeader: fromHeader ?? null,
           intent,
+          ...(priceSignal ? { priceSignal } : {}),
         } satisfies Prisma.InputJsonValue,
         sentAt: new Date(),
       },
@@ -204,6 +206,7 @@ async function pollOneThread(ctx: {
       purchaseOrderId: ctx.purchaseOrderId,
       bodyText,
       intent,
+      priceSignal,
     });
 
     newReplies += 1;
@@ -245,6 +248,65 @@ function extractBodyText(msg: {
   if (direct.trim()) return direct.trim();
   // Last resort — the snippet.
   return (msg.snippet ?? "").trim();
+}
+
+type PriceSignal = {
+  amount: number;
+  currency: string;
+  perUnit: string | null;
+};
+
+async function extractPriceSignal(body: string): Promise<PriceSignal | null> {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) return null;
+  // Cheap prefilter — only call the model if the body mentions a
+  // currency symbol or the words "price", "cost", or "quote". Most
+  // replies don't touch price and we skip the LLM call entirely.
+  const prefilter = /(\$|€|£|CAD|USD|price|cost|quote|per (?:kg|lb|case|bag|bottle|unit|pack))/i;
+  if (!prefilter.test(body)) return null;
+
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${groqKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-8b-instant",
+        temperature: 0,
+        max_tokens: 60,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              'Extract a single unit price from a supplier reply, if one is stated. Return JSON {"amount":number,"currency":"$|€|£|CAD|USD","perUnit":"kg|lb|case|bag|bottle|unit|pack|null"}. If no price is quoted, return {"amount":0}. Do not invent values.',
+          },
+          { role: "user", content: body.slice(0, 1500) },
+        ],
+        signal: AbortSignal.timeout(10000),
+      }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const raw = data.choices?.[0]?.message?.content?.trim() ?? "";
+    const parsed = JSON.parse(raw) as {
+      amount?: number;
+      currency?: string;
+      perUnit?: string | null;
+    };
+    if (!parsed.amount || parsed.amount <= 0) return null;
+    return {
+      amount: Number(parsed.amount),
+      currency: parsed.currency ?? "$",
+      perUnit: parsed.perUnit ?? null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function classifyReplyIntent(body: string): Promise<SupplierReplyIntent> {
@@ -303,6 +365,7 @@ async function notifyManagerOfReply(input: {
   purchaseOrderId: string | null;
   bodyText: string;
   intent: SupplierReplyIntent;
+  priceSignal: PriceSignal | null;
 }) {
   // First try to find managers scoped to the PO's location. If none
   // match (stale role link, schema weirdness, single-location setup
@@ -383,9 +446,38 @@ async function notifyManagerOfReply(input: {
     }
   }
 
+  // Price-change flag appended to the notification when the supplier
+  // quoted a new unit cost that differs materially from our last
+  // paid price for that item.
+  let priceFooter = "";
+  if (input.priceSignal && input.purchaseOrderId) {
+    try {
+      const lastPaid = await db.purchaseOrderLine.findFirst({
+        where: { purchaseOrderId: input.purchaseOrderId },
+        select: { latestCostCents: true, description: true },
+      });
+      const lastPaidDollars = lastPaid?.latestCostCents
+        ? lastPaid.latestCostCents / 100
+        : null;
+      const deltaPct =
+        lastPaidDollars && lastPaidDollars > 0
+          ? ((input.priceSignal.amount - lastPaidDollars) / lastPaidDollars) * 100
+          : null;
+      const arrow = deltaPct == null ? "" : deltaPct >= 0 ? "📈" : "📉";
+      const pctText = deltaPct == null ? "" : ` (${deltaPct >= 0 ? "+" : ""}${deltaPct.toFixed(0)}%)`;
+      priceFooter =
+        `\n\n${arrow} _New quoted price: ${input.priceSignal.currency}${input.priceSignal.amount}` +
+        (input.priceSignal.perUnit ? ` per ${input.priceSignal.perUnit}` : "") +
+        `${pctText}._`;
+    } catch {
+      /* ignore */
+    }
+  }
+
   const message =
     `${icon} *${input.supplierName}* ${label} on *${input.orderNumber}*.\n\n` +
     `> ${preview}${input.bodyText.length > 300 ? "…" : ""}` +
+    priceFooter +
     rescueFooter;
 
   for (const manager of managers) {

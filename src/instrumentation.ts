@@ -96,11 +96,13 @@ export async function register() {
           { pollInboundBotChannels },
           { pollSupplierReplies },
           { backfillGmailThreadIds },
+          { runSupplierNudges },
         ] = await Promise.all([
           import("@/modules/jobs/dispatcher"),
           import("@/modules/operator-bot/polling"),
           import("@/modules/purchasing/supplier-reply-poller"),
           import("@/modules/purchasing/backfill-gmail-threads"),
+          import("@/modules/purchasing/supplier-nudges"),
         ]);
 
         // One-time backfill on boot so historical POs (sent before
@@ -122,7 +124,9 @@ export async function register() {
 
         const JOB_TICK_MS = 5_000;
         const SUPPLIER_REPLY_INTERVAL_MS = 5 * 60 * 1000;
+        const NUDGE_INTERVAL_MS = 60 * 60 * 1000; // hourly
         let lastSupplierReplyAt = 0;
+        let lastNudgeAt = 0;
         let running = false;
 
         const tick = async () => {
@@ -146,6 +150,22 @@ export async function register() {
               if (replies > 0) {
                 console.log(
                   `[in-proc-worker] supplier replies handled: ${replies}`
+                );
+              }
+            }
+            if (now - lastNudgeAt >= NUDGE_INTERVAL_MS) {
+              lastNudgeAt = now;
+              const nudgeResult = await runSupplierNudges().catch((err) => {
+                console.error("[in-proc-worker] supplier nudges", err);
+                return { stuckReplyNudgesSent: 0, lateDeliveryPromptsSent: 0 };
+              });
+              if (
+                nudgeResult.stuckReplyNudgesSent +
+                  nudgeResult.lateDeliveryPromptsSent >
+                0
+              ) {
+                console.log(
+                  `[in-proc-worker] nudges: ${nudgeResult.stuckReplyNudgesSent} reply-followups, ${nudgeResult.lateDeliveryPromptsSent} delivery-prompts`
                 );
               }
             }

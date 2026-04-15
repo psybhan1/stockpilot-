@@ -9,6 +9,7 @@ import { useTheme } from "next-themes";
 import { logoutAction } from "@/app/actions/auth";
 import { AppLiveRefresh } from "@/components/app/app-live-refresh";
 import { LocationSwitcher, type LocationSwitcherItem } from "@/components/app/location-switcher";
+import { CommandPalette } from "@/components/app/command-palette";
 import { GlassFilter } from "@/components/app/glass-filter";
 import { InkCanvas } from "@/components/app/ink-canvas";
 import { PointerGloss } from "@/components/app/pointer-gloss";
@@ -99,6 +100,9 @@ export function AppShell({ session, locations, autoRefreshMs, children }: AppShe
 
       {/* Global SVG filter defs for liquid-glass refraction. */}
       <GlassFilter />
+
+      {/* Global cmd/ctrl+K command palette. */}
+      <CommandPalette />
       {/* Global pointer tracker — feeds specular highlight on hovered cards. */}
       <PointerGloss />
       {/* Global scroll-reveal — cards animate in as they cross the viewport. */}

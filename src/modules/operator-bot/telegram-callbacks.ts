@@ -54,6 +54,12 @@ export async function handleTelegramCallback(
       case "po_rescue":
         result = await rescuePurchaseOrderFromBot(resourceId, ctx);
         break;
+      case "po_delivered":
+        result = await markDeliveredFromBot(resourceId, ctx);
+        break;
+      case "po_snooze_delivery":
+        result = await snoozeDeliveryFromBot(resourceId, ctx);
+        break;
       case "noop":
         result = { ok: true, toast: "", editText: "" };
         break;
@@ -324,6 +330,61 @@ async function rescuePurchaseOrderFromBot(
     editText:
       `📋 Rescue order *${result.newOrderNumber}* for *${result.alternateSupplierName}* is now ` +
       `in status *${result.dispatchStatus.toLowerCase()}*.`,
+    editKeyboard: null,
+  };
+}
+
+// ── Mark delivered (from late-delivery prompt) ───────────────────────
+
+async function markDeliveredFromBot(
+  poId: string,
+  _ctx: { chatId: string; userId?: string | null }
+): Promise<CallbackResult> {
+  if (!poId) return { ok: false, toast: "Missing order id", editText: "" };
+  const po = await db.purchaseOrder.findUnique({
+    where: { id: poId },
+    select: { id: true, orderNumber: true, status: true, supplier: { select: { name: true } } },
+  });
+  if (!po) return { ok: false, toast: "Order not found", editText: "Order not found." };
+  if (
+    po.status === PurchaseOrderStatus.SENT ||
+    po.status === PurchaseOrderStatus.ACKNOWLEDGED
+  ) {
+    await db.purchaseOrder.update({
+      where: { id: po.id },
+      data: { status: PurchaseOrderStatus.DELIVERED, deliveredAt: new Date() },
+    });
+  }
+  return {
+    ok: true,
+    toast: "Marked delivered",
+    editText: `📦 *${po.orderNumber}* marked as delivered from *${po.supplier?.name ?? "supplier"}*.`,
+    editKeyboard: null,
+  };
+}
+
+async function snoozeDeliveryFromBot(
+  poId: string,
+  _ctx: { chatId: string; userId?: string | null }
+): Promise<CallbackResult> {
+  if (!poId) return { ok: false, toast: "Missing order id", editText: "" };
+  const po = await db.purchaseOrder.findUnique({
+    where: { id: poId },
+    select: { id: true, orderNumber: true, metadata: true },
+  });
+  if (!po) return { ok: false, toast: "Order not found", editText: "Order not found." };
+  // Clear the lateDeliveryPromptSentAt so we re-nudge tomorrow.
+  const meta = (po.metadata ?? {}) as Record<string, unknown>;
+  delete meta.lateDeliveryPromptSentAt;
+  meta.deliverySnoozedAt = new Date().toISOString();
+  await db.purchaseOrder.update({
+    where: { id: po.id },
+    data: { metadata: meta as Prisma.InputJsonValue },
+  });
+  return {
+    ok: true,
+    toast: "Snoozed 24h",
+    editText: `⏰ *${po.orderNumber}* snoozed — I'll check back tomorrow.`,
     editKeyboard: null,
   };
 }

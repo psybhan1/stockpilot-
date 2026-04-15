@@ -161,6 +161,39 @@ export async function GET(request: NextRequest) {
     const critical = enriched.filter((i) => i.urgency === "CRITICAL");
     const watch = enriched.filter((i) => i.urgency === "WATCH");
 
+    // Proactive recommendations — for each critical item not already
+    // covered by a pending PO, suggest an amount to order today,
+    // grouped by supplier so each supplier = one order.
+    type RecOrder = {
+      supplier: string;
+      lines: Array<{ name: string; suggested: number; unit: string; runway: string }>;
+    };
+    const recsBySupplier = new Map<string, RecOrder>();
+    for (const item of critical) {
+      if (item.pendingOrders.length > 0) continue; // already being handled
+      const supplierName = item.supplier ?? "No supplier linked";
+      const shortage = Math.max(1, Math.ceil((item.par - item.onHand) / Math.max(1, item.burnPerDay || 1)));
+      // Suggest enough to get back to par + 1 safety day of burn.
+      const suggestedBase = Math.max(1, item.par - item.onHand + Math.ceil(item.burnPerDay || 0));
+      const existing = recsBySupplier.get(supplierName) ?? {
+        supplier: supplierName,
+        lines: [],
+      };
+      existing.lines.push({
+        name: item.name,
+        suggested: Math.round(suggestedBase),
+        unit: item.unit,
+        runway:
+          item.daysRemaining == null
+            ? ""
+            : item.daysRemaining < 1
+            ? `${Math.round(item.daysRemaining * 24)}h left`
+            : `${item.daysRemaining.toFixed(1)}d left`,
+      });
+      recsBySupplier.set(supplierName, existing);
+    }
+    const recommendedOrders = Array.from(recsBySupplier.values());
+
     // 4. Yesterday-ish activity snapshot.
     const yesterdayStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const [ordersSentYd, repliesYd, rescueOrdersYd] = await Promise.all([
@@ -191,6 +224,7 @@ export async function GET(request: NextRequest) {
       locationName: location.name,
       critical,
       watch,
+      recommendedOrders,
       activity: {
         ordersSent: ordersSentYd,
         supplierReplies: repliesYd,
@@ -222,6 +256,7 @@ export async function GET(request: NextRequest) {
       brief: {
         critical,
         watch,
+        recommendedOrders,
         activity: {
           ordersSent: ordersSentYd,
           supplierReplies: repliesYd,
@@ -259,6 +294,10 @@ function renderBriefMessage(input: {
     daysRemaining: number | null;
     supplier: string | null;
     pendingOrders: Array<{ orderNumber: string; status: string; supplier: string }>;
+  }>;
+  recommendedOrders: Array<{
+    supplier: string;
+    lines: Array<{ name: string; suggested: number; unit: string; runway: string }>;
   }>;
   activity: { ordersSent: number; supplierReplies: number; rescueOrders: number };
 }): string {
@@ -300,6 +339,22 @@ function renderBriefMessage(input: {
 
   if (input.critical.length === 0 && input.watch.length === 0) {
     lines.push("✅ *All items above par — no action needed today.*");
+    lines.push("");
+  }
+
+  if (input.recommendedOrders.length > 0) {
+    lines.push("📋 *To be safe through the week, place these orders today:*");
+    for (const rec of input.recommendedOrders) {
+      lines.push(`  🏪 *${rec.supplier}*`);
+      for (const line of rec.lines) {
+        const runway = line.runway ? ` · ${line.runway}` : "";
+        lines.push(`    • ${line.suggested} ${line.unit} ${line.name}${runway}`);
+      }
+    }
+    lines.push("");
+    lines.push(
+      "_Reply with what you want ordered — e.g. \"yes, draft those\" — and I'll handle it._"
+    );
     lines.push("");
   }
 
