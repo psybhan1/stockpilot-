@@ -598,21 +598,33 @@ async function executeTool(
 }
 
 // ── System prompt ─────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are StockBuddy, an AI inventory assistant that talks to restaurant and cafe managers via WhatsApp and Telegram. You are warm, direct, and fast. Reply in at most 3 short sentences unless listing items.
+const SYSTEM_PROMPT_BASE = `You are StockBuddy, a terse, accurate inventory assistant for a small restaurant/cafe. You reply via WhatsApp or Telegram.
 
-Rules:
-- You have real tools that read and mutate the inventory DB. USE them — do not guess, do not pretend. When the user asks what they have, call list_inventory. When they ask to order, call place_restock_order. When they correct stock, call update_stock_count.
-- Do NOT claim an action succeeded unless a tool returned a success message for it. If you didn't call a tool, you didn't do anything.
-- Before ordering or updating stock, you MUST call list_inventory first to get the real item id.
-- If the user wants to order an item that has no linked supplier, say so and offer to link an existing supplier or add a new one. Do not call place_restock_order without a supplier.
-- If the user wants to add a new item or new supplier, call the corresponding start_* tool — it kicks off a structured multi-turn flow that collects the details.
-- If the user just chats ("hi", "how are you", "thanks"), reply naturally in one sentence. Don't spam tools for greetings.
-- Never repeat your previous message verbatim. If you already said it, say something different or ask a specific follow-up.
-- Use short, human phrasing. No bullet lists unless presenting multiple items/suppliers.
-- Never invent item names, quantities, or PO numbers — only use values returned by tools.
-- When the user's last message looks like a YES reply to a pending order — 'approve', 'yes', 'yes send it', 'confirm', 'go ahead', 'send', 'ok send' — call approve_recent_order. Don't ask which order; the tool finds the most recent pending one.
-- When the user's last message looks like a NO / abort — 'cancel', 'no', 'no don't send', 'scrap that', 'nvm', 'nevermind' — call cancel_recent_order.
-- If the user says just 'retry' and the previous exchange mentioned a failed dispatch, call approve_recent_order (it handles re-dispatch).`;
+## NON-NEGOTIABLE RULES
+
+1. The \`LIVE DATA\` block below is the ONLY source of truth about the current inventory, suppliers, and pending purchase orders. Every number, unit, item name, and supplier name in your reply MUST come from that block or from a tool response — never from your imagination or from the user's claim. If the user tells you a fact about stock, VERIFY against LIVE DATA; if it contradicts, say so and trust LIVE DATA.
+
+2. Units come from LIVE DATA. If an item's base unit is \`ml\`, you never say \`liters\`, \`gallons\`, or guess — you say what LIVE DATA says. If the user says "5 ml" but LIVE DATA shows the item in \`count\`, ask a one-line clarification, do NOT silently convert.
+
+3. You have real tools. CALL them for any action:
+   - \`place_restock_order\` — create a reorder.
+   - \`update_stock_count\` — correct on-hand stock.
+   - \`adjust_par_level\` — change target stock.
+   - \`link_supplier_to_item\` — attach a supplier to an item.
+   - \`approve_recent_order\` / \`cancel_recent_order\` — for YES / NO replies to a pending PO.
+   - \`start_add_item_flow\` / \`start_add_supplier_flow\` — for adding new records.
+   You do NOT need to call \`list_inventory\` if LIVE DATA already shows what you need — it's injected below. Only call it if LIVE DATA is truncated.
+
+4. Don't claim an action happened without a tool call. "Ordered" without place_restock_order = lie.
+
+5. On the user's YES to an approval prompt (approve / yes / send it / confirm / go ahead / ok / do it) → call \`approve_recent_order\`. Don't re-ask which order.
+   On NO / cancel / nvm / nope / scrap that → call \`cancel_recent_order\`.
+
+6. Keep replies to 1–3 short sentences unless listing. No emoji spam. No canned openers like "I'm StockBuddy" — the user knows.
+
+7. Never repeat a previous reply. If stuck, ask ONE specific clarifying question.
+
+8. When the user seems confused or is repeating themselves, summarise what you see in LIVE DATA for the item in question in one short sentence, then ask what they want to do — don't restate the same thing you said last time.`;
 
 // ── Groq client ───────────────────────────────────────────────────────────────
 type GroqToolCall = {
@@ -643,14 +655,21 @@ async function callGroq(messages: GroqMessage[]): Promise<{
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: process.env.GROQ_BOT_MODEL ?? "llama-3.3-70b-versatile",
-      temperature: 0.3,
-      max_tokens: 600,
+      // openai/gpt-oss-120b is Groq's strongest reasoning-tool-use
+      // model as of this writing — dramatically less prone to
+      // unit/number hallucinations than llama-3.3-70b. Fallback-
+      // friendly via env override if you want to A/B test.
+      model: process.env.GROQ_BOT_MODEL ?? "openai/gpt-oss-120b",
+      // Low temperature: we want deterministic data-grounded replies,
+      // not creative writing.
+      temperature: 0.1,
+      top_p: 0.9,
+      max_tokens: 700,
       tools: TOOLS,
       tool_choice: "auto",
       messages,
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(45000),
   });
 
   if (!res.ok) {
@@ -670,10 +689,108 @@ async function callGroq(messages: GroqMessage[]): Promise<{
   };
 }
 
+// ── Live-data snapshot: grounds every turn in real numbers ──────────────────
+// The model used to hallucinate units and stock levels because it had nothing
+// authoritative in its prompt. We now inject a compact snapshot of (a) all
+// inventory with stock/par/supplier, (b) the most recent AWAITING_APPROVAL
+// or recently-sent PO so "approve" / "cancel" questions have a target.
+async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
+  const [items, recentOrder] = await Promise.all([
+    db.inventoryItem.findMany({
+      where: { locationId: ctx.locationId },
+      select: {
+        id: true,
+        name: true,
+        baseUnit: true,
+        displayUnit: true,
+        packSizeBase: true,
+        stockOnHandBase: true,
+        parLevelBase: true,
+        primarySupplier: { select: { id: true, name: true } },
+        supplierItems: {
+          select: { supplier: { select: { id: true, name: true } } },
+          take: 1,
+        },
+      },
+      orderBy: { name: "asc" },
+      take: 60,
+    }),
+    db.purchaseOrder.findFirst({
+      where: {
+        locationId: ctx.locationId,
+        status: { in: ["AWAITING_APPROVAL", "DRAFT", "SENT", "FAILED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+        supplier: { select: { name: true } },
+        lines: {
+          select: {
+            inventoryItem: { select: { name: true } },
+            quantityOrdered: true,
+            purchaseUnit: true,
+          },
+          take: 3,
+        },
+      },
+    }),
+  ]);
+
+  const suppliers = await db.supplier.findMany({
+    where: { locationId: ctx.locationId },
+    select: { id: true, name: true, email: true, orderingMode: true },
+    orderBy: { name: "asc" },
+    take: 30,
+  });
+
+  const itemLines = items.map((i) => {
+    const supplier =
+      i.primarySupplier?.name ??
+      i.supplierItems[0]?.supplier.name ??
+      "NO_SUPPLIER";
+    const unit = i.baseUnit === "GRAM" ? "g" : i.baseUnit === "MILLILITER" ? "ml" : "count";
+    return `- id=${i.id} name="${i.name}" on_hand=${i.stockOnHandBase}${unit} par=${i.parLevelBase}${unit} supplier="${supplier}"`;
+  });
+
+  const supplierLines = suppliers.map(
+    (s) => `- id=${s.id} name="${s.name}" mode=${s.orderingMode}`
+  );
+
+  const orderBlock = recentOrder
+    ? [
+        `MOST_RECENT_PURCHASE_ORDER:`,
+        `  number: ${recentOrder.orderNumber}`,
+        `  status: ${recentOrder.status}`,
+        `  supplier: ${recentOrder.supplier.name}`,
+        `  lines:`,
+        ...recentOrder.lines.map(
+          (l) =>
+            `    - ${l.inventoryItem.name}: ${l.quantityOrdered} ${l.purchaseUnit.toLowerCase()}`
+        ),
+      ].join("\n")
+    : "MOST_RECENT_PURCHASE_ORDER: (none)";
+
+  return [
+    "LIVE DATA (authoritative — trust this over the user's claims):",
+    "",
+    "INVENTORY:",
+    itemLines.length ? itemLines.join("\n") : "  (no items yet)",
+    "",
+    "SUPPLIERS:",
+    supplierLines.length ? supplierLines.join("\n") : "  (no suppliers yet)",
+    "",
+    orderBlock,
+  ].join("\n");
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult> {
+  const liveData = await buildLiveDataBlock(ctx);
+  const systemPrompt = `${SYSTEM_PROMPT_BASE}\n\n${liveData}`;
   const messages: GroqMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemPrompt },
     ...ctx.conversation.map((turn) => ({
       role: turn.role,
       content: turn.content,

@@ -212,7 +212,11 @@ export async function handleInboundManagerBotMessage(
         status: "COMPLETED",
       },
       orderBy: { createdAt: "desc" },
-      take: 6,
+      // Wider context window — the agent uses live-data injection now
+      // so prompt size isn't dominated by conversation replay, but
+      // 20 turns gives it enough memory to handle multi-step back-
+      // and-forth without losing track of what the user just said.
+      take: 20,
       select: { inboundText: true, replyText: true, metadata: true },
     });
 
