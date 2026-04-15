@@ -60,25 +60,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "User not found" }, { status: 404 });
   }
 
-  // Lazy-load the Stripe SDK so the build doesn't fail when the
-  // dependency isn't installed yet (added once you flip the switch
-  // and `npm i stripe`).
   try {
-    // Dynamic require so TS doesn't fail if the package isn't installed.
-    const stripeModule = (await import(
-      /* webpackIgnore: true */ "stripe" as string
-    ).catch(() => null)) as { default: new (key: string, opts: unknown) => unknown } | null;
-    if (!stripeModule) throw new Error("stripe package not installed");
-
-    const stripe = new stripeModule.default(process.env.STRIPE_SECRET_KEY!, {
-      apiVersion: "2024-12-18.acacia",
-    }) as {
-      checkout: {
-        sessions: {
-          create: (input: unknown) => Promise<{ url: string | null }>;
-        };
-      };
-    };
+    const { default: Stripe } = await import("stripe");
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: "2026-03-25.dahlia",
+    });
 
     const origin = env.APP_URL?.replace(/\/+$/, "") ?? new URL(req.url).origin;
     const checkout = await stripe.checkout.sessions.create({
@@ -107,8 +93,7 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: true, mode: "stripe", url: checkout.url });
   } catch (err) {
-    // If the stripe package isn't installed, fall back to mailto.
-    console.warn("[billing/checkout] stripe load failed, using mailto fallback:", err);
+    console.warn("[billing/checkout] stripe failed, using mailto fallback:", err);
     const subject = encodeURIComponent(`Set up ${PLANS[plan].label} plan`);
     return NextResponse.json({
       ok: true,
