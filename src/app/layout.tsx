@@ -31,10 +31,11 @@ const metadataBase = (() => {
 export const metadata: Metadata = {
   metadataBase,
   title: {
-    default: "StockPilot",
+    default: "StockPilot — inventory that runs itself, for cafés",
     template: "%s · StockPilot",
   },
-  description: "AI-assisted inventory operations for cafes, bakeries, and small restaurants.",
+  description:
+    "StockPilot automates reorders, emails suppliers from your own Gmail, handles replies, and tells you what to order each morning. Built for cafés, bakeries, and small kitchens. 14-day free trial.",
   applicationName: "StockPilot",
   manifest: "/manifest.webmanifest",
   keywords: [
