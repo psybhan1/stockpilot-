@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { requireSession } from "@/modules/auth/session";
 import { getDashboardData } from "@/modules/dashboard/queries";
 import { formatQuantityBase } from "@/modules/inventory/units";
+import { getAnalyticsOverview } from "@/modules/analytics/queries";
 
 /**
  * Today — the task-first landing.
@@ -32,8 +33,12 @@ import { formatQuantityBase } from "@/modules/inventory/units";
  */
 export default async function TodayPage() {
   const session = await requireSession(Role.STAFF);
-  const data = await getDashboardData(session.locationId);
+  const [data, analytics] = await Promise.all([
+    getDashboardData(session.locationId),
+    getAnalyticsOverview(session.locationId),
+  ]);
   const firstName = session.userName.split(" ")[0];
+  const topSuppliers = analytics.topSuppliers.slice(0, 3);
 
   const pendingCount = data.recommendations.length;
   const criticalCount = data.metrics.criticalCount;
@@ -215,6 +220,59 @@ export default async function TodayPage() {
           </Link>
         </div>
       </section>
+
+      {/* ── Supplier pulse (only when there's 30d activity) ──────── */}
+      {topSuppliers.length > 0 ? (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <SectionLabel>Supplier pulse · last 30 days</SectionLabel>
+            <Link
+              href="/analytics"
+              className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              See full analytics →
+            </Link>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {topSuppliers.map((s) => {
+              const pct = Math.round(s.confirmRate * 100);
+              const toneClass =
+                s.confirmRate >= 0.8
+                  ? "bg-emerald-500"
+                  : s.confirmRate >= 0.5
+                  ? "bg-amber-500"
+                  : "bg-red-500";
+              const replyLabel =
+                s.avgReplyHours == null
+                  ? "—"
+                  : s.avgReplyHours < 1
+                  ? `${Math.round(s.avgReplyHours * 60)}m reply`
+                  : `${s.avgReplyHours.toFixed(1)}h reply`;
+              return (
+                <div key={s.supplierId} className="notif-card p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{s.name}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {s.totalOrders} order{s.totalOrders === 1 ? "" : "s"} · {replyLabel}
+                      </p>
+                    </div>
+                    <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                      {pct}%
+                    </span>
+                  </div>
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div className={"h-full rounded-full " + toneClass} style={{ width: `${pct}%` }} />
+                  </div>
+                  <p className="mt-2 text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+                    {s.confirmed} confirmed · {s.declined} declined · {s.pending} pending
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       {/* ── Watch list snapshot (only when you have data + things to watch) ── */}
       {data.inventory.length > 0 && criticalCount + lowCount > 0 && (

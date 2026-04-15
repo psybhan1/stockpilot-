@@ -8,6 +8,7 @@ import { useTheme } from "next-themes";
 
 import { logoutAction } from "@/app/actions/auth";
 import { AppLiveRefresh } from "@/components/app/app-live-refresh";
+import { LocationSwitcher, type LocationSwitcherItem } from "@/components/app/location-switcher";
 import { GlassFilter } from "@/components/app/glass-filter";
 import { InkCanvas } from "@/components/app/ink-canvas";
 import { PointerGloss } from "@/components/app/pointer-gloss";
@@ -25,7 +26,14 @@ import { hasMinimumRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 type AppShellProps = {
-  session: { businessName: string; userName: string; role: Role; locationName: string };
+  session: {
+    businessName: string;
+    userName: string;
+    role: Role;
+    locationName: string;
+    locationId: string;
+  };
+  locations?: LocationSwitcherItem[];
   assistantPanel: unknown;
   autoRefreshMs: number;
   children: ReactNode;
@@ -35,7 +43,7 @@ type AppShellProps = {
  * Flat, calm shell — horizontal top nav, minimal chrome, wide content.
  * Designed to get out of the way so the page content is the hero.
  */
-export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
+export function AppShell({ session, locations, autoRefreshMs, children }: AppShellProps) {
   const pathname = usePathname();
   const { resolvedTheme, setTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -216,13 +224,20 @@ export function AppShell({ session, autoRefreshMs, children }: AppShellProps) {
             </button>
 
             <div className="hidden items-center gap-2 sm:flex">
+              {locations && locations.length > 0 ? (
+                <LocationSwitcher
+                  activeId={session.locationId}
+                  activeLabel={session.locationName}
+                  locations={locations}
+                />
+              ) : null}
               <div className="flex size-8 items-center justify-center rounded-full bg-foreground text-xs font-semibold text-background">
                 {initials}
               </div>
               <div className="hidden leading-tight md:block">
                 <div className="text-xs font-semibold">{session.userName}</div>
                 <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
-                  {session.locationName}
+                  {session.businessName}
                 </div>
               </div>
               <form action={logoutAction}>

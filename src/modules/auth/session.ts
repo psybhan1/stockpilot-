@@ -9,7 +9,19 @@ import { env } from "@/lib/env";
 import { getHighestRole, hasMinimumRole } from "@/lib/permissions";
 
 const SESSION_COOKIE = "stockpilot_session";
+const ACTIVE_LOCATION_COOKIE = "stockpilot_active_location";
 const SESSION_TTL_DAYS = 30;
+
+export async function setActiveLocationCookie(locationId: string) {
+  const cookieStore = await cookies();
+  cookieStore.set(ACTIVE_LOCATION_COOKIE, locationId, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: SESSION_TTL_DAYS * 24 * 60 * 60,
+    path: "/",
+  });
+}
 
 export type AuthSession = {
   userId: string;
@@ -96,7 +108,15 @@ export const getSession = cache(async (): Promise<AuthSession | null> => {
     return null;
   }
 
-  const primaryRole = session.user.roles[0];
+  // Allow the user to switch which location is "active" via a
+  // separate cookie. We only accept an id that matches one of their
+  // own roles — a forged or stale cookie just falls back to the
+  // first role on the account.
+  const activeLocationCookie = cookieStore.get(ACTIVE_LOCATION_COOKIE)?.value;
+  const activeRole = activeLocationCookie
+    ? session.user.roles.find((r) => r.location.id === activeLocationCookie)
+    : null;
+  const primaryRole = activeRole ?? session.user.roles[0];
 
   if (!primaryRole) {
     return null;

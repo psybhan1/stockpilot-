@@ -47,10 +47,10 @@ export default async function HomePage() {
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <MarketingCta href="/login" label="Start 14-day trial" primary />
-                <MarketingCta href="#how" label="See how it works" />
+                <MarketingCta href="/api/demo/start" label="Try the live demo" />
               </div>
               <p className="mt-4 text-xs text-muted-foreground">
-                No credit card. Connect Gmail, Telegram, and Square in 10 minutes.
+                No credit card. One-click demo with sample data, or connect your own Gmail + Telegram in 10 minutes.
               </p>
             </div>
 
