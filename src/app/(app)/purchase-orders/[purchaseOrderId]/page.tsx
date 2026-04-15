@@ -113,7 +113,7 @@ export default async function PurchaseOrderDetailPage({
               {purchaseOrder.lines.map((line) => (
                 <div
                   key={line.id}
-                  className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                  className="notif-card p-4"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -174,7 +174,7 @@ export default async function PurchaseOrderDetailPage({
                   {purchaseOrder.lines.map((line) => (
                     <label
                       key={line.id}
-                      className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                      className="notif-card p-4"
                     >
                       <span className="font-medium">{line.description}</span>
                       <span className="mt-1 block text-sm text-muted-foreground">
@@ -218,7 +218,7 @@ export default async function PurchaseOrderDetailPage({
                   purchaseOrder.communications.map((communication) => (
                     <div
                       key={communication.id}
-                      className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                      className="notif-card p-4"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>
@@ -251,7 +251,7 @@ export default async function PurchaseOrderDetailPage({
                   purchaseOrder.agentTasks.map((task) => (
                     <div
                       key={task.id}
-                      className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                      className="notif-card p-4"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>
@@ -355,7 +355,7 @@ export default async function PurchaseOrderDetailPage({
                 purchaseOrder.auditLogs.map((log) => (
                   <div
                     key={log.id}
-                    className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                    className="notif-card p-4"
                   >
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-medium">{log.action}</p>
@@ -423,7 +423,7 @@ function InfoPill({
   muted?: boolean;
 }) {
   return (
-    <div className="rounded-[24px] border border-border/60 bg-background/80 p-4">
+    <div className="notif-card p-4">
       <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
       <p className={muted ? "mt-2 text-sm text-muted-foreground" : "mt-2 font-medium"}>{value}</p>
     </div>
@@ -450,7 +450,7 @@ function ActionForm({
   notePlaceholder?: string;
 }) {
   return (
-    <form action={action} className="space-y-3 rounded-[24px] border border-border/60 bg-background/80 p-4">
+    <form action={action} className="space-y-3 notif-card p-4">
       <input type="hidden" name={hiddenName} value={hiddenValue} />
       <div>
         <p className="font-medium">{title}</p>

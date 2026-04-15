@@ -182,7 +182,7 @@ export default async function InventoryItemPage({
                 item.stockMovements.map((movement) => (
                   <div
                     key={movement.id}
-                    className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                    className="notif-card p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -225,7 +225,7 @@ export default async function InventoryItemPage({
                   <Link
                     key={recommendation.id}
                     href="/purchase-orders"
-                    className="block rounded-[24px] border border-border/60 bg-background/80 p-4 transition-colors hover:bg-muted/40"
+                    className="block notif-card p-4 transition-colors hover:bg-muted/40"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -326,7 +326,7 @@ export default async function InventoryItemPage({
                 item.supplierItems.map((supplierItem) => (
                   <div
                     key={supplierItem.id}
-                    className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                    className="notif-card p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -359,7 +359,7 @@ export default async function InventoryItemPage({
                 item.alerts.map((alert) => (
                   <div
                     key={alert.id}
-                    className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                    className="notif-card p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -403,7 +403,7 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <Card className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5">
+    <Card className="notif-card border-none shadow-none bg-transparent">
       <CardContent className="space-y-4 p-5">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
@@ -417,7 +417,7 @@ function Panel({
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[24px] border border-border/60 bg-background/85 p-4 shadow-lg shadow-black/5">
+    <div className="notif-card p-4">
       <p className="text-sm text-muted-foreground">{label}</p>
       <p className="mt-3 text-2xl font-semibold tracking-tight">{value}</p>
     </div>
@@ -426,7 +426,7 @@ function MetricCard({ label, value }: { label: string; value: string }) {
 
 function InfoPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[24px] border border-border/60 bg-background/80 p-4">
+    <div className="notif-card p-4">
       <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
       <p className="mt-2 font-medium">{value}</p>
     </div>
@@ -435,7 +435,7 @@ function InfoPill({ label, value }: { label: string; value: string }) {
 
 function EmptyState({ title, description }: { title: string; description: string }) {
   return (
-    <div className="rounded-[24px] border border-dashed border-border px-4 py-8 text-center">
+    <div className="rounded-[22px] border border-dashed border-border/60 px-4 py-8 text-center">
       <p className="font-medium">{title}</p>
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>
     </div>

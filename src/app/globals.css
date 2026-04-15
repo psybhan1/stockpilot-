@@ -219,18 +219,29 @@
 .page-transition-enter > * > :nth-child(6) { animation-delay: 0.60s; }
 .page-transition-enter > * > :nth-child(n+7) { animation-delay: 0.68s; }
 
-/* Nested grid/flex containers — animate their direct children too so
-   cards inside a section cascade lightly instead of arriving all at once. */
-.page-transition-enter > * > * > .grid > *,
-.page-transition-enter > * > * > div[class*="grid"] > * {
-  animation: pageEnter 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: inherit;
+/* Nested list / grid children — cards inside a section cascade so each
+   row doesn't pop in all at once. Applies to any .space-y-*, .grid, or
+   [class*="grid"] container that's a descendant of a page section. */
+.page-transition-enter > * > * .notif-card,
+.page-transition-enter > * > * .brutal-card,
+.page-transition-enter > * > * [class*="space-y"] > *,
+.page-transition-enter > * > * [class*="grid"] > * {
+  animation: pageEnter 0.75s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-.page-transition-enter > * > * > .grid > :nth-child(1) { animation-delay: 0.04s; }
-.page-transition-enter > * > * > .grid > :nth-child(2) { animation-delay: 0.10s; }
-.page-transition-enter > * > * > .grid > :nth-child(3) { animation-delay: 0.16s; }
-.page-transition-enter > * > * > .grid > :nth-child(4) { animation-delay: 0.22s; }
-.page-transition-enter > * > * > .grid > :nth-child(n+5) { animation-delay: 0.28s; }
+.page-transition-enter > * > * [class*="space-y"] > :nth-child(1),
+.page-transition-enter > * > * [class*="grid"] > :nth-child(1) { animation-delay: 0.06s; }
+.page-transition-enter > * > * [class*="space-y"] > :nth-child(2),
+.page-transition-enter > * > * [class*="grid"] > :nth-child(2) { animation-delay: 0.12s; }
+.page-transition-enter > * > * [class*="space-y"] > :nth-child(3),
+.page-transition-enter > * > * [class*="grid"] > :nth-child(3) { animation-delay: 0.18s; }
+.page-transition-enter > * > * [class*="space-y"] > :nth-child(4),
+.page-transition-enter > * > * [class*="grid"] > :nth-child(4) { animation-delay: 0.24s; }
+.page-transition-enter > * > * [class*="space-y"] > :nth-child(5),
+.page-transition-enter > * > * [class*="grid"] > :nth-child(5) { animation-delay: 0.30s; }
+.page-transition-enter > * > * [class*="space-y"] > :nth-child(6),
+.page-transition-enter > * > * [class*="grid"] > :nth-child(6) { animation-delay: 0.36s; }
+.page-transition-enter > * > * [class*="space-y"] > :nth-child(n+7),
+.page-transition-enter > * > * [class*="grid"] > :nth-child(n+7) { animation-delay: 0.40s; }
 
 /* ── Liquid-glass notification card ───────────────────────────────── */
 /* A proper glossy liquid-glass treatment inspired by iOS / macOS Aqua:
@@ -413,6 +424,198 @@
     0 34px 72px -20px rgba(227, 74, 80, 0.4),
     inset 0 1px 0 rgba(255, 200, 200, 0.28),
     inset 0 -0.5px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* ── Unified status badge ─────────────────────────────────────────── */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.status-badge-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.95;
+}
+
+.status-badge-neutral {
+  background: rgba(10, 10, 10, 0.06);
+  border-color: rgba(10, 10, 10, 0.10);
+  color: var(--muted-foreground);
+}
+.status-badge-info {
+  background: rgba(100, 130, 180, 0.12);
+  border-color: rgba(100, 130, 180, 0.22);
+  color: #4a6a95;
+}
+.status-badge-success {
+  background: rgba(90, 150, 110, 0.12);
+  border-color: rgba(90, 150, 110, 0.22);
+  color: #3b7a4d;
+}
+.status-badge-warning {
+  background: rgba(230, 170, 50, 0.15);
+  border-color: rgba(230, 170, 50, 0.3);
+  color: #a66e16;
+}
+.status-badge-critical {
+  background: rgba(193, 39, 45, 0.14);
+  border-color: rgba(193, 39, 45, 0.28);
+  color: #a3232a;
+}
+
+.dark .status-badge-neutral {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.10);
+  color: rgba(245, 243, 238, 0.75);
+}
+.dark .status-badge-info     { color: #a3b9d9; background: rgba(120,160,210,0.10); border-color: rgba(120,160,210,0.22); }
+.dark .status-badge-success  { color: #9ecfa8; background: rgba(120,190,140,0.10); border-color: rgba(120,190,140,0.22); }
+.dark .status-badge-warning  { color: #edc37a; background: rgba(240,190,90,0.12); border-color: rgba(240,190,90,0.25); }
+.dark .status-badge-critical { color: #f0999c; background: rgba(227,74,80,0.14); border-color: rgba(227,74,80,0.30); }
+
+/* Inside brutal (orange-glass) cards — flip to white-on-transparent */
+.brutal-card .status-badge {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+}
+.brutal-card .status-badge-critical {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(255, 255, 255, 0.95);
+  color: var(--hot);
+}
+.brutal-card .status-badge-success {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(255, 255, 255, 0.95);
+  color: #2a6b3a;
+}
+
+/* ── Unified form inputs ──────────────────────────────────────────── */
+/* Shadcn defaults overridden to match the editorial language. */
+.editorial-input {
+  display: flex;
+  width: 100%;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-size: 14px;
+  font-feature-settings: "ss01";
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.editorial-input::placeholder { color: var(--muted-foreground); }
+.editorial-input:focus-visible {
+  outline: none;
+  border-color: var(--foreground);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06);
+}
+.dark .editorial-input:focus-visible {
+  box-shadow: 0 0 0 3px rgba(245, 243, 238, 0.08);
+}
+
+.editorial-textarea {
+  display: flex;
+  width: 100%;
+  min-height: 96px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.editorial-textarea:focus-visible {
+  outline: none;
+  border-color: var(--foreground);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06);
+}
+
+/* Overall Input/Textarea shadcn defaults → align with editorial. */
+input[data-slot="input"],
+textarea[data-slot="textarea"] {
+  border-radius: 10px !important;
+  font-feature-settings: "ss01";
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+input[data-slot="input"]:focus-visible,
+textarea[data-slot="textarea"]:focus-visible {
+  border-color: var(--foreground) !important;
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06) !important;
+}
+.dark input[data-slot="input"]:focus-visible,
+.dark textarea[data-slot="textarea"]:focus-visible {
+  box-shadow: 0 0 0 3px rgba(245, 243, 238, 0.08) !important;
+}
+
+/* Native <select> styling to match */
+select.editorial-select,
+.brutal-card select,
+.notif-card select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 40px;
+  padding: 0 36px 0 14px;
+  border-radius: 10px;
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-size: 14px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 12px) 50%;
+  background-size: 6px 6px;
+  background-repeat: no-repeat;
+  transition: border-color 180ms ease, background-color 180ms ease;
+}
+select.editorial-select:focus-visible { outline: none; border-color: var(--foreground); }
+
+/* ── Skeleton that matches the glass/brutal surfaces ──────────────── */
+@keyframes skeletonShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton-line {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(10, 10, 10, 0.06);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.45) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: skeletonShimmer 1.6s linear infinite;
+}
+.dark .skeleton-line {
+  background-color: rgba(255, 255, 255, 0.05);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    transparent 100%
+  );
 }
 
 /* ── Brutalist / Liquid-glass utility-page card ───────────────────── */

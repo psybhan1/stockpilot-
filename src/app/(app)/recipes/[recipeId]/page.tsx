@@ -63,7 +63,7 @@ export default async function RecipeDetailPage({
         </CardContent>
       </Card>
 
-      <Card className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5">
+      <Card className="notif-card border-none shadow-none bg-transparent">
         <CardContent className="p-5">
           <form action={approveRecipeAction} className="flex flex-col gap-4">
             <input type="hidden" name="recipeId" value={recipe.id} />
@@ -71,7 +71,7 @@ export default async function RecipeDetailPage({
             {recipe.components.map((component) => (
               <div
                 key={component.id}
-                className="grid gap-4 rounded-[24px] border border-border/60 bg-background/80 p-4 lg:grid-cols-[minmax(0,1fr)_140px_120px]"
+                className="notif-card grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_140px_120px]"
               >
                 <div>
                   <p className="font-medium">{component.inventoryItem.name}</p>
@@ -92,7 +92,7 @@ export default async function RecipeDetailPage({
                   />
                 </div>
                 <div className="flex items-end">
-                  <div className="w-full rounded-2xl border border-border/60 bg-card px-3 py-3 text-sm text-muted-foreground">
+                  <div className="w-full rounded-xl border border-border bg-muted/40 px-3 py-3 text-sm text-muted-foreground">
                     {component.displayUnit.toLowerCase()}
                   </div>
                 </div>
@@ -105,7 +105,7 @@ export default async function RecipeDetailPage({
                   Approve recipe
                 </Button>
               ) : (
-                <div className="rounded-[24px] border border-border/60 bg-background/75 px-4 py-3 text-sm text-muted-foreground">
+                <div className="notif-card px-4 py-3 text-sm text-muted-foreground">
                   A manager still needs to approve this recipe before it can drive depletion.
                 </div>
               )}
@@ -127,7 +127,7 @@ function MetricCard({
   value: string;
 }) {
   return (
-    <div className="rounded-[24px] border border-border/60 bg-background/85 p-4 shadow-lg shadow-black/5">
+    <div className="notif-card p-4">
       <Icon className="size-5 text-amber-600 dark:text-amber-300" />
       <p className="mt-4 text-sm text-muted-foreground">{label}</p>
       <p className="mt-2 text-3xl font-semibold tracking-tight">{value}</p>

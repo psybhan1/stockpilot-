@@ -184,7 +184,7 @@ export default async function SupplierDetailPage({
                 supplier.supplierItems.map((item) => (
                   <div
                     key={item.id}
-                    className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                    className="notif-card p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -289,7 +289,7 @@ export default async function SupplierDetailPage({
               )}
             </div>
 
-            <form action={upsertSupplierItemAction} className="grid gap-3 rounded-[24px] border border-dashed border-border bg-background/70 p-4 md:grid-cols-2">
+            <form action={upsertSupplierItemAction} className="notif-card grid gap-3 p-4 md:grid-cols-2">
               <input type="hidden" name="supplierId" value={supplier.id} />
               <select
                 name="inventoryItemId"
@@ -350,7 +350,7 @@ export default async function SupplierDetailPage({
                   <Link
                     key={order.id}
                     href={`/purchase-orders/${order.id}`}
-                    className="flex items-center justify-between gap-3 rounded-[24px] border border-border/60 bg-background/80 p-4 transition-colors hover:bg-muted/40"
+                    className="flex items-center justify-between gap-3 notif-card p-4 transition-colors hover:bg-muted/40"
                   >
                     <div>
                       <p className="font-medium">{order.orderNumber}</p>
@@ -408,7 +408,7 @@ export default async function SupplierDetailPage({
               {supplier.communications.map((communication) => (
                 <div
                   key={communication.id}
-                  className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                  className="notif-card p-4"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-medium">{communication.subject ?? "Supplier message"}</p>
@@ -421,7 +421,7 @@ export default async function SupplierDetailPage({
               {supplier.agentTasks.map((task) => (
                 <div
                   key={task.id}
-                  className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                  className="notif-card p-4"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-medium">{task.title}</p>
@@ -450,7 +450,7 @@ export default async function SupplierDetailPage({
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[24px] border border-border/60 bg-background/85 p-4 shadow-lg shadow-black/5">
+    <div className="notif-card p-4">
       <p className="text-sm text-muted-foreground">{label}</p>
       <p className="mt-3 text-3xl font-semibold tracking-tight">{value}</p>
     </div>
@@ -467,7 +467,7 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <Card className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5">
+    <Card className="notif-card border-none shadow-none bg-transparent">
       <CardContent className="space-y-4 p-5">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
@@ -481,8 +481,8 @@ function Panel({
 
 function InfoPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border/60 bg-card px-3 py-3">
-      <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+    <div className="notif-card px-3 py-3">
+      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
       <p className="mt-1 font-medium">{value}</p>
     </div>
   );
@@ -498,7 +498,7 @@ function ContactRow({
   value: string;
 }) {
   return (
-    <div className="rounded-[24px] border border-border/60 bg-background/80 p-4">
+    <div className="notif-card p-4">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Icon className="size-4" />
         <p className="text-xs uppercase tracking-[0.16em]">{label}</p>
@@ -510,7 +510,7 @@ function ContactRow({
 
 function EmptyState({ title, description }: { title: string; description: string }) {
   return (
-    <div className="rounded-[24px] border border-dashed border-border px-4 py-8 text-center">
+    <div className="notif-card px-4 py-8 text-center">
       <p className="font-medium">{title}</p>
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>
     </div>

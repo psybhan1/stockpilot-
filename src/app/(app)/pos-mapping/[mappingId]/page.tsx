@@ -58,7 +58,7 @@ export default async function PosMappingDetailPage({
       </Card>
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <Card className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5">
+        <Card className="notif-card border-none shadow-none bg-transparent">
           <CardContent className="space-y-5 p-5">
             <div>
               <h2 className="text-xl font-semibold tracking-tight">Mapping control</h2>
@@ -146,7 +146,7 @@ export default async function PosMappingDetailPage({
         </Card>
 
         <div className="space-y-6">
-          <Card className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5">
+          <Card className="notif-card border-none shadow-none bg-transparent">
             <CardContent className="space-y-4 p-5">
               <div>
                 <h2 className="text-xl font-semibold tracking-tight">Source variation</h2>
@@ -161,7 +161,7 @@ export default async function PosMappingDetailPage({
             </CardContent>
           </Card>
 
-          <Card className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5">
+          <Card className="notif-card border-none shadow-none bg-transparent">
             <CardContent className="space-y-4 p-5">
               <div>
                 <h2 className="text-xl font-semibold tracking-tight">Linked recipe</h2>

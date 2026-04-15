@@ -1,31 +1,25 @@
 import { cn } from "@/lib/utils";
 
-const toneConfig = {
-  neutral: {
-    dot: "bg-zinc-500",
-    text: "text-zinc-400",
-    bg: "bg-zinc-500/10",
-  },
-  info: {
-    dot: "bg-blue-500",
-    text: "text-blue-400",
-    bg: "bg-blue-500/10",
-  },
-  warning: {
-    dot: "bg-amber-400",
-    text: "text-amber-400",
-    bg: "bg-amber-400/10",
-  },
-  critical: {
-    dot: "bg-red-500",
-    text: "text-red-400",
-    bg: "bg-red-500/10",
-  },
-  success: {
-    dot: "bg-emerald-500",
-    text: "text-emerald-400",
-    bg: "bg-emerald-500/10",
-  },
+/**
+ * Unified status badge. Reads the surrounding context (glass card vs
+ * brutal/orange-glass card) via CSS — the same component works on both
+ * surfaces. Typography is mono uppercase tracked-wide to match the
+ * rest of the editorial language.
+ *
+ * Tones:
+ *   neutral  default muted chip
+ *   info     soft blue-grey
+ *   success  calm green
+ *   warning  amber
+ *   critical accent red (uses the theme --destructive)
+ */
+
+const toneClasses = {
+  neutral: "status-badge-neutral",
+  info: "status-badge-info",
+  warning: "status-badge-warning",
+  critical: "status-badge-critical",
+  success: "status-badge-success",
 } as const;
 
 export function StatusBadge({
@@ -33,18 +27,12 @@ export function StatusBadge({
   tone = "neutral",
 }: {
   label: string;
-  tone?: keyof typeof toneConfig;
+  tone?: keyof typeof toneClasses;
 }) {
-  const c = toneConfig[tone];
   return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium",
-        c.bg
-      )}
-    >
-      <span className={cn("size-1.5 rounded-full", c.dot)} />
-      <span className={c.text}>{label}</span>
+    <span className={cn("status-badge", toneClasses[tone])}>
+      <span className="status-badge-dot" aria-hidden />
+      {label}
     </span>
   );
 }
