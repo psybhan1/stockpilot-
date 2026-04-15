@@ -2,12 +2,19 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@/lib/prisma";
 import { BotChannel } from "@/lib/prisma";
 
-import { isValidTelegramWebhook, sendTelegramMessage } from "@/lib/telegram-bot";
+import {
+  answerCallbackQuery,
+  editTelegramMessage,
+  isValidTelegramWebhook,
+  sendTelegramMessage,
+  type InlineKeyboard,
+} from "@/lib/telegram-bot";
 import {
   connectManagerBotChannel,
   readConnectTokenFromText,
 } from "@/modules/operator-bot/connect";
 import { handleInboundManagerBotMessage } from "@/modules/operator-bot/service";
+import { handleTelegramCallback } from "@/modules/operator-bot/telegram-callbacks";
 import { completeTelegramChannelPairing } from "@/modules/channels/service";
 import { env } from "@/lib/env";
 
@@ -37,6 +44,20 @@ type TelegramUpdate = {
       first_name?: string;
       last_name?: string;
     };
+  };
+  callback_query?: {
+    id: string;
+    from: {
+      id: number;
+      username?: string;
+      first_name?: string;
+      last_name?: string;
+    };
+    message?: {
+      message_id: number;
+      chat: { id: number };
+    };
+    data?: string;
   };
 };
 
@@ -103,6 +124,35 @@ export async function POST(request: Request) {
   }
 
   const payload = (await request.json()) as TelegramUpdate;
+
+  // ── Inline-button callback (one-click order approval / cancel etc.) ──
+  if (payload.callback_query) {
+    const cb = payload.callback_query;
+    const data = cb.data ?? "";
+    const cbChatId = cb.message?.chat?.id;
+    const cbMessageId = cb.message?.message_id;
+
+    const result = await handleTelegramCallback(data, {
+      chatId: cbChatId ? String(cbChatId) : "",
+      senderId: String(cb.from.id),
+    });
+
+    // Toast above the button (closes the spinner).
+    await answerCallbackQuery(cb.id, result.toast || undefined);
+
+    // Edit the original message in place so the user immediately sees
+    // the action outcome. Drop the keyboard so the action can't be
+    // re-tapped.
+    if (result.editText && cbChatId && cbMessageId) {
+      await editTelegramMessage(String(cbChatId), cbMessageId, result.editText, {
+        parseMode: "Markdown",
+        replyMarkup: result.clearKeyboard ? null : undefined,
+      });
+    }
+
+    return NextResponse.json({ ok: result.ok });
+  }
+
   const chatId = payload.message?.chat?.id;
   const senderId = payload.message?.from?.id;
 
@@ -192,7 +242,15 @@ export async function POST(request: Request) {
   });
 
   if (!result.skipSend && result.reply) {
-    await sendTelegramMessage(String(chatId), result.reply);
+    // If the bot just created / touched a purchase order, attach an
+    // inline Cancel button so the manager can reverse it in one tap.
+    const keyboard: InlineKeyboard | undefined = result.purchaseOrderId
+      ? [[{ text: "✖ Cancel order", callback_data: `po_cancel:${result.purchaseOrderId}` }]]
+      : undefined;
+    await sendTelegramMessage(String(chatId), result.reply, {
+      parseMode: "Markdown",
+      replyMarkup: keyboard,
+    });
   }
 
   return NextResponse.json({

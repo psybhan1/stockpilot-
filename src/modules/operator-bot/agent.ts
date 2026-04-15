@@ -152,6 +152,52 @@ const TOOLS: ToolSchema[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "list_low_stock",
+      description:
+        "List ONLY the items that are low on stock right now — critical and warning items, in order of urgency. Cheaper than list_inventory when the user asks 'what's low?' / 'what do I need to order?' / 'anything running out?'. Shows stock on hand, days left, and linked supplier.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_item_stock",
+      description:
+        "Return current stock + par + days-left + supplier for a specific item, matched by (fuzzy) name. Use when the user asks 'how much oat milk do we have?' / 'what's our banana situation?'.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "User's phrasing of the item name — can be partial (e.g. 'oat', 'coconut syrup').",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "adjust_par_level",
+      description:
+        "Change an item's target stock level (par). Use when the user says things like 'bump oat milk par to 10000 ml' or 'we need less espresso beans, set par to 2kg'.",
+      parameters: {
+        type: "object",
+        properties: {
+          item_id: { type: "string", description: "Inventory item id." },
+          new_par_base: {
+            type: "number",
+            description: "New par level in the item's base unit.",
+          },
+        },
+        required: ["item_id", "new_par_base"],
+      },
+    },
+  },
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
@@ -161,6 +207,9 @@ type ToolResult = {
   finalReply?: string;
   /** Set when the tool kicked off a workflow — stops the agent loop. */
   workflowStarted?: boolean;
+  /** Passed through to the caller so Telegram can attach approval buttons. */
+  purchaseOrderId?: string | null;
+  orderNumber?: string | null;
 };
 
 async function executeTool(
@@ -238,8 +287,14 @@ async function executeTool(
         sourceMessageId: ctx.sourceMessageId,
         originalText: ctx.conversation[ctx.conversation.length - 1]?.content ?? "",
       });
-      // Surface the service's reply verbatim — it has the real PO number and supplier info.
-      return { content: result.reply, finalReply: result.reply };
+      // Surface the service's reply verbatim + expose the PO id/number so
+      // Telegram can attach inline approve/cancel buttons to the reply.
+      return {
+        content: result.reply,
+        finalReply: result.reply,
+        purchaseOrderId: result.purchaseOrderId ?? null,
+        orderNumber: result.orderNumber ?? null,
+      };
     }
 
     case "update_stock_count": {
@@ -329,6 +384,104 @@ async function executeTool(
       return { content: reply, finalReply: reply, workflowStarted: true };
     }
 
+    case "list_low_stock": {
+      const items = await db.inventoryItem.findMany({
+        where: {
+          locationId: ctx.locationId,
+          snapshot: { urgency: { in: ["CRITICAL", "WARNING"] } },
+        },
+        select: {
+          id: true,
+          name: true,
+          stockOnHandBase: true,
+          parLevelBase: true,
+          displayUnit: true,
+          packSizeBase: true,
+          primarySupplier: { select: { name: true } },
+          snapshot: { select: { urgency: true, daysLeft: true } },
+        },
+        orderBy: [{ snapshot: { urgency: "desc" } }, { name: "asc" }],
+        take: 30,
+      });
+      if (items.length === 0) {
+        return { content: "All stocked — nothing is running low right now." };
+      }
+      const content = items
+        .map((i) => {
+          const stock = formatQuantityBase(i.stockOnHandBase, i.displayUnit, i.packSizeBase);
+          const par = formatQuantityBase(i.parLevelBase, i.displayUnit, i.packSizeBase);
+          const days = i.snapshot?.daysLeft != null ? `${Math.round(i.snapshot.daysLeft)}d left` : "—";
+          const urg = i.snapshot?.urgency === "CRITICAL" ? "[URGENT]" : "[WATCH]";
+          return `- id=${i.id} ${urg} ${i.name}: ${stock} / par ${par} (${days}) · supplier=${i.primarySupplier?.name ?? "NONE"}`;
+        })
+        .join("\n");
+      return { content };
+    }
+
+    case "check_item_stock": {
+      const query = String(args.query ?? "").toLowerCase().trim();
+      if (!query) return { content: "ERROR: query required." };
+      const candidates = await db.inventoryItem.findMany({
+        where: { locationId: ctx.locationId },
+        select: {
+          id: true,
+          name: true,
+          stockOnHandBase: true,
+          parLevelBase: true,
+          displayUnit: true,
+          packSizeBase: true,
+          primarySupplier: { select: { name: true } },
+          snapshot: { select: { urgency: true, daysLeft: true } },
+        },
+      });
+      const match =
+        candidates.find((c) => c.name.toLowerCase() === query) ??
+        candidates.find((c) => c.name.toLowerCase().includes(query)) ??
+        candidates.find((c) => query.includes(c.name.toLowerCase())) ??
+        null;
+      if (!match) {
+        return { content: `No item matching "${query}".` };
+      }
+      const stock = formatQuantityBase(match.stockOnHandBase, match.displayUnit, match.packSizeBase);
+      const par = formatQuantityBase(match.parLevelBase, match.displayUnit, match.packSizeBase);
+      const days = match.snapshot?.daysLeft != null ? `${Math.round(match.snapshot.daysLeft)} days left` : "no forecast";
+      return {
+        content:
+          `${match.name}: ${stock} on hand · par ${par} · ${days} · ` +
+          `supplier=${match.primarySupplier?.name ?? "NONE"} · ` +
+          `status=${match.snapshot?.urgency ?? "INFO"} · id=${match.id}`,
+      };
+    }
+
+    case "adjust_par_level": {
+      const itemId = String(args.item_id ?? "");
+      const newPar = Number(args.new_par_base ?? 0);
+      if (!itemId || !(newPar > 0)) {
+        return { content: "ERROR: item_id + positive new_par_base required." };
+      }
+      const item = await db.inventoryItem.findFirst({
+        where: { id: itemId, locationId: ctx.locationId },
+        select: { id: true, name: true, displayUnit: true, packSizeBase: true, parLevelBase: true },
+      });
+      if (!item) return { content: "ERROR: item not found at this location." };
+      const lowStockThresholdBase = Math.max(1, Math.floor(newPar * 0.3));
+      const safetyStockBase = Math.max(1, Math.floor(newPar * 0.15));
+      await db.inventoryItem.update({
+        where: { id: item.id },
+        data: {
+          parLevelBase: Math.round(newPar),
+          lowStockThresholdBase,
+          safetyStockBase,
+        },
+      });
+      const oldLabel = formatQuantityBase(item.parLevelBase, item.displayUnit, item.packSizeBase);
+      const newLabel = formatQuantityBase(Math.round(newPar), item.displayUnit, item.packSizeBase);
+      return {
+        content: `Par for "${item.name}" is now ${newLabel} (was ${oldLabel}). Low-stock alert at ${lowStockThresholdBase}.`,
+        finalReply: `✅ Par updated for *${item.name}*: ${oldLabel} → ${newLabel}`,
+      };
+    }
+
     default:
       return { content: `ERROR: unknown tool ${name}` };
   }
@@ -415,7 +568,8 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
   ];
 
   let finalReply: string | null = null;
-  let workflowStarted = false;
+  let purchaseOrderId: string | null = null;
+  let orderNumber: string | null = null;
 
   // Tool call loop — up to 5 turns. Each loop: ask the model, run tools, append results.
   for (let i = 0; i < 5; i++) {
@@ -449,14 +603,22 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
         content: result.content,
       });
 
+      // Capture PO identity from tools that create orders so the outer
+      // channel can attach inline approve / cancel buttons on the reply.
+      if (result.purchaseOrderId) purchaseOrderId = result.purchaseOrderId;
+      if (result.orderNumber) orderNumber = result.orderNumber;
+
       // If the tool kicked off a workflow (ADD_ITEM, ADD_SUPPLIER), return its
       // reply immediately — the workflow engine will handle subsequent turns.
       if (result.workflowStarted && result.finalReply) {
-        return { ok: true, reply: result.finalReply, replyScenario: "agent_workflow_started" };
+        return {
+          ok: true,
+          reply: result.finalReply,
+          replyScenario: "agent_workflow_started",
+          purchaseOrderId,
+          orderNumber,
+        };
       }
-      // If the tool produced a canonical reply (like a PO confirmation), we
-      // still let the model phrase the final response — it may combine it with
-      // other info — but we expose it as the tool content.
     }
   }
 
@@ -467,6 +629,8 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
 
   return {
     ok: true,
+    purchaseOrderId,
+    orderNumber,
     reply: finalReply,
     replyScenario: "agent",
   };
