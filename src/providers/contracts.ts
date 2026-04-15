@@ -223,7 +223,13 @@ export interface SupplierOrderProvider {
     recipient: string;
     subject: string;
     body: string;
-  }): Promise<{ providerMessageId?: string }>;
+  }): Promise<{
+    providerMessageId?: string;
+    /** Provider-specific metadata (e.g. Gmail threadId) — persisted
+     * on the SupplierCommunication row so downstream workers can
+     * find the conversation later. */
+    metadata?: Record<string, unknown>;
+  }>;
   prepareWebsiteTask(input: {
     supplierName: string;
     website?: string | null;

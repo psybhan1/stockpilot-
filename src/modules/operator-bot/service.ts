@@ -1407,6 +1407,12 @@ async function dispatchBotPurchaseOrder(input: {
             body: draft?.body ?? `Please confirm ${line.quantity} ${line.unit} of ${line.description}.`,
             status: CommunicationStatus.SENT,
             providerMessageId: sendResult.providerMessageId,
+            // Persist provider metadata (e.g. Gmail thread id) so the
+            // supplier-reply poller can find the thread later.
+            metadata:
+              "metadata" in sendResult && sendResult.metadata
+                ? (sendResult.metadata as Prisma.InputJsonValue)
+                : undefined,
             sentAt: new Date(),
           },
         });

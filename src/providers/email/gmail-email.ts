@@ -108,12 +108,17 @@ export class GmailEmailProvider
     subject: string;
     body: string;
   }) {
-    const id = await this.deliver({
+    const sent = await this.deliverFull({
       to: input.recipient,
       subject: input.subject,
       body: input.body,
     });
-    return { providerMessageId: id };
+    return {
+      providerMessageId: sent.id,
+      // Surfaced via metadata on the SupplierCommunication row so
+      // the Gmail reply-poller can find the right thread later.
+      metadata: { gmailThreadId: sent.threadId, gmailMessageId: sent.id },
+    };
   }
 
   async prepareWebsiteTask(input: {
@@ -149,6 +154,15 @@ export class GmailEmailProvider
     subject: string;
     body: string;
   }): Promise<string> {
+    const full = await this.deliverFull(input);
+    return full.id;
+  }
+
+  private async deliverFull(input: {
+    to: string;
+    subject: string;
+    body: string;
+  }): Promise<{ id: string; threadId: string }> {
     const creds = await this.ensureFreshToken();
 
     // Build RFC 2822 / RFC 5322 message.
@@ -180,8 +194,11 @@ export class GmailEmailProvider
       );
     }
 
-    const payload = (await res.json()) as { id?: string };
-    return payload.id ?? `gmail-${Date.now()}`;
+    const payload = (await res.json()) as { id?: string; threadId?: string };
+    return {
+      id: payload.id ?? `gmail-${Date.now()}`,
+      threadId: payload.threadId ?? payload.id ?? `gmail-${Date.now()}`,
+    };
   }
 
   private async ensureFreshToken(): Promise<GmailCredentials> {

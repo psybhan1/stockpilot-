@@ -1,8 +1,15 @@
 import { env } from "@/lib/env";
 import { runPendingJobs } from "@/modules/jobs/dispatcher";
 import { pollInboundBotChannels } from "@/modules/operator-bot/polling";
+import { pollSupplierReplies } from "@/modules/purchasing/supplier-reply-poller";
 
 const ONCE_FLAG = "--once";
+
+// Supplier reply polling cadence: every 5 minutes regardless of the
+// (much faster) main loop. We track it in-process; on worker restart
+// we re-poll immediately, which is fine — the poller is idempotent.
+const SUPPLIER_REPLY_POLL_INTERVAL_MS = 5 * 60 * 1000;
+let lastSupplierReplyPollAt = 0;
 function sleep(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -17,6 +24,20 @@ function parseNumber(value: string | undefined, fallback: number) {
 async function runOnce(batchSize: number) {
   const processed = await runPendingJobs(batchSize);
   await pollInboundBotChannels();
+
+  const now = Date.now();
+  if (now - lastSupplierReplyPollAt >= SUPPLIER_REPLY_POLL_INTERVAL_MS) {
+    lastSupplierReplyPollAt = now;
+    try {
+      const replies = await pollSupplierReplies();
+      if (replies > 0) {
+        console.info(`[stockpilot-worker] supplier replies handled: ${replies}`);
+      }
+    } catch (error) {
+      console.error("[stockpilot-worker] supplier reply poll failed", error);
+    }
+  }
+
   console.info(`[stockpilot-worker] processed ${processed} queued jobs`);
   return processed;
 }
