@@ -218,6 +218,14 @@ export class GmailEmailProvider
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      // Google's 'invalid_grant' means the refresh token is dead —
+      // the user revoked access or the token aged out. Give them a
+      // clear reconnect instruction rather than a cryptic 400 body.
+      if (text.includes("invalid_grant") || res.status === 400) {
+        throw new Error(
+          "Gmail access was revoked. Go to Settings → Channels → Gmail and reconnect."
+        );
+      }
       throw new Error(`Gmail token refresh failed (${res.status}): ${text}`);
     }
 

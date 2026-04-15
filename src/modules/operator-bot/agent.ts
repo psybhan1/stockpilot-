@@ -219,6 +219,24 @@ const TOOLS: ToolSchema[] = [
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "list_pending_orders",
+      description:
+        "List every purchase order that's currently AWAITING_APPROVAL, APPROVED, or SENT (not yet delivered) for this location. Use when the user asks 'what's on order', 'anything in flight', 'show me pending orders'.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mark_order_delivered",
+      description:
+        "Mark the most recent SENT purchase order as DELIVERED. Use when the user says 'the milk order arrived', 'FreshCo just delivered', 'got the package', etc. Increments stock for every line in the PO.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
@@ -517,6 +535,98 @@ async function executeTool(
       };
     }
 
+    case "list_pending_orders": {
+      const pos = await db.purchaseOrder.findMany({
+        where: {
+          locationId: ctx.locationId,
+          status: {
+            in: [
+              PurchaseOrderStatus.AWAITING_APPROVAL,
+              PurchaseOrderStatus.DRAFT,
+              PurchaseOrderStatus.APPROVED,
+              PurchaseOrderStatus.SENT,
+              PurchaseOrderStatus.ACKNOWLEDGED,
+            ],
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        select: {
+          id: true,
+          orderNumber: true,
+          status: true,
+          supplier: { select: { name: true } },
+          lines: {
+            select: {
+              inventoryItem: { select: { name: true } },
+              quantityOrdered: true,
+              purchaseUnit: true,
+            },
+          },
+        },
+      });
+      if (pos.length === 0) {
+        return {
+          content: "No pending orders.",
+          finalReply: "No orders in flight.",
+        };
+      }
+      const lines = pos.map((po) => {
+        const items = po.lines
+          .map((l) => `${l.inventoryItem.name} ×${l.quantityOrdered}`)
+          .join(", ");
+        return `- ${po.orderNumber} · ${po.status.toLowerCase()} · ${po.supplier.name} · ${items}`;
+      });
+      return { content: lines.join("\n") };
+    }
+
+    case "mark_order_delivered": {
+      const po = await db.purchaseOrder.findFirst({
+        where: {
+          locationId: ctx.locationId,
+          status: { in: [PurchaseOrderStatus.SENT, PurchaseOrderStatus.ACKNOWLEDGED] },
+        },
+        orderBy: { sentAt: "desc" },
+        include: {
+          supplier: { select: { name: true } },
+          lines: { include: { inventoryItem: true } },
+        },
+      });
+      if (!po) {
+        return {
+          content: "No sent orders awaiting delivery.",
+          finalReply: "👀 Nothing's waiting to be delivered right now.",
+        };
+      }
+
+      // Transition PO + increment stock for each line in one transaction.
+      const summary = await db.$transaction(async (tx) => {
+        await tx.purchaseOrder.update({
+          where: { id: po.id },
+          data: { status: PurchaseOrderStatus.DELIVERED, deliveredAt: new Date() },
+        });
+        const stockUpdates: string[] = [];
+        for (const line of po.lines) {
+          const newStock = line.inventoryItem.stockOnHandBase + line.expectedQuantityBase;
+          await tx.inventoryItem.update({
+            where: { id: line.inventoryItem.id },
+            data: { stockOnHandBase: newStock },
+          });
+          stockUpdates.push(
+            `${line.inventoryItem.name}: ${line.inventoryItem.stockOnHandBase} → ${newStock}`
+          );
+        }
+        return stockUpdates;
+      });
+
+      return {
+        content: `Marked ${po.orderNumber} delivered; stock updated: ${summary.join("; ")}`,
+        finalReply: `📦 *${po.orderNumber}* delivered from *${po.supplier.name}*.\nStock updated: ${summary.join(", ")}.`,
+        purchaseOrderId: po.id,
+        orderNumber: po.orderNumber,
+      };
+    }
+
     case "cancel_recent_order": {
       const recent = await db.purchaseOrder.findFirst({
         where: {
@@ -647,7 +757,16 @@ User: "approve"
 You (after calling approve_recent_order): "✅ PO-2026-0412 sent to FreshCo."
 
 User: "5 mli coconut syrup"
-You: "Coconut syrup is currently at 5 ml, par is 3 ml — already above par. Want me to raise the par or place a manual order anyway?"`;
+You: "Coconut syrup is currently at 5 ml, par is 3 ml — already above par. Want me to raise the par or place a manual order anyway?"
+
+User: "order oat milk and coconut syrup"
+You (call place_restock_order TWICE, once per item, then summarise): "📋 Drafted 2 orders — PO-2026-0412 for 10 L oat milk from FreshCo, PO-2026-0413 for 500 ml coconut syrup from psybhan. Tap Approve on each."
+
+User: "the milk came in"
+You (call mark_order_delivered): "📦 PO-2026-0412 delivered from FreshCo. Oat milk stock: 2000 → 12000 ml."
+
+User: "what's on order"
+You (call list_pending_orders): "2 in flight: PO-2026-0412 (sent, FreshCo, oat milk ×1), PO-2026-0413 (awaiting approval, psybhan, coconut syrup ×1)."`;
 
 // ── Groq client ───────────────────────────────────────────────────────────────
 type GroqToolCall = {
