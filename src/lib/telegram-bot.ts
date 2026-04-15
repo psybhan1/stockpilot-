@@ -124,6 +124,24 @@ export async function sendTelegramMessage(
   };
 }
 
+/**
+ * Shows a "typing…" indicator in the Telegram chat for up to 5 seconds.
+ * Helpful when a downstream call (supplier dispatch, agent tool) is
+ * going to take more than ~1s — gives the user immediate feedback
+ * that we saw their message.
+ */
+export async function sendTelegramTyping(chatId: string) {
+  if (!env.TELEGRAM_BOT_TOKEN) return;
+  await fetch(
+    `${env.TELEGRAM_BOT_API_BASE_URL.replace(/\/$/, "")}/bot${env.TELEGRAM_BOT_TOKEN}/sendChatAction`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, action: "typing" }),
+    }
+  ).catch(() => null);
+}
+
 /** Removes the loading spinner on an inline button after it's tapped. */
 export async function answerCallbackQuery(
   callbackQueryId: string,

@@ -7,6 +7,7 @@ import {
   editTelegramMessage,
   isValidTelegramWebhook,
   sendTelegramMessage,
+  sendTelegramTyping,
   type InlineKeyboard,
 } from "@/lib/telegram-bot";
 import {
@@ -131,6 +132,11 @@ export async function POST(request: Request) {
     const data = cb.data ?? "";
     const cbChatId = cb.message?.chat?.id;
     const cbMessageId = cb.message?.message_id;
+
+    // Show a typing indicator in the chat — approve-and-dispatch can
+    // take a second or two (supplier email send), so give the user
+    // immediate feedback that the tap registered.
+    if (cbChatId) void sendTelegramTyping(String(cbChatId));
 
     const result = await handleTelegramCallback(data, {
       chatId: cbChatId ? String(cbChatId) : "",

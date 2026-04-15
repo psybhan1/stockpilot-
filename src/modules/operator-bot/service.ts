@@ -1167,19 +1167,55 @@ export async function approveAndDispatchPurchaseOrder(input: {
     };
   }
 
-  // Transition to APPROVED (or keep if already APPROVED for retry).
+  // Transition to APPROVED with a CONDITIONAL update so a concurrent
+  // double-tap can't run through this block twice. Prisma's updateMany
+  // returns the count so we know whether we claimed the transition
+  // or lost the race. If we lost, re-read the PO and fall through —
+  // whoever won will dispatch.
   if (
     po.status === PurchaseOrderStatus.DRAFT ||
     po.status === PurchaseOrderStatus.AWAITING_APPROVAL
   ) {
-    await db.purchaseOrder.update({
-      where: { id: po.id },
+    const { count } = await db.purchaseOrder.updateMany({
+      where: {
+        id: po.id,
+        // Only transition from the states we saw above, and only once.
+        status: {
+          in: [PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.AWAITING_APPROVAL],
+        },
+      },
       data: {
         status: PurchaseOrderStatus.APPROVED,
         approvedAt: new Date(),
         approvedById: input.userId ?? undefined,
       },
     });
+    if (count === 0) {
+      // Someone else already approved — return the current state instead
+      // of racing into a second dispatch.
+      const fresh = await db.purchaseOrder.findUnique({
+        where: { id: po.id },
+        select: { status: true, orderNumber: true, supplier: { select: { name: true } } },
+      });
+      return {
+        ok: fresh?.status === PurchaseOrderStatus.SENT,
+        status: fresh?.status ?? PurchaseOrderStatus.APPROVED,
+        orderNumber: fresh?.orderNumber ?? po.orderNumber,
+        supplierName: fresh?.supplier?.name ?? po.supplier.name,
+        reason: "Already being processed.",
+      };
+    }
+  } else if (po.status === PurchaseOrderStatus.APPROVED) {
+    // Already approved — retry path. Fall through to dispatch.
+  } else {
+    // Shouldn't happen given earlier guards, but handle defensively.
+    return {
+      ok: false,
+      status: po.status,
+      orderNumber: po.orderNumber,
+      supplierName: po.supplier.name,
+      reason: `Can't dispatch from ${po.status.toLowerCase()}.`,
+    };
   }
 
   // Primary line drives the dispatch template — the bot only creates
@@ -1299,13 +1335,21 @@ async function dispatchBotPurchaseOrder(input: {
         throw new Error("Supplier email is missing for this order.");
       }
 
-      const sendResult = await supplierOrderProvider.sendApprovedOrder({
-        recipient: input.supplier.email,
-        subject: draft?.subject ?? `PO ${currentPurchaseOrder.orderNumber} from StockPilot`,
-        body:
-          draft?.body ??
-          `Please confirm ${line.quantity} ${line.unit} of ${line.description}.`,
-      });
+      // Retry transient email-send failures with exponential backoff.
+      // Most provider flakiness is rate-limit or DNS blips that clear
+      // in a few hundred ms. 3 attempts total: 0ms, 400ms, 1200ms.
+      const sendResult = await withBackoff(
+        () =>
+          supplierOrderProvider.sendApprovedOrder({
+            recipient: input.supplier.email!,
+            subject:
+              draft?.subject ?? `PO ${currentPurchaseOrder.orderNumber} from StockPilot`,
+            body:
+              draft?.body ??
+              `Please confirm ${line.quantity} ${line.unit} of ${line.description}.`,
+          }),
+        { attempts: 3, baseDelayMs: 400 }
+      );
 
       await db.$transaction(async (tx) => {
         await tx.purchaseOrder.update({
@@ -1656,6 +1700,28 @@ function mapPurchaseOrderReplyScenario(input: {
   }
 
   return "restock_order_ready";
+}
+
+/**
+ * Tiny exponential-backoff retry for transient network / rate-limit
+ * blips. Throws the last error after all attempts.
+ */
+async function withBackoff<T>(
+  fn: () => Promise<T>,
+  opts: { attempts: number; baseDelayMs: number }
+): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < opts.attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i === opts.attempts - 1) break;
+      const delay = opts.baseDelayMs * Math.pow(3, i);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
 }
 
 function nextOrderNumber() {
