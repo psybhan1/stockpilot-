@@ -15,7 +15,7 @@ import { db } from "@/lib/db";
 import { createAuditLogTx } from "@/lib/audit";
 import { canCancelPurchaseOrder } from "@/modules/purchasing/lifecycle";
 import { approveAndDispatchPurchaseOrder } from "@/modules/operator-bot/service";
-import { isRealEmailProviderConfigured } from "@/providers/email/provider-status";
+import { describeEmailPathForLocation } from "@/providers/email/provider-status";
 import type { InlineKeyboard } from "@/lib/telegram-bot";
 
 export type CallbackResult = {
@@ -88,19 +88,36 @@ async function approvePurchaseOrderFromBot(
 
   if (result.status === PurchaseOrderStatus.SENT) {
     // Was dispatch actually performed, or did the console/mock email
-    // provider just simulate it? Be honest with the user — don't
-    // claim the supplier got anything if no real email went out.
-    const realProvider = isRealEmailProviderConfigured();
+    // provider just simulate it? Check the location's actual email
+    // path — Gmail-connected locations count as real, otherwise fall
+    // back to global Resend config.
     const supplierOrderingMode = result.supplierOrderingMode;
 
-    if (!realProvider && supplierOrderingMode === SupplierOrderingMode.EMAIL) {
+    if (supplierOrderingMode === SupplierOrderingMode.EMAIL) {
+      const path = await describeEmailPathForLocation(result.locationId);
+      if (path.kind === "none") {
+        return {
+          ok: true,
+          toast: "Approved (test mode)",
+          editText:
+            `✅ *${result.orderNumber}* approved.\n\n` +
+            `⚠ *No email provider:* *${result.supplierName}* did not receive a real order. ` +
+            `Go to *Settings → Channels → Gmail* and connect your Gmail account to send real supplier emails for free.`,
+          editKeyboard: null,
+        };
+      }
+      if (path.kind === "gmail") {
+        return {
+          ok: true,
+          toast: "Sent to supplier",
+          editText: `✅ *${result.orderNumber}* sent to *${result.supplierName}* from *${path.from}*.`,
+          editKeyboard: null,
+        };
+      }
       return {
         ok: true,
-        toast: "Approved (test mode)",
-        editText:
-          `✅ *${result.orderNumber}* approved.\n\n` +
-          `⚠ *Test mode:* the email provider isn't configured, so *${result.supplierName}* did not receive a real order. ` +
-          `Go to *Settings → Integrations → Email* to wire Resend before going live.`,
+        toast: "Sent to supplier",
+        editText: `✅ *${result.orderNumber}* approved and sent to *${result.supplierName}*.`,
         editKeyboard: null,
       };
     }

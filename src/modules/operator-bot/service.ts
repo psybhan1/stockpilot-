@@ -40,7 +40,10 @@ import { startAddRecipe } from "@/modules/operator-bot/workflows/add-recipe";
 import { startUpdateItem } from "@/modules/operator-bot/workflows/update-item";
 import { getAiProvider } from "@/providers/ai-provider";
 import { getBotLanguageProvider } from "@/providers/bot-language-provider";
-import { getSupplierOrderProvider } from "@/providers/supplier-order-provider";
+import {
+  getSupplierOrderProvider,
+  getSupplierOrderProviderForLocation,
+} from "@/providers/supplier-order-provider";
 import { env } from "@/lib/env";
 
 export type ManagerBotChannel = "WHATSAPP" | "TELEGRAM";
@@ -1123,6 +1126,7 @@ export type ApproveAndDispatchResult = {
   orderNumber: string;
   supplierName: string;
   supplierOrderingMode: SupplierOrderingMode;
+  locationId: string;
   reason?: string;
 };
 
@@ -1145,6 +1149,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
       orderNumber: "",
       supplierName: "",
       supplierOrderingMode: SupplierOrderingMode.EMAIL,
+      locationId: "",
       reason: "Order not found.",
     };
   }
@@ -1156,6 +1161,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
       orderNumber: po.orderNumber,
       supplierName: po.supplier.name,
       supplierOrderingMode: po.supplier.orderingMode,
+      locationId: po.locationId,
       reason: "Already sent.",
     };
   }
@@ -1167,6 +1173,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
       orderNumber: po.orderNumber,
       supplierName: po.supplier.name,
       supplierOrderingMode: po.supplier.orderingMode,
+      locationId: po.locationId,
       reason: "Order was cancelled.",
     };
   }
@@ -1207,6 +1214,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
         orderNumber: fresh?.orderNumber ?? po.orderNumber,
         supplierName: fresh?.supplier?.name ?? po.supplier.name,
         supplierOrderingMode: po.supplier.orderingMode,
+        locationId: po.locationId,
         reason: "Already being processed.",
       };
     }
@@ -1220,6 +1228,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
       orderNumber: po.orderNumber,
       supplierName: po.supplier.name,
       supplierOrderingMode: po.supplier.orderingMode,
+      locationId: po.locationId,
       reason: `Can't dispatch from ${po.status.toLowerCase()}.`,
     };
   }
@@ -1238,6 +1247,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
       orderNumber: po.orderNumber,
       supplierName: po.supplier.name,
       supplierOrderingMode: po.supplier.orderingMode,
+      locationId: po.locationId,
       reason: "Order had no line items.",
     };
   }
@@ -1269,6 +1279,7 @@ export async function approveAndDispatchPurchaseOrder(input: {
     orderNumber: result.orderNumber,
     supplierName: po.supplier.name,
     supplierOrderingMode: po.supplier.orderingMode,
+    locationId: po.locationId,
     reason: result.status === PurchaseOrderStatus.FAILED ? reason : undefined,
   };
 }
@@ -1291,7 +1302,13 @@ async function dispatchBotPurchaseOrder(input: {
   reportedOnHandBase: number;
   parLevelBase: number;
 }) {
-  const supplierOrderProvider = getSupplierOrderProvider();
+  // Per-location provider: picks up the business's own connected
+  // Gmail (free, uses their own quota) before falling through to
+  // Resend / console. Each email therefore goes out *from* the
+  // business's real address, not a generic StockPilot one.
+  const supplierOrderProvider = await getSupplierOrderProviderForLocation(
+    input.locationId
+  );
   const ai = getAiProvider();
 
   const line = {

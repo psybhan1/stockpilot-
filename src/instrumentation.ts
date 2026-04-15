@@ -39,29 +39,47 @@ export async function register() {
     }
   })();
 
-  // 2) LOUD warning if the email provider is still the console/mock
-  //    one in production — means bot-approved POs will say 'sent' but
-  //    no supplier will actually receive anything. Easy to miss.
+  // 2) LOUD warning if neither global email provider is configured
+  //    AND no location has a Gmail channel connected. Means any bot-
+  //    approved PO at a naked location will fake the send. Each
+  //    location can still opt into Gmail individually via the
+  //    Settings → Channels → Gmail flow — that's the free path.
   void (async () => {
     try {
-      const { isRealEmailProviderConfigured, emailProviderName } =
-        await import("@/providers/email/provider-status");
-      if (!isRealEmailProviderConfigured()) {
+      const [{ isRealEmailProviderConfigured, emailProviderName }, { db }] =
+        await Promise.all([
+          import("@/providers/email/provider-status"),
+          import("@/lib/db"),
+        ]);
+      if (isRealEmailProviderConfigured()) return; // Resend is set — fine
+
+      const gmailCount = await db.locationChannel.count({
+        where: { channel: "EMAIL_GMAIL", enabled: true },
+      });
+
+      if (gmailCount > 0) {
         // eslint-disable-next-line no-console
-        console.warn(
-          "\n" +
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-            `⚠  EMAIL PROVIDER IS IN TEST MODE (${emailProviderName()})\n` +
-            "   Bot-approved POs will flip to SENT in the DB, but no\n" +
-            "   real email will reach suppliers. Fix:\n" +
-            "     railway variables --service stockpilot set \\\n" +
-            "       DEFAULT_EMAIL_PROVIDER=resend RESEND_API_KEY=re_...\n" +
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        console.log(
+          `[email] No global provider, but ${gmailCount} location(s) have Gmail connected. Locations without Gmail will simulate sends.`
         );
+        return;
       }
+
+      // eslint-disable-next-line no-console
+      console.warn(
+        "\n" +
+          "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+          `⚠  NO EMAIL PATH CONFIGURED (global: ${emailProviderName()})\n` +
+          "   Bot-approved POs will flip to SENT in the DB, but no\n" +
+          "   real email will reach suppliers. Two options:\n" +
+          "     A) FREE (recommended): each location connects their\n" +
+          "        Gmail under Settings → Channels → Gmail.\n" +
+          "     B) Global fallback: set DEFAULT_EMAIL_PROVIDER=resend\n" +
+          "        and RESEND_API_KEY=re_... on Railway.\n" +
+          "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+      );
     } catch {
-      // provider-status is pure — if this throws something really odd,
-      // just skip. Nothing actionable.
+      /* ignore — instrumentation must never crash boot */
     }
   })();
 }

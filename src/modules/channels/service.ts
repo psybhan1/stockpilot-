@@ -326,6 +326,30 @@ export async function getGmailCredentials(locationId: string): Promise<GmailCred
   }
 }
 
+/**
+ * Persist a freshly-refreshed Gmail access token back to the channel.
+ * Called by GmailEmailProvider after exchanging the refresh token for
+ * a new short-lived access token — so the next send doesn't have to
+ * refresh again immediately.
+ */
+export async function updateGmailAccessToken(
+  locationId: string,
+  patch: { accessToken: string; expiresAt: number }
+) {
+  const existing = await getGmailCredentials(locationId);
+  if (!existing) return;
+  const next: GmailCredentials = {
+    ...existing,
+    accessToken: patch.accessToken,
+    expiresAt: patch.expiresAt,
+  };
+  const credentialsEncrypted = encryptJson(next as unknown as Record<string, unknown>);
+  await db.locationChannel.update({
+    where: { locationId_channel: { locationId, channel: ChannelType.EMAIL_GMAIL } },
+    data: { credentialsEncrypted },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Generic channel status query
 // ---------------------------------------------------------------------------
