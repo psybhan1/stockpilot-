@@ -28,7 +28,7 @@ export type AmazonSearchResult = {
 
 export async function addItemsToAmazonCart(
   page: Page,
-  items: Array<{ query: string; quantity: number }>,
+  items: Array<{ query: string; quantity: number; directUrl?: string | null }>,
   options?: { domain?: string }
 ): Promise<{
   results: AmazonSearchResult[];
@@ -40,47 +40,57 @@ export async function addItemsToAmazonCart(
 
   for (const item of items) {
     try {
-      // Go to Amazon and search.
-      await page.goto(`${domain}/s?k=${encodeURIComponent(item.query)}`, {
-        waitUntil: "domcontentloaded",
-        timeout: 20000,
-      });
-      await page.waitForSelector('[data-component-type="s-search-result"]', {
-        timeout: 10000,
-      }).catch(() => null);
-
-      screenshots.push(await takeStepScreenshot(page, `search-${item.query}`));
-
-      // Click the first organic result's title link.
-      const firstResult = await page.$(
-        '[data-component-type="s-search-result"] h2 a'
-      );
-      if (!firstResult) {
-        results.push({
-          query: item.query,
-          added: false,
-          reason: "No search results found",
+      // If we have the exact product URL the user pasted, go straight
+      // there — same SKU, no risk of search picking a similar product.
+      if (item.directUrl) {
+        await page.goto(item.directUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 20000,
         });
-        continue;
-      }
-
-      // Safety check: make sure we're clicking a product link, not a
-      // sponsored "Buy now" button.
-      const linkText =
-        (await firstResult.evaluate((el) => el.textContent ?? "")) ?? "";
-      if (isForbiddenButton(linkText)) {
-        results.push({
-          query: item.query,
-          added: false,
-          reason: `Safety-blocked: link text "${linkText.slice(0, 60)}" looks like a payment button`,
+        screenshots.push(await takeStepScreenshot(page, `product-direct-${item.query}`));
+      } else {
+        // Search-by-name fallback for legacy POs / non-quick-add flows.
+        await page.goto(`${domain}/s?k=${encodeURIComponent(item.query)}`, {
+          waitUntil: "domcontentloaded",
+          timeout: 20000,
         });
-        continue;
+        await page.waitForSelector('[data-component-type="s-search-result"]', {
+          timeout: 10000,
+        }).catch(() => null);
+
+        screenshots.push(await takeStepScreenshot(page, `search-${item.query}`));
+
+        // Click the first organic result's title link.
+        const firstResult = await page.$(
+          '[data-component-type="s-search-result"] h2 a'
+        );
+        if (!firstResult) {
+          results.push({
+            query: item.query,
+            added: false,
+            reason: "No search results found",
+          });
+          continue;
+        }
+
+        // Safety check: make sure we're clicking a product link, not a
+        // sponsored "Buy now" button.
+        const linkText =
+          (await firstResult.evaluate((el) => el.textContent ?? "")) ?? "";
+        if (isForbiddenButton(linkText)) {
+          results.push({
+            query: item.query,
+            added: false,
+            reason: `Safety-blocked: link text "${linkText.slice(0, 60)}" looks like a payment button`,
+          });
+          continue;
+        }
+
+        await firstResult.click();
+        await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => null);
+
+        screenshots.push(await takeStepScreenshot(page, `product-${item.query}`));
       }
-
-      await firstResult.click();
-      await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => null);
-
-      screenshots.push(await takeStepScreenshot(page, `product-${item.query}`));
 
       // Set quantity if > 1.
       if (item.quantity > 1) {

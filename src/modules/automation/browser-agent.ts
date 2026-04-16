@@ -73,6 +73,11 @@ export async function runWebsiteOrderAgent(
     const searchTerms = po.lines.map((line) => ({
       query: line.description || line.inventoryItem.name,
       quantity: line.quantityOrdered,
+      // When the user pasted a product URL via Telegram quick-add,
+      // the bot stored it on the line (`Product URL: <url>`). Prefer
+      // direct navigation to that exact product over a name-search,
+      // which can match a similarly-named but different SKU.
+      directUrl: extractLineProductUrl(line.notes),
     }));
 
     // Tell the manager we're working on it — keeps the conversation
@@ -403,4 +408,19 @@ function fail(reason: string): BrowserAgentResult {
     summary: reason,
     error: reason,
   };
+}
+
+/**
+ * Pulls a product URL out of a PO-line `notes` field. The bot writes
+ * "Product URL: https://..." when a user pastes a link in Telegram;
+ * we tolerate extra surrounding prose (managers may edit the note)
+ * and any whitespace / trailing punctuation.
+ */
+export function extractLineProductUrl(notes: string | null | undefined): string | null {
+  if (!notes) return null;
+  const match = notes.match(/Product URL:\s*(https?:\/\/\S+)/i);
+  if (!match) return null;
+  // Strip trailing sentence punctuation that often follows a URL when
+  // the manager added prose after the line.
+  return match[1].replace(/[.,;!?)\]]+$/g, "");
 }

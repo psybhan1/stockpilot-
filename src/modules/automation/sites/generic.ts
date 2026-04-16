@@ -45,7 +45,7 @@ const ADD_TO_CART_SELECTORS = [
 export async function addItemsToGenericSite(
   page: Page,
   siteUrl: string,
-  items: Array<{ query: string; quantity: number }>,
+  items: Array<{ query: string; quantity: number; directUrl?: string | null }>,
 ): Promise<{
   results: GenericSearchResult[];
   screenshots: Array<{ stepName: string; screenshot: Buffer }>;
@@ -53,48 +53,68 @@ export async function addItemsToGenericSite(
   const screenshots: Array<{ stepName: string; screenshot: Buffer }> = [];
   const results: GenericSearchResult[] = [];
 
-  // Navigate to the supplier site.
-  try {
-    await page.goto(siteUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 20000,
-    });
-    screenshots.push(await takeStepScreenshot(page, "landing"));
-  } catch (err) {
-    screenshots.push(await takeStepScreenshot(page, "landing-error"));
-    results.push({
-      query: "(site load)",
-      added: false,
-      reason: `Couldn't load ${siteUrl}: ${err instanceof Error ? err.message.slice(0, 100) : "unknown"}`,
-    });
-    return { results, screenshots };
+  // If every item has a direct URL we can skip the landing page and
+  // jump straight to each product. Otherwise load the landing once
+  // so we can re-use the search box for items that lack URLs.
+  const allDirect = items.length > 0 && items.every((i) => Boolean(i.directUrl));
+  if (!allDirect) {
+    try {
+      await page.goto(siteUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 20000,
+      });
+      screenshots.push(await takeStepScreenshot(page, "landing"));
+    } catch (err) {
+      screenshots.push(await takeStepScreenshot(page, "landing-error"));
+      results.push({
+        query: "(site load)",
+        added: false,
+        reason: `Couldn't load ${siteUrl}: ${err instanceof Error ? err.message.slice(0, 100) : "unknown"}`,
+      });
+      return { results, screenshots };
+    }
   }
 
   for (const item of items) {
     try {
-      // Try to find a search input.
-      let searchInput = null;
-      for (const sel of SEARCH_INPUT_SELECTORS) {
-        searchInput = await page.$(sel);
-        if (searchInput) break;
-      }
-      if (!searchInput) {
-        results.push({
-          query: item.query,
-          added: false,
-          reason: "No search box found on this site. Try adding the item manually.",
+      // Direct-URL fast path: navigate to the user's exact product
+      // URL and try to add to cart from there. If the site doesn't
+      // expose a recognisable Add-to-Cart button we still log a
+      // partial-success so the manager has the right page screenshot
+      // to finish manually.
+      if (item.directUrl) {
+        await page.goto(item.directUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 20000,
         });
-        screenshots.push(await takeStepScreenshot(page, `no-search-${item.query}`));
-        continue;
+        screenshots.push(await takeStepScreenshot(page, `product-direct-${item.query}`));
+        // Fall through to the Add-to-Cart-button-finder below.
+      } else {
+        // Search-by-name path: try to find a search input on the
+        // landing page.
+        let searchInput = null;
+        for (const sel of SEARCH_INPUT_SELECTORS) {
+          searchInput = await page.$(sel);
+          if (searchInput) break;
+        }
+        if (!searchInput) {
+          results.push({
+            query: item.query,
+            added: false,
+            reason: "No search box found on this site. Try adding the item manually.",
+          });
+          screenshots.push(await takeStepScreenshot(page, `no-search-${item.query}`));
+          continue;
+        }
+
+        // Clear + type.
+        await searchInput.click({ clickCount: 3 });
+        await page.keyboard.type(item.query, { delay: 30 });
+        await page.keyboard.press("Enter");
+        await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null);
+
+        screenshots.push(await takeStepScreenshot(page, `search-${item.query}`));
       }
-
-      // Clear + type.
-      await searchInput.click({ clickCount: 3 });
-      await page.keyboard.type(item.query, { delay: 30 });
-      await page.keyboard.press("Enter");
-      await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null);
-
-      screenshots.push(await takeStepScreenshot(page, `search-${item.query}`));
 
       // Try to find + click an "Add to Cart" button. This is highly
       // site-specific so we try many common patterns.

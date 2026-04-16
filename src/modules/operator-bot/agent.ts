@@ -36,6 +36,43 @@ export type AgentContext = {
   conversation: Array<{ role: "user" | "assistant"; content: string }>;
 };
 
+// ── URL helpers ──────────────────────────────────────────────────────────
+// The model is instructed to pass `website_url` exactly as the user
+// pasted it, but in practice it sometimes strips the protocol, wraps
+// the URL in markdown, or appends trailing punctuation from the chat.
+// These helpers reconcile that into (a) a clean full URL we save on
+// the PO line for direct navigation, and (b) a bare hostname root
+// stored on Supplier.website for the search-by-name fallback.
+
+export function normalizeProductUrl(raw: string): string {
+  let url = raw.trim();
+  if (!url) return "";
+  // Strip markdown ` and < > wrappers, trailing punctuation often
+  // attached when a URL ends a sentence.
+  url = url.replace(/^[<`'"]+|[>`'".,;!?)\]]+$/g, "");
+  // Add scheme if missing — model output drops `https://` ~30% of
+  // the time. URL constructor needs one to parse hostname.
+  if (!/^[a-z]+:\/\//i.test(url)) {
+    url = `https://${url}`;
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+export function toHostnameRoot(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "";
+  }
+}
+
 // ── Tool schemas (OpenAI-compatible, Groq understands this format) ───────────
 type ToolSchema = {
   type: "function";
@@ -235,13 +272,13 @@ const TOOLS: ToolSchema[] = [
     function: {
       name: "quick_add_and_order",
       description:
-        "FAST PATH: Create a new inventory item with sensible defaults AND immediately draft a purchase order for it — all in one call, no questionnaire. Use when the user says 'order this', 'add this to my cart', 'we need this' + a product name/link, and the item does NOT already exist in LIVE DATA. This skips the multi-step add-item wizard entirely.\n\nDo NOT use start_add_item_flow when the user's intent is to ORDER something — use this instead.",
+        "FAST PATH for ordering from a website URL: creates/reuses the inventory item, creates/reuses the supplier (and *updates* its website + WEBSITE ordering mode if a URL is given), then drafts a purchase order — all in one call, no questionnaire.\n\nUSE THIS for ANY message that contains a product URL (amazon.com, costco.com, amzn.to, a.co, etc.) AND an order intent ('order this', 'add this to my cart', 'we need this', 'get me this', 'buy this'). This is true *whether or not* the item already exists in LIVE DATA — the tool is idempotent and will reuse existing rows. Do NOT call place_restock_order for URL messages, because it has no website_url field and the URL would be lost. Do NOT call start_add_item_flow for URL messages either.",
       parameters: {
         type: "object",
         properties: {
           item_name: {
             type: "string",
-            description: "Product name (e.g. 'Espresso Machine Cleaner', 'Urnex Cafiza'). Extract from the URL preview or user's message.",
+            description: "Product name (e.g. 'Espresso Machine Cleaner', 'Urnex Cafiza'). Extract from the URL path (Amazon URLs usually contain the product name as dash-separated words like '/Urnex-Cafiza-Espresso-Machine-Cleaning-Tablets/dp/...') or from what the user typed. If the URL is a shortlink (amzn.to, a.co) and the user didn't name the product, use a short generic label from context (e.g. 'Amazon item' or 'Espresso cleaner from Amazon').",
           },
           category: {
             type: "string",
@@ -253,11 +290,11 @@ const TOOLS: ToolSchema[] = [
           },
           supplier_name: {
             type: "string",
-            description: "Supplier name (e.g. 'Amazon', 'Costco'). If user pasted a URL, use the site name. If no supplier mentioned, pass empty string.",
+            description: "Supplier name. If user pasted a URL, derive it from the hostname: amazon.com/amzn.to/a.co → 'Amazon', costco.com → 'Costco', walmart.com → 'Walmart', etc. NEVER pass an empty string when website_url is set — the URL implies a supplier.",
           },
           website_url: {
             type: "string",
-            description: "Product URL if the user pasted one. Empty string if not.",
+            description: "Product URL exactly as the user pasted it (full https://... including any query string). Empty string only if the user didn't paste a URL.",
           },
         },
         required: ["item_name", "category", "quantity"],
@@ -296,7 +333,7 @@ type ToolResult = {
   orderNumber?: string | null;
 };
 
-async function executeTool(
+export async function executeTool(
   name: string,
   args: Record<string, unknown>,
   ctx: AgentContext
@@ -453,7 +490,13 @@ async function executeTool(
       const category = String(args.category ?? "SUPPLY").toUpperCase();
       const quantity = Math.max(1, Number(args.quantity ?? 1));
       const supplierName = String(args.supplier_name ?? "").trim();
-      const websiteUrl = String(args.website_url ?? "").trim();
+      const websiteUrl = normalizeProductUrl(String(args.website_url ?? ""));
+      // Supplier.website holds the bare hostname root so the browser
+      // adapter can build search URLs like `${website}/s?k=...` without
+      // tacking the search path onto a deep product URL. The full
+      // pasted URL is preserved on the PO line so the agent can
+      // navigate directly to that product page when present.
+      const supplierWebsiteRoot = websiteUrl ? toHostnameRoot(websiteUrl) : "";
       if (!itemName) return { content: "ERROR: item_name required." };
 
       try {
@@ -488,7 +531,8 @@ async function executeTool(
           });
         }
 
-        // 2. Create/find supplier if provided.
+        // 2. Create/find supplier. Idempotent: re-pasting the same URL
+        // for the same item must NOT crash — it's how users iterate.
         let supplierId: string | null = null;
         if (supplierName) {
           const existing = await db.supplier.findFirst({
@@ -496,31 +540,62 @@ async function executeTool(
               locationId: ctx.locationId,
               name: { equals: supplierName, mode: "insensitive" },
             },
-            select: { id: true },
+            select: { id: true, website: true, orderingMode: true },
           });
           if (existing) {
             supplierId = existing.id;
+            // Backfill website + flip to WEBSITE mode when the user
+            // attaches a URL to a supplier we previously created with
+            // no URL (or in MANUAL mode). Without this, the second
+            // paste of the same Amazon link silently keeps the supplier
+            // in MANUAL mode and the browser-agent dispatch bails out
+            // with "Supplier has no website URL configured".
+            const existingWebsiteIsRoot =
+              !!existing.website && /^https?:\/\/[^/]+\/?$/i.test(existing.website);
+            if (
+              websiteUrl &&
+              (!existing.website ||
+                !existingWebsiteIsRoot ||
+                existing.orderingMode !== "WEBSITE")
+            ) {
+              await db.supplier.update({
+                where: { id: existing.id },
+                data: {
+                  website: supplierWebsiteRoot,
+                  orderingMode: "WEBSITE",
+                },
+              });
+            }
           } else {
             const created = await db.supplier.create({
               data: {
                 locationId: ctx.locationId,
                 name: supplierName,
                 orderingMode: websiteUrl ? "WEBSITE" : "MANUAL",
-                website: websiteUrl || null,
+                website: supplierWebsiteRoot || null,
                 leadTimeDays: 3,
               },
             });
             supplierId = created.id;
           }
-          // Link supplier to item.
-          await db.supplierItem.create({
-            data: {
+          // Link supplier ↔ item via the unique (supplierId, inventoryItemId)
+          // pair. upsert = idempotent: second call is a no-op instead of
+          // a P2002 unique-constraint crash that aborts the whole flow.
+          await db.supplierItem.upsert({
+            where: {
+              supplierId_inventoryItemId: {
+                supplierId,
+                inventoryItemId: newItem.id,
+              },
+            },
+            create: {
               supplierId,
               inventoryItemId: newItem.id,
               packSizeBase: 1,
               minimumOrderQuantity: 1,
               preferred: true,
             },
+            update: { preferred: true },
           });
           await db.inventoryItem.update({
             where: { id: newItem.id },
@@ -528,17 +603,30 @@ async function executeTool(
           });
         }
 
-        // 3. Create the PO.
+        // 3. Create the PO. PurchaseOrder.supplierId is non-nullable
+        // in the schema, so the no-supplier branch can't draft an
+        // order — we add the item to inventory only and ask the user
+        // who supplies it. The full pasted URL lives on the line
+        // (not the PO header) so the browser agent can navigate
+        // straight to that product page when fulfilling the order
+        // — see browser-agent.ts:extractLineProductUrl.
+        if (!supplierId) {
+          const reply = `✅ Added *${itemName}* to inventory. I can't draft a PO yet — tell me who supplies it (e.g. "Amazon supplies it") and I'll set the rest up.`;
+          return {
+            content: reply,
+            finalReply: reply,
+          };
+        }
+
         const orderNumber = `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
         const po = await db.purchaseOrder.create({
           data: {
             locationId: ctx.locationId,
-            supplierId: supplierId ?? undefined!,
+            supplierId,
             orderNumber,
-            status: supplierId ? "AWAITING_APPROVAL" : "DRAFT",
+            status: "AWAITING_APPROVAL",
             totalLines: 1,
             placedById: ctx.userId,
-            notes: websiteUrl ? `Product URL: ${websiteUrl}` : undefined,
           },
         });
         await db.purchaseOrderLine.create({
@@ -550,20 +638,18 @@ async function executeTool(
             expectedQuantityBase: quantity,
             purchaseUnit: "COUNT",
             packSizeBase: 1,
+            notes: websiteUrl ? `Product URL: ${websiteUrl}` : undefined,
           },
         });
 
-        const supplierLabel = supplierName || "no supplier yet";
         const websiteNote = websiteUrl ? " I'll head to their website to add it to the cart once you approve." : "";
-        const reply = supplierId
-          ? `✅ Added *${itemName}* to inventory + drafted *${orderNumber}* for ${quantity} from *${supplierLabel}*.${websiteNote} Tap Approve to send.`
-          : `✅ Added *${itemName}* to inventory + created draft *${orderNumber}* for ${quantity}. No supplier linked yet — add one in Settings or tell me who supplies it.`;
+        const reply = `✅ Added *${itemName}* to inventory + drafted *${orderNumber}* for ${quantity} from *${supplierName}*.${websiteNote} Tap Approve to send.`;
 
         return {
           content: reply,
           finalReply: reply,
-          purchaseOrderId: supplierId ? po.id : null,
-          orderNumber: supplierId ? orderNumber : null,
+          purchaseOrderId: po.id,
+          orderNumber,
         };
       } catch (err) {
         return {
@@ -896,7 +982,7 @@ const SYSTEM_PROMPT_BASE = `You are StockBuddy — a sharp, concise inventory as
 2. Fuzzy-match items: "grinded coffee"=Ground Coffee, "oat mlk"=Oat Milk, "the syrup"=only syrup in LIVE DATA. If 1 match, use it silently.
 3. Honor user's quantity verbatim. "12 oz" → pass 12 oz. Don't round or override.
 4. yes/approve/ok/👍 → approve_recent_order. no/cancel/nvm/❌ → cancel_recent_order.
-5. URL + "add to cart"/"order this" → call quick_add_and_order (NOT start_add_item_flow). Never ask "what's it for?" on cleaning/packaging supplies.
+5. ANY message containing a URL (https://, http://, amzn.to, a.co, costco.com, etc.) + ANY order intent ("add to cart", "order this", "we need this", "get me", "buy this", "order this for me") → ALWAYS call quick_add_and_order with website_url set. NEVER call place_restock_order for URL messages (it has no website_url field — the URL would be lost). NEVER call start_add_item_flow for URL messages. quick_add_and_order is idempotent — call it even when the item already exists in LIVE DATA. Derive supplier_name from the hostname (amazon.com/amzn.to/a.co → "Amazon", costco.com → "Costco"). Never ask "what's it for?" on cleaning/packaging supplies.
 6. NEVER say tool names, empty placeholders, or "How can I help?". Sound like a colleague.
 7. 1-3 sentences max. Don't repeat yourself.
 
@@ -904,7 +990,9 @@ const SYSTEM_PROMPT_BASE = `You are StockBuddy — a sharp, concise inventory as
 User: "oat milk 2 left" → call place_restock_order, reply: "📋 Drafted PO — 10 L oat milk from FreshCo. Approve?"
 User: "order 12 oz grinded coffee" → fuzzy→Ground Coffee, reply: "📋 12 oz Ground Coffee from BeanCo. Approve?"
 User: "approve" → call approve_recent_order, reply: "✅ Sent to FreshCo."
-User: "add this to my cart https://a.co/..." → call quick_add_and_order with product name from context, reply: "✅ Added + drafted PO. Approve?"
+User: "add this to my cart https://a.co/abc123" → quick_add_and_order(item_name="Amazon item", category="SUPPLY", quantity="1", supplier_name="Amazon", website_url="https://a.co/abc123"). Reply: "✅ Added + drafted PO. Approve?"
+User: "order this https://www.amazon.com/Urnex-Cafiza-Espresso-Cleaning-Tablets/dp/B005YJZE2I" → quick_add_and_order(item_name="Urnex Cafiza Espresso Cleaning Tablets", category="CLEANING", quantity="1", supplier_name="Amazon", website_url="https://www.amazon.com/Urnex-Cafiza-Espresso-Cleaning-Tablets/dp/B005YJZE2I"). Reply: "✅ Added + drafted PO. Approve?"
+User: "get me 3 of these https://www.costco.com/oat-milk.html" (item already exists) → STILL quick_add_and_order(item_name="Oat Milk", category="ALT_DAIRY", quantity="3", supplier_name="Costco", website_url="..."). Reply: "✅ Drafted PO for 3. Approve?"
 User: "what do I need" → list below-par items from LIVE DATA, offer to draft all.
 User: "nvm" → cancel_recent_order, reply: "Cancelled."`;
 
