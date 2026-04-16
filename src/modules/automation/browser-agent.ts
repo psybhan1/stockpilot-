@@ -105,14 +105,45 @@ export async function runWebsiteOrderAgent(
       ).catch(() => {});
     }
 
-    // Launch headless Chromium.
-    const chromium = (await import("@sparticuz/chromium")).default;
+    // Launch headless Chromium using the system-installed binary
+    // (installed via apt in nixpacks.toml). More reliable than
+    // @sparticuz/chromium on Railway because Next.js standalone
+    // mode strips binary assets from node_modules.
     const puppeteer = (await import("puppeteer-core")).default;
 
+    // Find system Chromium — different distros put it in different places.
+    const possiblePaths = [
+      "/usr/bin/chromium",
+      "/usr/bin/chromium-browser",
+      "/usr/bin/google-chrome",
+      "/usr/bin/google-chrome-stable",
+    ];
+    let execPath: string | null = null;
+    const fs = await import("node:fs");
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        execPath = p;
+        break;
+      }
+    }
+    if (!execPath) {
+      throw new Error(
+        "Chromium not found. Install it: add 'chromium' to aptPkgs in nixpacks.toml"
+      );
+    }
+
     browser = await puppeteer.launch({
-      args: chromium.args,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-zygote",
+        "--single-process",
+      ],
       defaultViewport: { width: 1280, height: 900 },
-      executablePath: await chromium.executablePath(),
+      executablePath: execPath,
       headless: true,
     });
 

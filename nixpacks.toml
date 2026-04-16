@@ -1,5 +1,9 @@
 [phases.setup]
+# Install Chromium + all its dependencies from apt. This is more
+# reliable than @sparticuz/chromium on Railway because Next.js
+# standalone mode strips binary assets from node_modules.
 aptPkgs = [
+  "chromium",
   "libnss3", "libatk-bridge2.0-0", "libdrm2", "libxkbcommon0",
   "libgbm1", "libgtk-3-0", "libasound2", "libxshmfence1",
   "libx11-xcb1", "fonts-liberation", "libpango-1.0-0",
@@ -21,5 +25,4 @@ cmds = [
 ]
 
 [start]
-# Diagnose + fix @sparticuz/chromium binary location at startup.
-cmd = "echo '=== Chromium binary check ===' && find / -name 'chromium.br' 2>/dev/null | head -5 && find / -path '*@sparticuz/chromium/bin*' -type d 2>/dev/null | head -5 && ls -la node_modules/@sparticuz/chromium/ 2>/dev/null | head && ls -la .next/standalone/node_modules/@sparticuz/chromium/ 2>/dev/null | head && echo '=== Starting server ===' && node .next/standalone/server.js"
+cmd = "node .next/standalone/server.js"
