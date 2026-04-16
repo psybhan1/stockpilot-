@@ -878,14 +878,15 @@ async function callGroq(messages: GroqMessage[]): Promise<{
       // tool names into user replies and emitted empty placeholder
       // values like "The order number is ``". 70b is boring and
       // disciplined — exactly what this bot needs.
-      // Llama 4 Maverick (128-expert MoE) is dramatically smarter
-      // than Llama 3.3 70B for multi-step reasoning, fuzzy matching,
-      // and natural conversation — still free on Groq. Override with
-      // GROQ_BOT_MODEL if needed.
-      model: process.env.GROQ_BOT_MODEL ?? "meta-llama/llama-4-maverick-17b-128e-instruct",
-      temperature: 0.3, // warm enough to sound human, cool enough to stay grounded
-      top_p: 0.9,
-      max_tokens: 1024, // room for reasoning + tool calls + reply
+      // DeepSeek R1 distill — a genuine reasoning model that thinks
+      // step-by-step before answering, like Claude/o1 but free on
+      // Groq. Slower (~5-8s) but dramatically smarter than Llama
+      // 3.3/4 for ambiguous inputs, multi-step logic, and catching
+      // what the user actually meant. Override with GROQ_BOT_MODEL.
+      model: process.env.GROQ_BOT_MODEL ?? "deepseek-r1-distill-llama-70b",
+      temperature: 0.6, // R1 needs a bit more temperature to reason well
+      top_p: 0.95,
+      max_tokens: 2048, // R1 uses tokens for internal reasoning + final reply
       tools: TOOLS,
       tool_choice: "auto",
       messages,
@@ -1017,6 +1018,15 @@ const TOOL_NAME_PATTERN = /\b(place_restock_order|update_stock_count|list_invent
 function sanitiseReply(raw: string | null, fallback: string): string {
   if (!raw) return fallback;
   let text = raw;
+
+  // DeepSeek R1 wraps its internal reasoning in <think>…</think> tags.
+  // Strip those so the user only sees the final answer.
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  // Sometimes the closing tag is missing; strip from <think> to the
+  // first blank line or end of text as a fallback.
+  if (/<think>/i.test(text)) {
+    text = text.replace(/<think>[\s\S]*/i, "").trim();
+  }
 
   // Empty inline-code placeholders ("the order is ``", "PO-PO-XXXX").
   text = text.replace(/``/g, "");
