@@ -141,7 +141,7 @@ const TOOLS: ToolSchema[] = [
     function: {
       name: "start_add_item_flow",
       description:
-        "Start the structured add-item workflow. Use when the user wants to add a brand-new item to inventory ('we now have X', 'add X to inventory'). The workflow will collect category, unit, par level, pack size, and supplier step-by-step.",
+        "Start the DETAILED add-item workflow (7 questions). ONLY use this when the user EXPLICITLY says they want to set up a new item with full details ('set up oat milk properly', 'configure a new item step by step'). Do NOT use this when the user wants to ORDER something — use quick_add_and_order instead. If the user says 'add to cart', 'order this', 'we need this', 'get this' — that's quick_add_and_order, NOT this tool.",
       parameters: {
         type: "object",
         properties: {
@@ -969,12 +969,12 @@ You (call list_pending_orders): "2 in flight: PO-2026-0412 (sent, FreshCo, oat m
 ## HANDLING LINKS AND PRODUCT URLs
 
 When the user pastes a URL (Amazon, any website) with a message like "add this to my cart", "order this", "can you get this?", "we need this":
-- They want you to ORDER that product. Don't ask what it's for. Don't try to map it to a recipe.
+- They want you to ORDER that product. Don't ask what it's for. Don't start a questionnaire.
 - If the URL preview or message text tells you the product name, use it.
-- If the item exists in LIVE DATA, call place_restock_order.
-- If it DOESN'T exist in LIVE DATA, call start_add_item_flow with the product name so we can add it to inventory first, THEN order it.
-- If the supplier is a WEBSITE-mode supplier, mention that you'll head to the website to add it to their cart.
-- NEVER ask "what do you use X for?" when X is clearly a cleaning product, packaging, or equipment supply. That question only makes sense for food/drink ingredients.
+- If the item EXISTS in LIVE DATA → call place_restock_order.
+- If the item DOESN'T exist → call **quick_add_and_order** (NOT start_add_item_flow!). Pass the product name, category guess, quantity, supplier name from the URL (e.g. "Amazon"), and the URL itself.
+- NEVER call start_add_item_flow when the user's intent is to ORDER or buy something. That tool is ONLY for "set up a new item with full details" explicitly.
+- NEVER ask "what do you use X for?" when X is clearly a cleaning product, packaging, or equipment supply.
 
 ## HANDLING SLOPPY / AMBIGUOUS MESSAGES
 
