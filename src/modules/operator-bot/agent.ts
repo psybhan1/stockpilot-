@@ -80,12 +80,12 @@ const TOOLS: ToolSchema[] = [
         properties: {
           item_id: { type: "string", description: "Inventory item id from LIVE DATA. FUZZY-MATCH the user's wording against item names there: 'grinded coffee' → ground coffee, 'oat mlk' → oat milk, 'espresso' → espresso beans. NEVER ask the user to confirm an obvious match." },
           current_quantity: {
-            type: "number",
+            type: "string",
             description:
               "Current on-hand quantity the user reported, in display units (e.g. '2' if they said '2 left'). 0 if unknown / not mentioned.",
           },
           requested_quantity: {
-            type: "number",
+            type: "string",
             description:
               "OPTIONAL. The exact amount the user wants to ORDER (not what's left). Use the number they spoke, e.g. 12 for 'order 12 oz', 5 for '5 bags'. Omit if the user didn't specify an order quantity.",
           },
@@ -109,7 +109,7 @@ const TOOLS: ToolSchema[] = [
         type: "object",
         properties: {
           item_id: { type: "string", description: "Inventory item id." },
-          new_count: { type: "number", description: "New on-hand count in the item's base unit." },
+          new_count: { type: "string", description: "New on-hand count in the item's base unit." },
           user_confirmed: {
             type: "boolean",
             description:
@@ -204,7 +204,7 @@ const TOOLS: ToolSchema[] = [
         properties: {
           item_id: { type: "string", description: "Inventory item id." },
           new_par_base: {
-            type: "number",
+            type: "string",
             description: "New par level in the item's base unit.",
           },
         },
