@@ -830,6 +830,28 @@ model AgentTask {
   location         Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
   supplier         Supplier?       @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   purchaseOrder    PurchaseOrder?  @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  steps            AgentTaskStep[]
+}
+
+/// Per-step progress log for the browser ordering agent. Each entry
+/// records a single milestone (launch, login, search, add-to-cart,
+/// cart view, etc.) with an optional screenshot blob. The /agent-
+/// tasks/[id] live view polls this table so managers can watch the
+/// agent work in real time instead of waiting for the final Telegram
+/// summary. `sequence` drives deterministic ordering in the UI.
+model AgentTaskStep {
+  id          String    @id @default(cuid())
+  agentTaskId String
+  sequence    Int
+  name        String
+  status      String    // "running" | "ok" | "failed"
+  notes       String?
+  screenshot  Bytes?
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  agentTask   AgentTask @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
+
+  @@index([agentTaskId, sequence])
 }
 
 model JobRun {

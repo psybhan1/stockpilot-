@@ -828,6 +828,22 @@ model AgentTask {
   location         Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
   supplier         Supplier?       @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   purchaseOrder    PurchaseOrder?  @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  steps            AgentTaskStep[]
+}
+
+model AgentTaskStep {
+  id          String    @id @default(cuid())
+  agentTaskId String
+  sequence    Int
+  name        String
+  status      String
+  notes       String?
+  screenshot  Bytes?
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  agentTask   AgentTask @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
+
+  @@index([agentTaskId, sequence])
 }
 
 model JobRun {

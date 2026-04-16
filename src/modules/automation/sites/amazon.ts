@@ -18,6 +18,7 @@ import type { Page } from "puppeteer-core";
 import {
   isForbiddenButton,
   takeStepScreenshot,
+  type AgentStepSink,
 } from "@/modules/automation/browser-safety";
 import type { SupplierWebsiteCredentials } from "@/modules/suppliers/website-credentials";
 
@@ -33,6 +34,11 @@ export async function addItemsToAmazonCart(
   options?: {
     domain?: string;
     credentials?: SupplierWebsiteCredentials | null;
+    /**
+     * Fires on every screenshot so the live-view page can render
+     * progress in real time. Optional — adapter still works without.
+     */
+    onStep?: AgentStepSink;
   }
 ): Promise<{
   results: AmazonSearchResult[];
@@ -42,6 +48,29 @@ export async function addItemsToAmazonCart(
   const screenshots: Array<{ stepName: string; screenshot: Buffer }> = [];
   const results: AmazonSearchResult[] = [];
 
+  // Helper: push to collector AND fire live-view sink in one call.
+  const capture = async (
+    stepName: string,
+    status: "ok" | "failed" = "ok",
+    notes?: string
+  ) => {
+    const shot = await takeStepScreenshot(page, stepName);
+    screenshots.push(shot);
+    if (options?.onStep) {
+      try {
+        await options.onStep({
+          name: stepName,
+          status,
+          screenshot: shot.screenshot,
+          notes,
+        });
+      } catch {
+        /* fire-and-forget */
+      }
+    }
+    return shot;
+  };
+
   // Pre-flight: log in (or inject cookies) if the manager supplied
   // credentials. Errors here are logged but don't abort the flow —
   // anonymous mode still works for many items.
@@ -49,8 +78,23 @@ export async function addItemsToAmazonCart(
     try {
       const loginScreens = await applyAmazonCredentials(page, domain, options.credentials);
       screenshots.push(...loginScreens);
+      // Forward the login screenshots to the live-view sink too so
+      // the manager sees "signed in via cookies" land immediately.
+      if (options.onStep) {
+        for (const shot of loginScreens) {
+          try {
+            await options.onStep({
+              name: shot.stepName,
+              status: "ok",
+              screenshot: shot.screenshot,
+            });
+          } catch {
+            /* fire-and-forget */
+          }
+        }
+      }
     } catch (err) {
-      screenshots.push(await takeStepScreenshot(page, "login-failed"));
+      await capture("login-failed", "failed", err instanceof Error ? err.message.slice(0, 160) : undefined);
       // Don't return — fall through to anonymous mode and let the
       // manager see the screenshot of why login broke.
       console.warn("[amazon] login attempt failed:", err instanceof Error ? err.message : err);
@@ -66,14 +110,14 @@ export async function addItemsToAmazonCart(
           waitUntil: "domcontentloaded",
           timeout: 20000,
         });
-        screenshots.push(await takeStepScreenshot(page, `product-direct-${item.query}`));
+        await capture(`product-direct-${item.query}`);
 
         // Amazon's 404 dog page appears when the product was removed,
         // is region-locked, or the URL is malformed. Detect it and
         // fall back to searching for the item by name on the same
         // storefront — much more likely to find a working SKU.
         if (await isAmazonErrorPage(page)) {
-          screenshots.push(await takeStepScreenshot(page, `product-not-found-${item.query}`));
+          await capture(`product-not-found-${item.query}`, "failed", "Product URL returned an error page");
           await page.goto(
             `${domain}/s?k=${encodeURIComponent(item.query)}`,
             { waitUntil: "domcontentloaded", timeout: 20000 }
@@ -124,7 +168,7 @@ export async function addItemsToAmazonCart(
           timeout: 10000,
         }).catch(() => null);
 
-        screenshots.push(await takeStepScreenshot(page, `search-${item.query}`));
+        await capture(`search-${item.query}`);
 
         // Click the first organic result's title link.
         const firstResult = await page.$(
@@ -155,7 +199,7 @@ export async function addItemsToAmazonCart(
         await firstResult.click();
         await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => null);
 
-        screenshots.push(await takeStepScreenshot(page, `product-${item.query}`));
+        await capture(`product-${item.query}`);
       }
 
       // Set quantity if > 1.
@@ -192,7 +236,7 @@ export async function addItemsToAmazonCart(
       await addToCartBtn.click();
       await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null);
 
-      screenshots.push(await takeStepScreenshot(page, `added-${item.query}`));
+      await capture(`added-${item.query}`, "ok", `Added ${item.quantity}× to cart`);
       results.push({ query: item.query, added: true });
     } catch (err) {
       results.push({
@@ -213,9 +257,9 @@ export async function addItemsToAmazonCart(
       timeout: 15000,
     });
     await page.waitForSelector("#sc-active-cart", { timeout: 8000 }).catch(() => null);
-    screenshots.push(await takeStepScreenshot(page, "cart-final"));
+    await capture("cart-final");
   } catch {
-    screenshots.push(await takeStepScreenshot(page, "cart-final-fallback"));
+    await capture("cart-final-fallback", "failed", "Cart page didn't load cleanly");
   }
 
   return { results, screenshots };

@@ -10,6 +10,7 @@ import type { Page } from "puppeteer-core";
 import {
   isForbiddenButton,
   takeStepScreenshot,
+  type AgentStepSink,
 } from "@/modules/automation/browser-safety";
 import type { SupplierWebsiteCredentials } from "@/modules/suppliers/website-credentials";
 
@@ -47,13 +48,38 @@ export async function addItemsToGenericSite(
   page: Page,
   siteUrl: string,
   items: Array<{ query: string; quantity: number; directUrl?: string | null }>,
-  options?: { credentials?: SupplierWebsiteCredentials | null }
+  options?: {
+    credentials?: SupplierWebsiteCredentials | null;
+    onStep?: AgentStepSink;
+  }
 ): Promise<{
   results: GenericSearchResult[];
   screenshots: Array<{ stepName: string; screenshot: Buffer }>;
 }> {
   const screenshots: Array<{ stepName: string; screenshot: Buffer }> = [];
   const results: GenericSearchResult[] = [];
+
+  const capture = async (
+    stepName: string,
+    status: "ok" | "failed" = "ok",
+    notes?: string
+  ) => {
+    const shot = await takeStepScreenshot(page, stepName);
+    screenshots.push(shot);
+    if (options?.onStep) {
+      try {
+        await options.onStep({
+          name: stepName,
+          status,
+          screenshot: shot.screenshot,
+          notes,
+        });
+      } catch {
+        /* fire-and-forget */
+      }
+    }
+    return shot;
+  };
 
   // Cookie injection (preferred): set the manager's session cookies
   // before any nav so the supplier site sees them as authenticated
@@ -99,12 +125,12 @@ export async function addItemsToGenericSite(
         waitUntil: "domcontentloaded",
         timeout: 20000,
       });
-      screenshots.push(await takeStepScreenshot(page, "landing"));
+      await capture("landing");
       // Age gate on LCBO / BevMo / Total Wine / etc. blocks search
       // until acknowledged. Try to click through common patterns.
       await dismissAgeGate(page);
     } catch (err) {
-      screenshots.push(await takeStepScreenshot(page, "landing-error"));
+      await capture("landing-error", "failed");
       results.push({
         query: "(site load)",
         added: false,
@@ -128,7 +154,7 @@ export async function addItemsToGenericSite(
         });
         // Direct-URL path might hit an age-gate redirect too.
         await dismissAgeGate(page);
-        screenshots.push(await takeStepScreenshot(page, `product-direct-${item.query}`));
+        await capture(`product-direct-${item.query}`);
         // Fall through to the Add-to-Cart-button-finder below.
       } else {
         // Search-by-name path: try to find a search input on the
@@ -144,7 +170,7 @@ export async function addItemsToGenericSite(
             added: false,
             reason: "No search box found on this site. Try adding the item manually.",
           });
-          screenshots.push(await takeStepScreenshot(page, `no-search-${item.query}`));
+          await capture(`no-search-${item.query}`, "failed", "No search box on this site");
           continue;
         }
 
@@ -154,7 +180,7 @@ export async function addItemsToGenericSite(
         await page.keyboard.press("Enter");
         await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null);
 
-        screenshots.push(await takeStepScreenshot(page, `search-${item.query}`));
+        await capture(`search-${item.query}`);
       }
 
       // Try to find + click an "Add to Cart" button. This is highly
@@ -192,7 +218,7 @@ export async function addItemsToGenericSite(
 
       if (addedThisItem) {
         await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 8000 }).catch(() => null);
-        screenshots.push(await takeStepScreenshot(page, `added-${item.query}`));
+        await capture(`added-${item.query}`, "ok", `Added ${item.quantity}× to cart`);
         results.push({ query: item.query, added: true });
       } else {
         results.push({
@@ -200,7 +226,7 @@ export async function addItemsToGenericSite(
           added: false,
           reason: "Couldn't find an Add to Cart button. This site may need a custom adapter.",
         });
-        screenshots.push(await takeStepScreenshot(page, `no-cart-btn-${item.query}`));
+        await capture(`no-cart-btn-${item.query}`, "failed", "No Add-to-Cart button found");
       }
     } catch (err) {
       results.push({
@@ -212,7 +238,7 @@ export async function addItemsToGenericSite(
   }
 
   // Final screenshot of whatever the current page is.
-  screenshots.push(await takeStepScreenshot(page, "final"));
+  await capture("final");
   return { results, screenshots };
 }
 

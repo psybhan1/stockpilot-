@@ -21,6 +21,8 @@ import { addItemsToAmazonCart } from "@/modules/automation/sites/amazon";
 import { addItemsToGenericSite } from "@/modules/automation/sites/generic";
 import { AGENT_TIMEOUT_MS } from "@/modules/automation/browser-safety";
 import { buildCartLinks, buildCartReadyKeyboard } from "@/modules/automation/cart-links";
+import { recordAgentStep } from "@/modules/automation/agent-steps";
+import { env } from "@/lib/env";
 
 export type BrowserAgentResult = {
   ok: boolean;
@@ -107,15 +109,45 @@ export async function runWebsiteOrderAgent(
       managers.push(...fallback);
     }
 
+    // Sink for live-view step events. Every adapter screenshot
+    // fires this, writing an AgentTaskStep row so /agent-tasks/[id]
+    // can render the timeline in real time.
+    const onStep = async (event: {
+      name: string;
+      status: "ok" | "failed";
+      screenshot?: Buffer | null;
+      notes?: string;
+    }) => {
+      await recordAgentStep(agentTaskId, event);
+    };
+
+    // Build a manager-visible live-view URL that we include in the
+    // kickoff message so they can watch the agent work instead of
+    // just waiting for the cart screenshot at the end.
+    const appUrl = env.APP_URL?.replace(/\/$/, "");
+    const liveViewUrl = appUrl ? `${appUrl}/agent-tasks/${agentTaskId}` : null;
+
     const itemList = searchTerms.map((t) => `• ${t.quantity}× ${t.query}`).join("\n");
     for (const m of managers) {
       if (!m.telegramChatId) continue;
-      await sendTelegramMessage(
-        m.telegramChatId,
-        `🌐 Opening *${po.supplier.name}*'s website to add:\n${itemList}\n\nHang tight — I'll send you a screenshot of the cart when it's ready.`,
-        { parseMode: "Markdown" }
-      ).catch(() => {});
+      const body =
+        `🌐 Opening *${po.supplier.name}*'s website to add:\n${itemList}\n\n` +
+        (liveViewUrl
+          ? `Watch live below or wait for the cart screenshot.`
+          : `I'll send you a screenshot of the cart when it's ready.`);
+      await sendTelegramMessage(m.telegramChatId, body, {
+        parseMode: "Markdown",
+        replyMarkup: liveViewUrl
+          ? [[{ text: "📺 Watch live", url: liveViewUrl }]]
+          : undefined,
+      }).catch(() => {});
     }
+
+    await recordAgentStep(agentTaskId, {
+      name: "launched",
+      status: "ok",
+      notes: `Opening ${po.supplier.name} · ${searchTerms.length} line${searchTerms.length === 1 ? "" : "s"}`,
+    });
 
     // Launch Chrome using puppeteer's own browser management.
     // `npx puppeteer browsers install chrome` runs at build time
@@ -284,6 +316,7 @@ export async function runWebsiteOrderAgent(
         const amazonResult = await addItemsToAmazonCart(page, searchTerms, {
           domain: supplierUrl.replace(/\/+$/, ""),
           credentials,
+          onStep,
         });
         return { results: amazonResult.results, screenshots: amazonResult.screenshots };
       } else {
@@ -291,7 +324,7 @@ export async function runWebsiteOrderAgent(
           page,
           supplierUrl,
           searchTerms,
-          { credentials }
+          { credentials, onStep }
         );
         return { results: genericResult.results, screenshots: genericResult.screenshots };
       }

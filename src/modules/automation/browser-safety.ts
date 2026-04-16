@@ -98,6 +98,55 @@ export async function takeStepScreenshot(
 }
 
 /**
+ * Sink callback that adapters invoke every time they produce a
+ * screenshot. The browser-agent supplies one that writes to the
+ * AgentTaskStep table in real time — so the /agent-tasks/[id] live
+ * view can show each step as it lands, instead of after the whole
+ * task finishes.
+ *
+ * `status: "failed"` is used when the screenshot captures an error
+ * state (no results, add-to-cart button missing, etc.) so the UI
+ * can render it differently.
+ */
+export type AgentStepSink = (event: {
+  name: string;
+  status: "ok" | "failed";
+  screenshot?: Buffer | null;
+  notes?: string;
+}) => Promise<void> | void;
+
+/**
+ * Convenience: take a screenshot AND fire the live-step sink in one
+ * call. Replaces the repetitive `screenshots.push(await takeStep...)`
+ * pattern in the adapters. Returns the same tuple so existing code
+ * that pushes to a screenshots array keeps working unchanged.
+ */
+export async function captureStep(
+  page: Page,
+  stepName: string,
+  options?: {
+    onStep?: AgentStepSink;
+    status?: "ok" | "failed";
+    notes?: string;
+  }
+): Promise<{ stepName: string; screenshot: Buffer }> {
+  const shot = await takeStepScreenshot(page, stepName);
+  if (options?.onStep) {
+    try {
+      await options.onStep({
+        name: stepName,
+        status: options.status ?? "ok",
+        screenshot: shot.screenshot,
+        notes: options.notes,
+      });
+    } catch {
+      // live-step writes are fire-and-forget — don't break the agent.
+    }
+  }
+  return shot;
+}
+
+/**
  * Hard timeout wrapper. Aborts the browser task if it exceeds
  * the safety window.
  */
