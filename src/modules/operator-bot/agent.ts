@@ -12,7 +12,8 @@ import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import { formatQuantityBase } from "@/modules/inventory/units";
 
-import { PurchaseOrderStatus } from "@/lib/prisma";
+import { InventoryCategory, PurchaseOrderStatus } from "@/lib/prisma";
+import type { Prisma } from "@/lib/prisma";
 
 import {
   approveAndDispatchPurchaseOrder,
@@ -232,6 +233,40 @@ const TOOLS: ToolSchema[] = [
   {
     type: "function",
     function: {
+      name: "quick_add_and_order",
+      description:
+        "FAST PATH: Create a new inventory item with sensible defaults AND immediately draft a purchase order for it — all in one call, no questionnaire. Use when the user says 'order this', 'add this to my cart', 'we need this' + a product name/link, and the item does NOT already exist in LIVE DATA. This skips the multi-step add-item wizard entirely.\n\nDo NOT use start_add_item_flow when the user's intent is to ORDER something — use this instead.",
+      parameters: {
+        type: "object",
+        properties: {
+          item_name: {
+            type: "string",
+            description: "Product name (e.g. 'Espresso Machine Cleaner', 'Urnex Cafiza'). Extract from the URL preview or user's message.",
+          },
+          category: {
+            type: "string",
+            description: "Best guess: CLEANING, PACKAGING, COFFEE, DAIRY, ALT_DAIRY, SYRUP, BAKERY_INGREDIENT, PAPER_GOODS, SUPPLY, RETAIL. Default to SUPPLY if unsure.",
+          },
+          quantity: {
+            type: "number",
+            description: "How many to order. Default 1 if user didn't specify.",
+          },
+          supplier_name: {
+            type: "string",
+            description: "Supplier name (e.g. 'Amazon', 'Costco'). If user pasted a URL, use the site name. If no supplier mentioned, pass empty string.",
+          },
+          website_url: {
+            type: "string",
+            description: "Product URL if the user pasted one. Empty string if not.",
+          },
+        },
+        required: ["item_name", "category", "quantity"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "list_pending_orders",
       description:
         "List every purchase order that's currently AWAITING_APPROVAL, APPROVED, or SENT (not yet delivered) for this location. Use when the user asks 'what's on order', 'anything in flight', 'show me pending orders'.",
@@ -411,6 +446,119 @@ async function executeTool(
       return {
         content: `Linked supplier "${supplier.name}" to item "${item.name}". Future orders for ${item.name} will go to ${supplier.name}.`,
       };
+    }
+
+    case "quick_add_and_order": {
+      const itemName = String(args.item_name ?? "").trim();
+      const category = String(args.category ?? "SUPPLY").toUpperCase();
+      const quantity = Math.max(1, Number(args.quantity ?? 1));
+      const supplierName = String(args.supplier_name ?? "").trim();
+      const websiteUrl = String(args.website_url ?? "").trim();
+      if (!itemName) return { content: "ERROR: item_name required." };
+
+      try {
+        // 1. Create the item with sensible defaults.
+        const sku = `QA-${Date.now().toString(36).toUpperCase()}`;
+        const newItem = await db.inventoryItem.create({
+          data: {
+            locationId: ctx.locationId,
+            name: itemName,
+            sku,
+            category: (category in InventoryCategory ? category : "SUPPLY") as Prisma.InventoryItemCreateInput["category"],
+            baseUnit: "COUNT",
+            displayUnit: "COUNT",
+            countUnit: "COUNT",
+            purchaseUnit: "COUNT",
+            packSizeBase: 1,
+            stockOnHandBase: 0,
+            parLevelBase: Math.max(1, quantity * 2),
+            safetyStockBase: quantity,
+            lowStockThresholdBase: quantity,
+          },
+        });
+
+        // 2. Create/find supplier if provided.
+        let supplierId: string | null = null;
+        if (supplierName) {
+          const existing = await db.supplier.findFirst({
+            where: {
+              locationId: ctx.locationId,
+              name: { equals: supplierName, mode: "insensitive" },
+            },
+            select: { id: true },
+          });
+          if (existing) {
+            supplierId = existing.id;
+          } else {
+            const created = await db.supplier.create({
+              data: {
+                locationId: ctx.locationId,
+                name: supplierName,
+                orderingMode: websiteUrl ? "WEBSITE" : "MANUAL",
+                website: websiteUrl || null,
+                leadTimeDays: 3,
+              },
+            });
+            supplierId = created.id;
+          }
+          // Link supplier to item.
+          await db.supplierItem.create({
+            data: {
+              supplierId,
+              inventoryItemId: newItem.id,
+              packSizeBase: 1,
+              minimumOrderQuantity: 1,
+              preferred: true,
+            },
+          });
+          await db.inventoryItem.update({
+            where: { id: newItem.id },
+            data: { primarySupplierId: supplierId },
+          });
+        }
+
+        // 3. Create the PO.
+        const orderNumber = `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+        const po = await db.purchaseOrder.create({
+          data: {
+            locationId: ctx.locationId,
+            supplierId: supplierId ?? undefined!,
+            orderNumber,
+            status: supplierId ? "AWAITING_APPROVAL" : "DRAFT",
+            totalLines: 1,
+            placedById: ctx.userId,
+            notes: websiteUrl ? `Product URL: ${websiteUrl}` : undefined,
+          },
+        });
+        await db.purchaseOrderLine.create({
+          data: {
+            purchaseOrderId: po.id,
+            inventoryItemId: newItem.id,
+            description: itemName,
+            quantityOrdered: quantity,
+            expectedQuantityBase: quantity,
+            purchaseUnit: "COUNT",
+            packSizeBase: 1,
+          },
+        });
+
+        const supplierLabel = supplierName || "no supplier yet";
+        const websiteNote = websiteUrl ? " I'll head to their website to add it to the cart once you approve." : "";
+        const reply = supplierId
+          ? `✅ Added *${itemName}* to inventory + drafted *${orderNumber}* for ${quantity} from *${supplierLabel}*.${websiteNote} Tap Approve to send.`
+          : `✅ Added *${itemName}* to inventory + created draft *${orderNumber}* for ${quantity}. No supplier linked yet — add one in Settings or tell me who supplies it.`;
+
+        return {
+          content: reply,
+          finalReply: reply,
+          purchaseOrderId: supplierId ? po.id : null,
+          orderNumber: supplierId ? orderNumber : null,
+        };
+      } catch (err) {
+        return {
+          content: `Failed to quick-add: ${err instanceof Error ? err.message : "unknown error"}`,
+        };
+      }
     }
 
     case "start_add_item_flow": {
