@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
   // Include these packages in the standalone output WITH their
   // native/binary assets. @sparticuz/chromium has .br compressed
   // Chromium binaries that the default file tracer would strip.
-  serverExternalPackages: ["@sparticuz/chromium", "puppeteer-core"],
+  serverExternalPackages: ["@sparticuz/chromium", "puppeteer-core", "unzipper"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "image.pollinations.ai" },
