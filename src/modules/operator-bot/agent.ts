@@ -875,12 +875,120 @@ type GroqMessage = {
   name?: string;
 };
 
-async function callGroq(messages: GroqMessage[]): Promise<{
+// Default model — override with GROQ_BOT_MODEL env var.
+const DEFAULT_MODEL = "deepseek-r1-distill-llama-70b";
+
+function isR1Model(model: string): boolean {
+  return /deepseek.*r1|r1.*distill/i.test(model);
+}
+
+/**
+ * Build a text description of all tools for R1 (which doesn't
+ * support the native tools API). Injected into the system prompt
+ * so R1 knows what tools exist and how to call them.
+ */
+function buildToolDescriptionText(): string {
+  const lines = [
+    "## AVAILABLE TOOLS",
+    "",
+    "When you need to take an action, output a tool call block like this:",
+    "```",
+    '<tool_call>{"name":"tool_name","arguments":{"arg1":"value"}}</tool_call>',
+    "```",
+    "I will execute it and give you the result. Then continue your reply.",
+    "If you don't need any tool, just reply normally with text.",
+    "You can call MULTIPLE tools in one reply if needed — just put each in its own <tool_call> block.",
+    "",
+  ];
+  for (const tool of TOOLS) {
+    const fn = tool.function;
+    lines.push(`### ${fn.name}`);
+    lines.push(fn.description);
+    if (fn.parameters && "properties" in fn.parameters) {
+      const props = fn.parameters.properties as Record<
+        string,
+        { type?: string; description?: string }
+      >;
+      const required = (fn.parameters as { required?: string[] }).required ?? [];
+      for (const [key, val] of Object.entries(props)) {
+        const req = required.includes(key) ? " (required)" : " (optional)";
+        lines.push(`  - ${key}: ${val.type ?? "string"}${req} — ${val.description ?? ""}`);
+      }
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Parse <tool_call>...</tool_call> blocks from R1's text output.
+ */
+function parseTextToolCalls(
+  text: string
+): GroqToolCall[] {
+  const calls: GroqToolCall[] = [];
+  const regex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]) as {
+        name?: string;
+        arguments?: Record<string, unknown>;
+      };
+      if (parsed.name) {
+        calls.push({
+          id: `r1-${Date.now()}-${calls.length}`,
+          type: "function",
+          function: {
+            name: parsed.name,
+            arguments: JSON.stringify(parsed.arguments ?? {}),
+          },
+        });
+      }
+    } catch {
+      // Malformed JSON — skip this call.
+    }
+  }
+  return calls;
+}
+
+/**
+ * Strip <tool_call> blocks from R1's output to get the user-facing
+ * reply text.
+ */
+function stripToolCallBlocks(text: string): string {
+  return text
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
+    .replace(/```[\s\S]*?```/g, "") // also strip code blocks that might wrap tool calls
+    .trim();
+}
+
+async function callGroq(
+  messages: GroqMessage[],
+  opts?: { injectToolsAsText?: boolean }
+): Promise<{
   content: string | null;
   tool_calls: GroqToolCall[];
 }> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY not set");
+
+  const model = process.env.GROQ_BOT_MODEL ?? DEFAULT_MODEL;
+  const useR1 = isR1Model(model) || opts?.injectToolsAsText;
+
+  // For R1: no native tools API, higher token limit for reasoning.
+  // For Maverick/others: native tools API.
+  const bodyPayload: Record<string, unknown> = {
+    model,
+    temperature: useR1 ? 0.6 : 0.3,
+    top_p: 0.95,
+    max_tokens: useR1 ? 4096 : 1024,
+    messages,
+  };
+  if (!useR1) {
+    bodyPayload.tools = TOOLS;
+    bodyPayload.tool_choice = "auto";
+  }
 
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
@@ -888,26 +996,8 @@ async function callGroq(messages: GroqMessage[]): Promise<{
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      // llama-3.3-70b-versatile is Groq's most reliable tool-use model.
-      // gpt-oss-120b sounded smarter on paper but in practice leaked
-      // tool names into user replies and emitted empty placeholder
-      // values like "The order number is ``". 70b is boring and
-      // disciplined — exactly what this bot needs.
-      // Llama 4 Maverick — 128-expert MoE, free on Groq, supports
-      // tool calling (which DeepSeek R1 does NOT on Groq). The
-      // reasoning-first system prompt does the heavy lifting for
-      // intelligence; Maverick is the execution engine.
-      // Override with GROQ_BOT_MODEL if you want to experiment.
-      model: process.env.GROQ_BOT_MODEL ?? "meta-llama/llama-4-maverick-17b-128e-instruct",
-      temperature: 0.3,
-      top_p: 0.95,
-      max_tokens: 1024,
-      tools: TOOLS,
-      tool_choice: "auto",
-      messages,
-    }),
-    signal: AbortSignal.timeout(30000),
+    body: JSON.stringify(bodyPayload),
+    signal: AbortSignal.timeout(useR1 ? 45000 : 30000),
   });
 
   if (!res.ok) {
@@ -921,6 +1011,18 @@ async function callGroq(messages: GroqMessage[]): Promise<{
     }>;
   };
   const msg = data.choices?.[0]?.message;
+
+  if (useR1) {
+    // Parse tool calls from R1's text output.
+    const rawContent = msg?.content ?? "";
+    const textCalls = parseTextToolCalls(rawContent);
+    const cleanContent = stripToolCallBlocks(rawContent);
+    return {
+      content: cleanContent || null,
+      tool_calls: textCalls,
+    };
+  }
+
   return {
     content: msg?.content ?? null,
     tool_calls: msg?.tool_calls ?? [],
@@ -1087,7 +1189,14 @@ function sanitiseReply(raw: string | null, fallback: string): string {
 // ── Public entry point ────────────────────────────────────────────────────────
 export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult> {
   const liveData = await buildLiveDataBlock(ctx);
-  const systemPrompt = `${SYSTEM_PROMPT_BASE}\n\n${liveData}`;
+  const model = process.env.GROQ_BOT_MODEL ?? DEFAULT_MODEL;
+  const useR1 = isR1Model(model);
+
+  // For R1: inject tool definitions as text in the system prompt
+  // (since R1 doesn't support the native tools API).
+  const toolBlock = useR1 ? `\n\n${buildToolDescriptionText()}` : "";
+  const systemPrompt = `${SYSTEM_PROMPT_BASE}\n\n${liveData}${toolBlock}`;
+
   const messages: GroqMessage[] = [
     { role: "system", content: systemPrompt },
     ...ctx.conversation.map((turn) => ({
@@ -1100,9 +1209,11 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
   let purchaseOrderId: string | null = null;
   let orderNumber: string | null = null;
 
-  // Tool call loop — up to 5 turns. Each loop: ask the model, run tools, append results.
+  // Tool call loop — up to 5 turns. Each loop: ask the model, run
+  // tools, append results. Works for both native tool calling
+  // (Maverick) and text-based tool calling (R1).
   for (let i = 0; i < 5; i++) {
-    const response = await callGroq(messages);
+    const response = await callGroq(messages, { injectToolsAsText: useR1 });
 
     // If the model gave us a final text reply (no tool calls), we're done.
     if (!response.tool_calls.length) {
@@ -1114,9 +1225,10 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
     messages.push({
       role: "assistant",
       content: response.content ?? "",
-      tool_calls: response.tool_calls,
+      ...(useR1 ? {} : { tool_calls: response.tool_calls }),
     });
 
+    const toolResults: string[] = [];
     for (const call of response.tool_calls) {
       let parsedArgs: Record<string, unknown> = {};
       try {
@@ -1125,12 +1237,22 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
         parsedArgs = {};
       }
       const result = await executeTool(call.function.name, parsedArgs, ctx);
-      messages.push({
-        role: "tool",
-        tool_call_id: call.id,
-        name: call.function.name,
-        content: result.content,
-      });
+
+      if (useR1) {
+        // For R1: feed tool results back as a user message (R1
+        // doesn't understand the "tool" role).
+        toolResults.push(
+          `Tool ${call.function.name} returned: ${result.content}`
+        );
+      } else {
+        // For Maverick: use the native tool response format.
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          name: call.function.name,
+          content: result.content,
+        });
+      }
 
       // Capture PO identity from tools that create orders so the outer
       // channel can attach inline approve / cancel buttons on the reply.
@@ -1148,6 +1270,14 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
           orderNumber,
         };
       }
+    }
+
+    // For R1: batch all tool results into one user message.
+    if (useR1 && toolResults.length > 0) {
+      messages.push({
+        role: "user",
+        content: `[Tool results]\n${toolResults.join("\n")}\n\nNow give your final reply to the user. Do NOT output any more <tool_call> blocks unless you need another tool.`,
+      });
     }
   }
 
