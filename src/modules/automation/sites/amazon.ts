@@ -22,6 +22,25 @@ import {
 } from "@/modules/automation/browser-safety";
 import type { SupplierWebsiteCredentials } from "@/modules/suppliers/website-credentials";
 
+/**
+ * Read Amazon's #productTitle span from the current page. Used as a
+ * safety net to upgrade a generic item name ("Item from Amazon") to
+ * the real product title when the pre-approval HTTP fetch was
+ * blocked but the browser session actually reached the page.
+ */
+export async function readAmazonProductTitle(page: Page): Promise<string | null> {
+  try {
+    return await page.evaluate(() => {
+      const el = document.querySelector("#productTitle");
+      if (!el) return null;
+      const text = (el.textContent ?? "").trim();
+      return text.length >= 3 ? text : null;
+    });
+  } catch {
+    return null;
+  }
+}
+
 export type AmazonSearchResult = {
   query: string;
   added: boolean;
@@ -110,7 +129,17 @@ export async function addItemsToAmazonCart(
           waitUntil: "domcontentloaded",
           timeout: 20000,
         });
-        await capture(`product-direct-${item.query}`);
+        // Read the real product title so the live view + final
+        // summary show "Urnex Rinza Alkaline Formula Milk Frother
+        // Cleaner, 33.6 Ounce" instead of whatever placeholder the
+        // PO line had. Safety net if the pre-approval HTTP fetch was
+        // blocked. Fired as a step note so the recorder persists it.
+        const title = await readAmazonProductTitle(page);
+        await capture(
+          `product-direct-${item.query}`,
+          "ok",
+          title ? `Product page: ${title.slice(0, 160)}` : undefined
+        );
 
         // Amazon's 404 dog page appears when the product was removed,
         // is region-locked, or the URL is malformed. Detect it and

@@ -164,6 +164,37 @@ const KNOWN_SUPPLIER_WEBSITES: Record<string, string> = {
  *   - strip trailing punctuation
  *   - match partial names (e.g. "Amazon Prime" → amazon)
  */
+/**
+ * Heuristic: does this `itemName` look like a placeholder we should
+ * replace with a real product title fetched from the URL?
+ *
+ *   "Item from Amazon"         → yes
+ *   "Amazon item"              → yes
+ *   "product"                  → yes
+ *   "thing"                    → yes (too short)
+ *   "Urnex Cafiza"             → no (specific product)
+ *
+ * The checks are intentionally broad — a false positive just means
+ * we do an extra HTTP fetch we could've skipped. False negatives
+ * (keeping a generic name when we could have fetched) are worse
+ * because they propagate into the search-fallback URL.
+ */
+export function looksLikeGenericItemName(itemName: string, supplierName: string): boolean {
+  const trimmed = itemName.trim();
+  if (!trimmed) return true;
+  if (trimmed.length < 6) return true;
+  const lowered = trimmed.toLowerCase();
+  if (/^(?:item|product|thing|something)\b/i.test(lowered)) return true;
+  if (/^(?:an?\s+)?(?:amazon|costco|walmart|target|lcbo)\s+(?:item|product|thing|order)$/i.test(lowered)) {
+    return true;
+  }
+  if (/^item from /i.test(lowered)) return true;
+  if (/^product from /i.test(lowered)) return true;
+  // Name is literally the supplier name ("Amazon", "Costco").
+  if (supplierName && lowered === supplierName.toLowerCase()) return true;
+  return false;
+}
+
 export function lookupKnownSupplierWebsite(supplierName: string): string | null {
   const raw = supplierName.trim().toLowerCase();
   if (!raw) return null;
@@ -609,7 +640,7 @@ export async function executeTool(
     }
 
     case "quick_add_and_order": {
-      const itemName = String(args.item_name ?? "").trim();
+      let itemName = String(args.item_name ?? "").trim();
       const category = String(args.category ?? "SUPPLY").toUpperCase();
       const quantity = Math.max(1, Number(args.quantity ?? 1));
       const supplierName = String(args.supplier_name ?? "").trim();
@@ -629,6 +660,21 @@ export async function executeTool(
         (websiteUrl ? toHostnameRoot(websiteUrl) : "") ||
         lookupKnownSupplierWebsite(supplierName) ||
         "";
+
+      // Safety net: if the model called us with a generic placeholder
+      // like "Item from Amazon" or a suspiciously short name AND we
+      // have a URL, fetch the page's og:title and use the real name.
+      // Prevents the bug where the search fallback ends up looking
+      // for "Item from Amazon" instead of the actual product.
+      if (websiteUrl && looksLikeGenericItemName(itemName, supplierName)) {
+        const { fetchProductMetadata } = await import(
+          "@/modules/automation/product-metadata"
+        );
+        const meta = await fetchProductMetadata(websiteUrl, { timeoutMs: 5000 });
+        if (meta?.title && meta.title.length >= 3) {
+          itemName = meta.title;
+        }
+      }
       if (!itemName) return { content: "ERROR: item_name required." };
 
       try {

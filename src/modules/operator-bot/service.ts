@@ -244,7 +244,7 @@ export async function handleInboundManagerBotMessage(
       const { sniffOrderIntent } = await import(
         "@/modules/operator-bot/order-sniffer"
       );
-      const sniffed = sniffOrderIntent(input.text);
+      const sniffed = await sniffOrderIntent(input.text);
       if (sniffed && sniffed.orders.length > 0) {
         const { executeTool } = await import("@/modules/operator-bot/agent");
         const replies: string[] = [];

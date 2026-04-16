@@ -44,9 +44,34 @@ async function runScenario(name: string, fn: () => void | Promise<void>) {
   }
 }
 
+// ── Mock fetch globally for any product-metadata calls the sniffer
+//    triggers when a URL has no slug. Returns an HTML stub with a
+//    predictable og:title so tests are deterministic.
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async (url: string | URL | Request) => {
+  const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : String(url);
+  if (href.includes("/dp/B000FDL68W")) {
+    return new Response(
+      `<!doctype html><html><head>
+        <meta property="og:title" content="Urnex Rinza Alkaline Formula Milk Frother Cleaner, 33.6 Ounce">
+      </head><body></body></html>`,
+      { status: 200, headers: { "Content-Type": "text/html" } }
+    );
+  }
+  // Any other URL the tests might hit — return empty HTML so the
+  // sniffer falls back to its placeholder name.
+  if (href.startsWith("http")) {
+    return new Response("<!doctype html><html><head><title></title></head></html>", {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    });
+  }
+  return realFetch(url);
+}) as typeof fetch;
+
 // ── Sniffer: URL + order verb ──────────────────────────────────────
-await runScenario("Sniffer: URL + 'order this' → single Amazon order", () => {
-  const r = sniffOrderIntent("order this https://www.amazon.com/Urnex-Cafiza/dp/B005YJZE2I");
+await runScenario("Sniffer: URL + 'order this' → single Amazon order", async () => {
+  const r = await sniffOrderIntent("order this https://www.amazon.com/Urnex-Cafiza/dp/B005YJZE2I");
   if (!r) {
     assert(false, "sniffer returned null for URL+verb");
     return;
@@ -64,8 +89,8 @@ await runScenario("Sniffer: URL + 'order this' → single Amazon order", () => {
   );
 });
 
-await runScenario("Sniffer: URL + 'add to cart' → Amazon order", () => {
-  const r = sniffOrderIntent("add this to my cart https://www.amazon.ca/dp/B005YJZE2I");
+await runScenario("Sniffer: URL + 'add to cart' → Amazon order", async () => {
+  const r = await sniffOrderIntent("add this to my cart https://www.amazon.ca/dp/B005YJZE2I");
   if (!r) {
     assert(false, "sniffer returned null");
     return;
@@ -74,9 +99,36 @@ await runScenario("Sniffer: URL + 'add to cart' → Amazon order", () => {
   assert(r.orders[0].supplierName === "Amazon", "supplier is Amazon");
 });
 
+// ── THE BUG from the screenshot ────────────────────────────────────
+// User pasted `amazon.ca/dp/B000FDL68W?ref=...` (Amazon's old URL
+// format, no product-name slug) with "add three in the cart". Before
+// the fix, sniffer produced itemName="Item from Amazon" which became
+// the search query when the dog page fallback fired. After the fix,
+// we fetch the page and lift the real product title.
+await runScenario(
+  "Sniffer: URL with no slug + quantity word → og:title enriches item name",
+  async () => {
+    const r = await sniffOrderIntent(
+      "add three in the cart https://www.amazon.ca/dp/B000FDL68W?ref=sspa_dk_detail_0"
+    );
+    if (!r) {
+      assert(false, "sniffer returned null for the dp-only URL message");
+      return;
+    }
+    const o = r.orders[0];
+    assert(o.quantity === 3, `qty parsed from 'three' (got ${o.quantity})`);
+    assert(o.supplierName === "Amazon", "supplier detected from hostname");
+    assert(
+      /urnex rinza alkaline formula milk frother cleaner/i.test(o.itemName),
+      `item name came from og:title, not 'Item from Amazon' (got: ${o.itemName})`
+    );
+    assert(!/^item from /i.test(o.itemName), "NOT the generic fallback");
+  }
+);
+
 // ── Sniffer: "add N X from LCBO" (the original bug) ────────────────
-await runScenario("Sniffer: 'add 5 bottles of jp wisers from lcbo'", () => {
-  const r = sniffOrderIntent("add 5 bottles of jp wisers from lcbo");
+await runScenario("Sniffer: 'add 5 bottles of jp wisers from lcbo'", async () => {
+  const r = await sniffOrderIntent("add 5 bottles of jp wisers from lcbo");
   if (!r) {
     assert(false, "sniffer returned null for the lcbo bug message");
     return;
@@ -91,8 +143,8 @@ await runScenario("Sniffer: 'add 5 bottles of jp wisers from lcbo'", () => {
 
 await runScenario(
   "Sniffer: MULTI-item 'add 5 bottles of jp wisers and 3 box of bella terra in my cart in lcbo website'",
-  () => {
-    const r = sniffOrderIntent(
+  async () => {
+    const r = await sniffOrderIntent(
       "add 5 bottles of jp wisers and 3 box of bella terra in my cart in lcbo website"
     );
     if (!r) {
@@ -111,8 +163,8 @@ await runScenario(
   }
 );
 
-await runScenario("Sniffer: 'order 12 oz coffee from amazon'", () => {
-  const r = sniffOrderIntent("order 12 oz coffee from amazon");
+await runScenario("Sniffer: 'order 12 oz coffee from amazon'", async () => {
+  const r = await sniffOrderIntent("order 12 oz coffee from amazon");
   if (!r) {
     assert(false, "sniffer returned null");
     return;
@@ -122,8 +174,8 @@ await runScenario("Sniffer: 'order 12 oz coffee from amazon'", () => {
   assert(r.orders[0].supplierName.toLowerCase() === "amazon", "supplier=amazon");
 });
 
-await runScenario("Sniffer: 'buy 3 cases of oat milk at costco'", () => {
-  const r = sniffOrderIntent("buy 3 cases of oat milk at costco");
+await runScenario("Sniffer: 'buy 3 cases of oat milk at costco'", async () => {
+  const r = await sniffOrderIntent("buy 3 cases of oat milk at costco");
   if (!r) {
     assert(false, "sniffer returned null");
     return;
@@ -134,31 +186,31 @@ await runScenario("Sniffer: 'buy 3 cases of oat milk at costco'", () => {
 });
 
 // ── Sniffer: should NOT match (fall through to LLM) ────────────────
-await runScenario("Sniffer: greeting → null", () => {
-  assert(sniffOrderIntent("hi") === null, "'hi' → null");
-  assert(sniffOrderIntent("how are you") === null, "'how are you' → null");
-  assert(sniffOrderIntent("what do I have") === null, "'what do I have' → null");
+await runScenario("Sniffer: greeting → null", async () => {
+  assert((await sniffOrderIntent("hi")) === null, "'hi' → null");
+  assert((await sniffOrderIntent("how are you")) === null, "'how are you' → null");
+  assert((await sniffOrderIntent("what do I have")) === null, "'what do I have' → null");
 });
 
-await runScenario("Sniffer: stock report (no supplier, no URL) → null", () => {
-  assert(sniffOrderIntent("oat milk 2 left") === null, "stock status → null");
-  assert(sniffOrderIntent("we have 5 bags of coffee") === null, "we have N X → null");
-});
-
-await runScenario("Sniffer: order intent but UNKNOWN supplier → null (falls to LLM)", () => {
-  // "Bob's Random Mart" isn't in our known list and there's no URL,
-  // so the sniffer can't confidently act. LLM may still handle it
-  // via quick_add_and_order with supplier_name only.
+await runScenario("Sniffer: stock report (no supplier, no URL) → null", async () => {
+  assert((await sniffOrderIntent("oat milk 2 left")) === null, "stock status → null");
   assert(
-    sniffOrderIntent("order 5 widgets from bobs random mart") === null,
+    (await sniffOrderIntent("we have 5 bags of coffee")) === null,
+    "we have N X → null"
+  );
+});
+
+await runScenario("Sniffer: order intent but UNKNOWN supplier → null (falls to LLM)", async () => {
+  assert(
+    (await sniffOrderIntent("order 5 widgets from bobs random mart")) === null,
     "unknown supplier → null"
   );
 });
 
-await runScenario("Sniffer: 'approve' / 'cancel' → null (those aren't orders)", () => {
-  assert(sniffOrderIntent("approve") === null, "'approve' → null");
-  assert(sniffOrderIntent("cancel") === null, "'cancel' → null");
-  assert(sniffOrderIntent("nvm") === null, "'nvm' → null");
+await runScenario("Sniffer: 'approve' / 'cancel' → null (those aren't orders)", async () => {
+  assert((await sniffOrderIntent("approve")) === null, "'approve' → null");
+  assert((await sniffOrderIntent("cancel")) === null, "'cancel' → null");
+  assert((await sniffOrderIntent("nvm")) === null, "'nvm' → null");
 });
 
 // ── findUrl ────────────────────────────────────────────────────────

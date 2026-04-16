@@ -13,6 +13,7 @@
  */
 
 import { lookupKnownSupplierWebsite, normalizeProductUrl } from "@/modules/operator-bot/agent";
+import { fetchProductMetadata } from "@/modules/automation/product-metadata";
 
 export type SniffedOrder = {
   itemName: string;
@@ -125,15 +126,21 @@ function splitMultipart(
  *   "order 3 cans of oat milk at costco"
  *   "buy 12 oz of coffee from amazon"
  *   "5 boxes of tea from wholesale depot"
+ *
+ * Async because URL-only messages trigger a product-metadata HTTP
+ * fetch so we can lift the real product name from the page's
+ * og:title instead of using a useless "Item from Amazon" placeholder.
  */
-function matchSingleOrder(
+async function matchSingleOrder(
   chunk: string,
   sharedSuffix = ""
-): SniffedOrder | null {
+): Promise<SniffedOrder | null> {
   const fullText = `${chunk} ${sharedSuffix}`.trim();
 
   // Pattern 1: URL in chunk — URL path takes priority, use agent's
-  // URL-handling via the sniffer caller.
+  // URL-handling via the sniffer caller. Parse quantity from the
+  // imperative text ("add three in the cart https://..."). Then
+  // try to enrich the item name from the page's og:title.
   const url = findUrl(fullText);
   // Try to extract quantity + item + supplier from text.
   const pattern = new RegExp(
@@ -148,14 +155,26 @@ function matchSingleOrder(
   const m = fullText.match(pattern);
   if (!m) {
     // If it's ONLY a URL + short imperative ("add this https://..."),
-    // treat as an order with qty=1 and derive the supplier from the URL.
+    // treat as an order and derive the supplier from the URL.
     if (url) {
       const supplier = hostnameToSupplierLabel(url);
       if (supplier) {
-        const name = itemNameFromUrl(url) || "Item from " + supplier;
+        // Quantity from free-text imperative: "add three in the cart",
+        // "get me 2 of these", "order 5", etc. Word-digits fall back
+        // to 1 when nothing's parseable.
+        const qty = parseQuantityFromText(fullText);
+        // Name: URL slug first (fast), then live fetch of og:title.
+        let name = itemNameFromUrl(url);
+        if (!name || name.length < 4) {
+          const meta = await fetchProductMetadata(url, { timeoutMs: 5000 });
+          if (meta?.title && meta.title.length >= 3) {
+            name = meta.title;
+          }
+        }
+        const finalName = name || `Item from ${supplier}`;
         return {
-          itemName: name,
-          quantity: 1,
+          itemName: finalName,
+          quantity: qty,
           supplierName: supplier,
           websiteUrl: url,
         };
@@ -225,6 +244,29 @@ function itemNameFromUrl(url: string): string | null {
   return null;
 }
 
+/**
+ * Pull a quantity out of free-text imperatives like "add three in
+ * the cart", "get me 5", "order 2 of these". Returns 1 if nothing
+ * parseable — that's the sensible default for "add this".
+ */
+const WORD_DIGITS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, a: 1, an: 1,
+};
+function parseQuantityFromText(text: string): number {
+  const digit = text.match(/\b(\d{1,4})\b/);
+  if (digit) {
+    const n = Number(digit[1]);
+    if (n > 0 && n < 1000) return n;
+  }
+  const word = text.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an)\b/i);
+  if (word) {
+    const n = WORD_DIGITS[word[1].toLowerCase()];
+    if (n) return n;
+  }
+  return 1;
+}
+
 function capitaliseItem(s: string): string {
   return s
     .split(/\s+/)
@@ -243,8 +285,11 @@ function normaliseSupplierName(s: string): string {
 /**
  * Public entry: sniff a manager's message. Returns an array of orders
  * when the message is unambiguous, or null to fall through to the LLM.
+ *
+ * Async because URL-only messages enrich the item name from the
+ * product page's og:title (a one-shot HTTP GET with 5s timeout).
  */
-export function sniffOrderIntent(text: string): SniffResult {
+export async function sniffOrderIntent(text: string): Promise<SniffResult> {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
@@ -253,7 +298,7 @@ export function sniffOrderIntent(text: string): SniffResult {
   if (split) {
     const orders: SniffedOrder[] = [];
     for (const chunk of split.orderChunks) {
-      const order = matchSingleOrder(chunk, split.sharedSuffix);
+      const order = await matchSingleOrder(chunk, split.sharedSuffix);
       if (!order) return null; // partial match — bail, let LLM handle
       orders.push(order);
     }
@@ -261,7 +306,7 @@ export function sniffOrderIntent(text: string): SniffResult {
   }
 
   // Single-chunk match.
-  const single = matchSingleOrder(trimmed);
+  const single = await matchSingleOrder(trimmed);
   if (single) return { orders: [single] };
 
   return null;
