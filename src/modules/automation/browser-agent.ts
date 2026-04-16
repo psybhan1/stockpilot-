@@ -127,30 +127,34 @@ export async function runWebsiteOrderAgent(
     let results: Array<{ query: string; added: boolean; reason?: string }>;
     let screenshots: Array<{ stepName: string; screenshot: Buffer }>;
 
-    const timeout = setTimeout(() => {
-      browser?.close().catch(() => {});
-      throw new Error("Browser agent timed out after 5 minutes.");
-    }, AGENT_TIMEOUT_MS);
+    // Use Promise.race for a proper timeout — setTimeout + throw
+    // doesn't propagate to the async function's try/catch.
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        browser?.close().catch(() => {});
+        reject(new Error("Browser agent timed out after 5 minutes."));
+      }, AGENT_TIMEOUT_MS);
+    });
 
-    try {
+    const adapterPromise = (async () => {
       if (isAmazon) {
         const amazonResult = await addItemsToAmazonCart(page, searchTerms, {
           domain: supplierUrl.replace(/\/+$/, ""),
         });
-        results = amazonResult.results;
-        screenshots = amazonResult.screenshots;
+        return { results: amazonResult.results, screenshots: amazonResult.screenshots };
       } else {
         const genericResult = await addItemsToGenericSite(
           page,
           supplierUrl,
           searchTerms
         );
-        results = genericResult.results;
-        screenshots = genericResult.screenshots;
+        return { results: genericResult.results, screenshots: genericResult.screenshots };
       }
-    } finally {
-      clearTimeout(timeout);
-    }
+    })();
+
+    const adapterResult = await Promise.race([adapterPromise, timeoutPromise]);
+    results = adapterResult.results;
+    screenshots = adapterResult.screenshots;
 
     const itemsAdded = results.filter((r) => r.added).length;
     const itemsFailed = results.filter((r) => !r.added).length;

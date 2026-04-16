@@ -1546,6 +1546,13 @@ async function dispatchBotPurchaseOrder(input: {
     });
 
     await db.$transaction(async (tx) => {
+      // Transition PO to SENT so the status doesn't stay stuck at
+      // APPROVED forever (Bug #1 from the deep audit).
+      await tx.purchaseOrder.update({
+        where: { id: input.purchaseOrderId },
+        data: { status: PurchaseOrderStatus.SENT, sentAt: new Date() },
+      });
+
       const agentTask = await tx.agentTask.create({
         data: {
           locationId: input.locationId,

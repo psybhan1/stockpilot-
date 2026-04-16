@@ -1027,7 +1027,7 @@ async function callGroq(
     model,
     temperature: useR1 ? 0.6 : 0.3,
     top_p: 0.95,
-    max_tokens: useR1 ? 4096 : 1024,
+    max_tokens: useR1 ? 2048 : 512, // trimmed from 1024→512 to save TPM
     messages,
   };
   if (!useR1) {
@@ -1098,7 +1098,7 @@ async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
         },
       },
       orderBy: { name: "asc" },
-      take: 60,
+      take: 30, // reduced from 60 to save Groq tokens
     }),
     db.purchaseOrder.findFirst({
       where: {
@@ -1254,10 +1254,9 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
   let purchaseOrderId: string | null = null;
   let orderNumber: string | null = null;
 
-  // Tool call loop — up to 5 turns. Each loop: ask the model, run
-  // tools, append results. Works for both native tool calling
-  // (Maverick) and text-based tool calling (R1).
-  for (let i = 0; i < 5; i++) {
+  // Tool call loop — up to 3 turns (reduced from 5 to save Groq
+  // tokens; most interactions need 1-2 tool calls).
+  for (let i = 0; i < 3; i++) {
     const response = await callGroq(messages, { injectToolsAsText: useR1 });
 
     // If the model gave us a final text reply (no tool calls), we're done.

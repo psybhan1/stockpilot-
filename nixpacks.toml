@@ -1,3 +1,14 @@
+[phases.setup]
+aptPkgs = [
+  "libnss3", "libatk-bridge2.0-0", "libdrm2", "libxkbcommon0",
+  "libgbm1", "libgtk-3-0", "libasound2", "libxshmfence1",
+  "libx11-xcb1", "fonts-liberation", "libpango-1.0-0",
+  "libcairo2", "libcups2", "libdbus-1-3", "libexpat1",
+  "libfontconfig1", "libgcc-s1", "libglib2.0-0", "libnspr4",
+  "libpangocairo-1.0-0", "libstdc++6", "libxcb1", "libxcomposite1",
+  "libxdamage1", "libxext6", "libxfixes3", "libxrandr2", "ca-certificates"
+]
+
 [phases.install]
 cmds = ["npm install --legacy-peer-deps"]
 
