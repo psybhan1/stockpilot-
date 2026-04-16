@@ -474,17 +474,22 @@ async function websiteCartApproveFromBot(
   }
 
   const supplierName = task.purchaseOrder.supplier?.name ?? "the supplier";
+  const itemsList = task.purchaseOrder.lines
+    .map((l) => `• ${l.quantityOrdered}× ${l.description || l.inventoryItem.name}`)
+    .join("\n");
+
   const body = hasCredentials
-    ? `✓ The items are in your real ${supplierName} cart (saved login). Tap *${links.openCartLabel}* to checkout.`
-    : links.productButtons.length > 0
-      ? `Tap each product below to open it on ${supplierName} and Add to Cart in your own account.\n\n_Next time, save your ${supplierName} login at Settings → Suppliers and the agent will put items straight into your real cart._`
-      : `Open *${supplierName}* and add the items to your own cart.\n\n_Next time, save your ${supplierName} login at Settings → Suppliers and the agent will put items straight into your real cart._`;
+    ? `✓ In your real ${supplierName} cart (saved login). Tap *${links.openCartLabel}* to checkout.`
+    : links.openCartUrl
+      ? `⚠ Cart built in an anonymous session. Tap *${links.openCartLabel}*; if it's empty, open the product URL you sent and tap Add to Cart in your browser. Save your ${supplierName} login at Settings → Suppliers to skip this next time.`
+      : `Couldn't transfer the cart. Open *${supplierName}* and add the items to your own cart.\n\n_Save your ${supplierName} login at Settings → Suppliers and the agent will put items straight into your real cart next time._`;
 
   return {
     ok: true,
     toast: "Cart approved",
     editText:
-      `✅ *${task.purchaseOrder.orderNumber}* cart approved.\n\n` +
+      `✅ *${task.purchaseOrder.orderNumber}* cart approved on *${supplierName}*\n\n` +
+      `${itemsList}\n\n` +
       `${body}\n\n` +
       `_StockPilot never auto-pays._`,
     editKeyboard: editKeyboard.length > 0 ? editKeyboard : null,

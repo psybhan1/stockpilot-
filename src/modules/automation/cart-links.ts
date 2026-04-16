@@ -121,9 +121,10 @@ export function buildCartLinks(input: {
   /**
    * True when the agent ran with the manager's saved cookies, so
    * the cart it built is in the manager's REAL Amazon account.
-   * Without cookies, "open cart" lands them in their own empty
-   * cart — so we suppress that button and offer per-product links
-   * instead.
+   * Without cookies, "Open cart" lands them in their own (possibly
+   * empty) cart — we still show it as the primary action because
+   * it's the closest thing to "go complete my order". The caller's
+   * caption explains what to expect in each case.
    */
   hasCredentials: boolean;
 }): CartLinks {
@@ -136,28 +137,19 @@ export function buildCartLinks(input: {
     const storefront = pickAmazonStorefront(input.supplierWebsite);
     const truncate = (s: string) => (s.length > 24 ? s.slice(0, 22) + "…" : s);
 
-    // Build buttons line-by-line. For each line:
-    //   - If added=true (or unset, meaning unknown — assume ok) AND
-    //     we have an ASIN → /dp/<ASIN> direct link
-    //   - If added=false (the agent failed on this line, usually
-    //     because the URL was broken) → search-by-name URL instead,
-    //     so the manager can find a working product page
-    //   - Cap at 3 to keep the keyboard tidy
+    // Product-page buttons now ONLY show for items the agent FAILED
+    // to add (as a search fallback so the manager can find a working
+    // product page themselves). For successful adds we deliberately
+    // don't repeat the user's original URL back to them — user
+    // feedback was "it sends the link of the product I already gave
+    // it to the bot myself" — pointless clutter.
     const productButtons: ProductPageButton[] = [];
     for (const line of input.lines.slice(0, 3)) {
       const labelBase = (line.description || "").trim();
       const label = truncate(labelBase) || "product";
-      const asin = extractAmazonAsin(line.productUrl);
       const wasAdded = line.added !== false; // undefined → assume yes
-      if (asin && wasAdded) {
-        productButtons.push({
-          text: `📦 ${label}`,
-          url: `${storefront}/dp/${asin}`,
-        });
-      } else if (labelBase) {
-        // Search fallback. Strip emoji from the search query but
-        // leave it on the button label so it's distinguishable from
-        // the success-case button.
+      if (wasAdded) continue; // successful adds need no extra button
+      if (labelBase) {
         productButtons.push({
           text: `🔍 Search: ${label}`,
           url: `${storefront}/s?k=${encodeURIComponent(labelBase)}`,
@@ -165,13 +157,11 @@ export function buildCartLinks(input: {
       }
     }
 
-    // Heuristic: if no line was successfully added, we had a total
-    // failure. In that case the open-cart link would point at an
-    // empty cart even with cookies (because nothing was added to
-    // the user's session either). Show search-only.
+    // Always show the cart link when there's at least one success —
+    // that's the actionable endpoint. Only suppress when every item
+    // failed (cart is empty anywhere you look).
     const anyAdded = input.lines.some((l) => l.added !== false);
-    const openCartUrl =
-      input.hasCredentials && anyAdded ? `${storefront}/gp/cart/view.html` : null;
+    const openCartUrl = anyAdded ? `${storefront}/gp/cart/view.html` : null;
 
     return {
       openCartUrl,

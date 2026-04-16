@@ -235,19 +235,34 @@ export async function runWebsiteOrderAgent(
       s.stepName.startsWith("cart")
     )?.screenshot ?? screenshots[screenshots.length - 1]?.screenshot ?? null;
 
+    // Bulleted cart contents — the USER asked for this explicitly
+    // ("it doesnt send a list of the cart"). Pairs with the quantity
+    // from the PO line so they see exactly what's in the cart.
+    const lineSummaries = po.lines.map((line) => {
+      const query = line.description || line.inventoryItem.name;
+      const result = results.find((r) => r.query === query);
+      const added = result ? result.added : true;
+      const icon = added ? "✅" : "⚠️";
+      const detail = result?.reason ? ` — _${result.reason}_` : "";
+      return `${icon} ${line.quantityOrdered}× ${query}${detail}`;
+    });
+
+    const headline = allResultsSuccessful(results)
+      ? `🛒 *${po.orderNumber}* cart ready on *${po.supplier.name}*`
+      : itemsAdded > 0
+        ? `🛒 *${po.orderNumber}* — partial cart on *${po.supplier.name}*`
+        : `⚠️ *${po.orderNumber}* — couldn't build cart on *${po.supplier.name}*`;
+
+    const footerHint =
+      itemsFailed > 0
+        ? `\n\n${itemsAdded}/${results.length} added. ${itemsFailed} couldn't be found — add ${itemsFailed === 1 ? "it" : "them"} manually.`
+        : "";
+
     const summary =
-      `🛒 Cart ready on *${po.supplier.name}* for *${po.orderNumber}*!\n\n` +
-      results
-        .map(
-          (r) =>
-            `${r.added ? "✅" : "⚠️"} ${r.query}${r.reason ? ` — _${r.reason}_` : ""}`
-        )
-        .join("\n") +
-      `\n\n${itemsAdded} of ${results.length} items added.` +
-      (itemsFailed > 0
-        ? ` ${itemsFailed} couldn't be found — you may need to add ${itemsFailed === 1 ? "it" : "them"} manually.`
-        : " Everything looks good.") +
-      `\n\nI will *never* pay without your say-so. Tap below to confirm you'll handle checkout, or cancel if the cart doesn't look right.`;
+      `${headline}\n\n` +
+      lineSummaries.join("\n") +
+      footerHint +
+      `\n\nI *never* pay without your say-so. Confirm you'll handle checkout, or cancel if the cart's wrong.`;
 
     // Save results on the AgentTask.
     await db.agentTask.update({
@@ -301,12 +316,10 @@ export async function runWebsiteOrderAgent(
 
     const allFailed = itemsAdded === 0 && results.length > 0;
     const captionExtra = allFailed
-      ? `\n\n_The product page didn't load or had no Add-to-Cart button (often a region-locked, removed, or wrong URL). Tap *Search* below to find the right product on ${po.supplier.name} yourself._`
+      ? `\n\n_Couldn't add anything — product page didn't load or had no Add-to-Cart button (region-locked, removed, or wrong URL). Tap *Search* below to find it on ${po.supplier.name} yourself._`
       : hasCredentials
-        ? `\n\n✓ Items are in *your* ${po.supplier.name} account (saved login). Tap above to checkout.`
-        : cartLinks.productButtons.length > 0
-          ? `\n\n_Tap each product below to open it on ${po.supplier.name} and Add to Cart in your own account._\n_(Set up saved login at Settings → Suppliers → Website login to skip this step next time.)_`
-          : `\n\n_Without a saved login the agent's cart can't be transferred to your account. Open *${po.supplier.name}* and add the items there, or set up Settings → Suppliers → Website login._`;
+        ? `\n\n✓ Items are in *your* ${po.supplier.name} account (saved login). Tap *${cartLinks.openCartLabel}* to review and checkout.`
+        : `\n\n_⚠ Cart built in an anonymous session. Tap *${cartLinks.openCartLabel}* to open your own cart; if it's empty, open the product URL you sent and tap Add to Cart in your browser. Save your ${po.supplier.name} login at Settings → Suppliers to skip this step next time._`;
     const fullCaption = `${summary}${captionExtra}`;
 
     // Send cart screenshot + approval buttons to the same managers
@@ -368,6 +381,12 @@ function fail(reason: string): BrowserAgentResult {
     summary: reason,
     error: reason,
   };
+}
+
+function allResultsSuccessful(
+  results: Array<{ added: boolean }>
+): boolean {
+  return results.length > 0 && results.every((r) => r.added);
 }
 
 /**

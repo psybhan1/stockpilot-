@@ -77,7 +77,7 @@ await runScenario("extractAmazonAsin returns null for shortlinks and non-Amazon 
 });
 
 // ── Amazon WITH credentials ────────────────────────────────────────
-await runScenario("Amazon + credentials → open-cart button, NO product buttons needed", () => {
+await runScenario("Amazon + credentials + success → ONLY cart link, no redundant product buttons", () => {
   const links = buildCartLinks({
     supplierWebsite: "https://www.amazon.com",
     supplierName: "Amazon",
@@ -87,22 +87,28 @@ await runScenario("Amazon + credentials → open-cart button, NO product buttons
         description: "Urnex Cafiza",
         quantityOrdered: 3,
         productUrl: "https://www.amazon.com/Urnex-Cafiza/dp/B005YJZE2I",
+        added: true,
       },
     ],
   });
   assert(links.isAmazon === true, "detected Amazon");
   assert(
     links.openCartUrl === "https://www.amazon.com/gp/cart/view.html",
-    `open-cart URL: ${links.openCartUrl}`
+    `cart link set (got: ${links.openCartUrl})`
   );
   assert(links.openCartLabel === "🛒 Open my Amazon cart", "Amazon label");
-  // We still build product buttons so the test below passes — the
-  // open-cart button is the affordant choice but having both is fine.
-  assert(links.productButtons.length === 1, "1 product button (alternate path)");
+  assert(
+    links.productButtons.length === 0,
+    "NO product buttons — would be redundant with the URL user already sent"
+  );
 });
 
-// ── Amazon WITHOUT credentials ─────────────────────────────────────
-await runScenario("Amazon WITHOUT credentials → product-page buttons, NO open-cart", () => {
+// ── Amazon WITHOUT credentials, successful add ─────────────────────
+await runScenario("Amazon WITHOUT credentials, success → cart link STILL shown", () => {
+  // User feedback: previous design suppressed the cart link without
+  // credentials and showed product links (= the URL user just sent).
+  // That was clutter. Now we always show the cart link and explain
+  // in the caption what to expect.
   const links = buildCartLinks({
     supplierWebsite: "https://www.amazon.com",
     supplierName: "Amazon",
@@ -112,28 +118,45 @@ await runScenario("Amazon WITHOUT credentials → product-page buttons, NO open-
         description: "Urnex Cafiza",
         quantityOrdered: 3,
         productUrl: "https://www.amazon.com/Urnex-Cafiza/dp/B005YJZE2I",
+        added: true,
       },
     ],
   });
-  // No open-cart URL — without cookies, opening the cart shows an
-  // empty cart in the user's session, which is what they complained
-  // about. Better to show product links and let them tap through.
   assert(
-    links.openCartUrl === null,
-    `no open-cart URL (got: ${links.openCartUrl}) — would mislead without cookies`
-  );
-  assert(links.productButtons.length === 1, "1 product button");
-  assert(
-    links.productButtons[0].url === "https://www.amazon.com/dp/B005YJZE2I",
-    `product URL: ${links.productButtons[0].url}`
+    links.openCartUrl === "https://www.amazon.com/gp/cart/view.html",
+    `cart link shown even without credentials (got: ${links.openCartUrl})`
   );
   assert(
-    links.productButtons[0].text.startsWith("📦"),
-    `product label has emoji: ${links.productButtons[0].text}`
+    links.productButtons.length === 0,
+    "NO redundant product buttons for successful adds"
+  );
+});
+
+// ── Amazon FAILED add → search button appears ─────────────────────
+await runScenario("Amazon failed add → search button for the manager to find it", () => {
+  const links = buildCartLinks({
+    supplierWebsite: "https://www.amazon.com",
+    supplierName: "Amazon",
+    hasCredentials: false,
+    lines: [
+      {
+        description: "Urnex Cafiza",
+        quantityOrdered: 3,
+        productUrl: "https://www.amazon.com/Urnex-Cafiza/dp/B005YJZE2I",
+        added: false,
+      },
+    ],
+  });
+  // Nothing was successfully added → no cart link (it'd be empty).
+  assert(links.openCartUrl === null, "no cart link when zero items added");
+  assert(links.productButtons.length === 1, "search button surfaced");
+  assert(
+    links.productButtons[0].text.startsWith("🔍 Search:"),
+    `search-type button (got: ${links.productButtons[0].text}`
   );
   assert(
-    links.productButtons[0].text.includes("Urnex"),
-    "product label includes name"
+    links.productButtons[0].url.includes("/s?k="),
+    "search URL"
   );
 });
 
@@ -171,26 +194,26 @@ await runScenario("CRUCIAL: no broken /gp/aws/cart/add.html URL anywhere", () =>
   }
 });
 
-await runScenario("Amazon multi-line PO → up to 3 product buttons (cap)", () => {
+await runScenario("Amazon multi-line PO with all failed → up to 3 search buttons (cap)", () => {
   const links = buildCartLinks({
     supplierWebsite: "https://www.amazon.com",
     supplierName: "Amazon",
     hasCredentials: false,
     lines: [
-      { description: "Item A", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0AAAAAAAA" },
-      { description: "Item B", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0BBBBBBBB" },
-      { description: "Item C", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0CCCCCCCC" },
-      { description: "Item D", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0DDDDDDDD" },
+      { description: "Item A", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0AAAAAAAA", added: false },
+      { description: "Item B", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0BBBBBBBB", added: false },
+      { description: "Item C", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0CCCCCCCC", added: false },
+      { description: "Item D", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0DDDDDDDD", added: false },
     ],
   });
   assert(links.productButtons.length === 3, "capped at 3 buttons");
   assert(
-    !links.productButtons.some((b) => b.url.includes("B0DDDDDDDD")),
-    "4th item NOT in buttons"
+    links.productButtons.every((b) => b.text.startsWith("🔍")),
+    "all are search buttons (failed adds)"
   );
 });
 
-await runScenario("Long product names get truncated for button labels", () => {
+await runScenario("Long product names get truncated for search-button labels", () => {
   const longName = "Urnex Cafiza Tablets — 100-Count, Espresso Machine Cleaning Tablets, etc.";
   const links = buildCartLinks({
     supplierWebsite: "https://www.amazon.com",
@@ -201,46 +224,41 @@ await runScenario("Long product names get truncated for button labels", () => {
         description: longName,
         quantityOrdered: 1,
         productUrl: "https://www.amazon.com/dp/B005YJZE2I",
+        added: false, // must be failed to get a search button
       },
     ],
   });
   const text = links.productButtons[0].text;
-  assert(text.length < 30, `label is short (${text.length} chars: ${text})`);
+  assert(text.length < 40, `label is short (${text.length} chars: ${text})`);
   assert(text.endsWith("…"), `label ellipsis-truncated: ${text}`);
 });
 
-await runScenario("Amazon locale: .ca supplier → amazon.ca product links", () => {
+await runScenario("Amazon locale: .ca supplier → amazon.ca cart link", () => {
   const links = buildCartLinks({
     supplierWebsite: "https://www.amazon.ca",
     supplierName: "Amazon",
     hasCredentials: true,
     lines: [
-      { description: "x", quantityOrdered: 1, productUrl: "https://www.amazon.ca/dp/B005YJZE2I" },
+      { description: "x", quantityOrdered: 1, productUrl: "https://www.amazon.ca/dp/B005YJZE2I", added: true },
     ],
   });
   assert(
     links.openCartUrl === "https://www.amazon.ca/gp/cart/view.html",
     `Canadian storefront: ${links.openCartUrl}`
   );
-  assert(
-    links.productButtons[0].url === "https://www.amazon.ca/dp/B005YJZE2I",
-    `Canadian product URL: ${links.productButtons[0].url}`
-  );
+  assert(links.productButtons.length === 0, "no product buttons for success");
 });
 
-await runScenario("Amazon shortlink without ASIN → search-by-name fallback", () => {
+await runScenario("Amazon shortlink without ASIN, failed add → search-by-name fallback", () => {
   const links = buildCartLinks({
     supplierWebsite: "https://www.amazon.com",
     supplierName: "Amazon",
     hasCredentials: false,
     lines: [
-      { description: "thing", quantityOrdered: 1, productUrl: "https://a.co/d/abc123" },
+      { description: "thing", quantityOrdered: 1, productUrl: "https://a.co/d/abc123", added: false },
     ],
   });
-  // Without an ASIN we can't link to the product page, but we can
-  // still send the user to a search results page for the item name.
-  // Better than nothing.
-  assert(links.productButtons.length === 1, "search-by-name button");
+  assert(links.productButtons.length === 1, "search-by-name button for failed add");
   assert(
     links.productButtons[0].text.startsWith("🔍"),
     "is a search button"
@@ -249,7 +267,7 @@ await runScenario("Amazon shortlink without ASIN → search-by-name fallback", (
     links.productButtons[0].url.includes("/s?k=thing"),
     "search URL by name"
   );
-  assert(links.openCartUrl === null, "no open-cart (no creds)");
+  assert(links.openCartUrl === null, "no cart link (nothing added)");
 });
 
 await runScenario("Amazon shortlink without ASIN BUT with creds → open-cart still shows", () => {
@@ -316,38 +334,38 @@ await runScenario("No website at all → no buttons", () => {
 });
 
 // ── Keyboard layout ────────────────────────────────────────────────
-await runScenario("Keyboard with credentials → open-cart row + product alt + callbacks", () => {
+await runScenario("Keyboard for success → cart row + callbacks (no product row)", () => {
   const links = buildCartLinks({
     supplierWebsite: "https://www.amazon.com",
     supplierName: "Amazon",
     hasCredentials: true,
     lines: [
-      { description: "x", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B005YJZE2I" },
+      { description: "x", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B005YJZE2I", added: true },
     ],
   });
   const kb = buildCartReadyKeyboard({ agentTaskId: "task-creds", links });
-  // open-cart row + product row + callback row = 3
-  assert(kb.length === 3, `3 rows (got ${kb.length})`);
-  assert(kb[0][0].text === "🛒 Open my Amazon cart", "row 0 is open-cart");
+  // cart row + callback row = 2 (NO product row — user already has that URL)
+  assert(kb.length === 2, `2 rows (got ${kb.length})`);
+  assert(kb[0][0].text === "🛒 Open my Amazon cart", "row 0 is cart");
   assert("url" in kb[0][0], "row 0 button is a URL button");
   assert("callback_data" in kb[kb.length - 1][0], "last row is callbacks");
 });
 
-await runScenario("Keyboard no-credentials Amazon → product rows + callback row", () => {
+await runScenario("Keyboard for failed adds → cart hidden, search rows + callback row", () => {
   const links = buildCartLinks({
     supplierWebsite: "https://www.amazon.com",
     supplierName: "Amazon",
     hasCredentials: false,
     lines: [
-      { description: "Item A", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0AAAAAAAA" },
-      { description: "Item B", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0BBBBBBBB" },
+      { description: "Item A", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0AAAAAAAA", added: false },
+      { description: "Item B", quantityOrdered: 1, productUrl: "https://www.amazon.com/dp/B0BBBBBBBB", added: false },
     ],
   });
   const kb = buildCartReadyKeyboard({ agentTaskId: "task-noc", links });
-  // 2 product rows + 1 callback row = 3
+  // 2 search rows + 1 callback row = 3 (no cart link since nothing added)
   assert(kb.length === 3, `3 rows (got ${kb.length})`);
-  assert("url" in kb[0][0] && kb[0][0].text.includes("Item A"), "row 0: product A");
-  assert("url" in kb[1][0] && kb[1][0].text.includes("Item B"), "row 1: product B");
+  assert("url" in kb[0][0] && kb[0][0].text.startsWith("🔍"), "row 0: search for Item A");
+  assert("url" in kb[1][0] && kb[1][0].text.startsWith("🔍"), "row 1: search for Item B");
   const lastRow = kb[2];
   const callbacks = lastRow.map((b) => ("callback_data" in b ? b.callback_data : ""));
   assert(callbacks.includes("website_cart_approve:task-noc"), "approve callback wired");
@@ -425,7 +443,9 @@ await runScenario("All lines failed + credentials set → still no open-cart", (
   );
 });
 
-await runScenario("Mixed success/failure → success gets product link, failure gets search", () => {
+await runScenario(
+  "Mixed success/failure → cart link shown, only failures get search buttons",
+  () => {
   const links = buildCartLinks({
     supplierWebsite: "https://www.amazon.com",
     supplierName: "Amazon",
@@ -445,15 +465,26 @@ await runScenario("Mixed success/failure → success gets product link, failure 
       },
     ],
   });
-  assert(links.productButtons.length === 2, "both buttons present");
-  const goodBtn = links.productButtons.find((b) => b.text.includes("Good Item"));
-  const badBtn = links.productButtons.find((b) => b.text.includes("Bad Item"));
-  assert(goodBtn?.text.startsWith("📦"), "successful item gets product emoji");
-  assert(goodBtn?.url.includes("/dp/B0GOOD0000"), "success → /dp/ link");
-  assert(badBtn?.text.startsWith("🔍"), "failed item gets search emoji");
+  // Cart link IS shown (at least one success).
   assert(
-    badBtn?.url.includes("/s?k=Bad%20Item"),
-    `failure → /s?k= link (got: ${badBtn?.url})`
+    links.openCartUrl === "https://www.amazon.com/gp/cart/view.html",
+    "cart link shown since 1 item was added"
+  );
+  // Only the FAILED item gets a search button. Successful item
+  // doesn't get a redundant "here's the URL you sent" button.
+  assert(
+    links.productButtons.length === 1,
+    `only the failed item has a button (got ${links.productButtons.length})`
+  );
+  const badBtn = links.productButtons[0];
+  assert(badBtn.text.startsWith("🔍 Search"), "failed item has search button");
+  assert(
+    badBtn.url.includes("/s?k=Bad%20Item"),
+    `failure → /s?k= link (got: ${badBtn.url})`
+  );
+  assert(
+    !links.productButtons.some((b) => b.url.includes("/dp/B0GOOD0000")),
+    "successful item's /dp/ URL is NOT repeated back to user"
   );
 });
 
