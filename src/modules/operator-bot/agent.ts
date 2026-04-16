@@ -457,25 +457,36 @@ async function executeTool(
       if (!itemName) return { content: "ERROR: item_name required." };
 
       try {
-        // 1. Create the item with sensible defaults.
-        const sku = `QA-${Date.now().toString(36).toUpperCase()}`;
-        const newItem = await db.inventoryItem.create({
-          data: {
+        // 1. Find existing item by fuzzy name match, or create new.
+        // Prevents duplicates when the user orders the same product
+        // multiple times via quick_add_and_order.
+        let newItem = await db.inventoryItem.findFirst({
+          where: {
             locationId: ctx.locationId,
-            name: itemName,
-            sku,
-            category: (category in InventoryCategory ? category : "SUPPLY") as Prisma.InventoryItemCreateInput["category"],
-            baseUnit: "COUNT",
-            displayUnit: "COUNT",
-            countUnit: "COUNT",
-            purchaseUnit: "COUNT",
-            packSizeBase: 1,
-            stockOnHandBase: 0,
-            parLevelBase: Math.max(1, quantity * 2),
-            safetyStockBase: quantity,
-            lowStockThresholdBase: quantity,
+            name: { equals: itemName, mode: "insensitive" },
           },
+          select: { id: true, name: true },
         });
+        if (!newItem) {
+          const sku = `QA-${Date.now().toString(36).toUpperCase()}`;
+          newItem = await db.inventoryItem.create({
+            data: {
+              locationId: ctx.locationId,
+              name: itemName,
+              sku,
+              category: (category in InventoryCategory ? category : "SUPPLY") as Prisma.InventoryItemCreateInput["category"],
+              baseUnit: "COUNT",
+              displayUnit: "COUNT",
+              countUnit: "COUNT",
+              purchaseUnit: "COUNT",
+              packSizeBase: 1,
+              stockOnHandBase: 0,
+              parLevelBase: Math.max(1, quantity * 2),
+              safetyStockBase: quantity,
+              lowStockThresholdBase: quantity,
+            },
+          });
+        }
 
         // 2. Create/find supplier if provided.
         let supplierId: string | null = null;

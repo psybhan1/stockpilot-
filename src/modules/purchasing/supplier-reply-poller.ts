@@ -171,9 +171,20 @@ async function pollOneThread(ctx: {
     const bodyText = extractBodyText(msg);
     if (!bodyText) continue;
 
-    // Very small guard: ignore messages we sent ourselves (the supplier
-    // email domain shouldn't match the connected Gmail account's user).
+    // Ignore messages we sent ourselves.
     if (fromHeader?.toLowerCase().includes(creds.email.toLowerCase())) continue;
+
+    // Ignore mailer-daemon / bounce-back messages — these are delivery
+    // failures, not supplier replies. Classifying them as "OTHER" clutters
+    // the conversation and confuses the manager.
+    const fromLower = (fromHeader ?? "").toLowerCase();
+    if (
+      fromLower.includes("mailer-daemon") ||
+      fromLower.includes("postmaster") ||
+      fromLower.includes("mail delivery") ||
+      fromLower.includes("noreply") ||
+      fromLower.includes("no-reply")
+    ) continue;
 
     const intent = await classifyReplyIntent(bodyText);
     const priceSignal = await extractPriceSignal(bodyText).catch(() => null);

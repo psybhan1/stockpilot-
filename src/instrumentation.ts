@@ -105,6 +105,25 @@ export async function register() {
           import("@/modules/purchasing/supplier-nudges"),
         ]);
 
+        // Clean up expired demo tenants (>48h old) on every boot.
+        setTimeout(async () => {
+          try {
+            const { db } = await import("@/lib/db");
+            const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+            const demoBiz = await db.business.findMany({
+              where: { name: { startsWith: "[DEMO]" }, createdAt: { lt: cutoff } },
+              select: { id: true },
+            });
+            if (demoBiz.length > 0) {
+              const ids = demoBiz.map((b) => b.id);
+              await db.business.deleteMany({ where: { id: { in: ids } } });
+              console.log(`[demo-cleanup] deleted ${ids.length} expired demo tenant(s)`);
+            }
+          } catch (err) {
+            console.error("[demo-cleanup] failed:", err);
+          }
+        }, 8_000);
+
         // One-time backfill on boot so historical POs (sent before
         // we persisted gmailThreadId) become trackable by the reply
         // poller. Idempotent — already-stamped rows are skipped.
