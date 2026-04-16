@@ -921,7 +921,9 @@ type GroqMessage = {
 //   - Native tool calling (no text-parsing hacks)
 //   - Proven reliable (was the original model before we experimented)
 // The improved system prompt is what makes it smarter now, not the model.
-const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+// Scout supports tool calling, has its own TPD quota (separate from
+// 70b which is burned out), and is the newest Llama 4 model on Groq.
+const DEFAULT_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
 function isR1Model(model: string): boolean {
   return /deepseek.*r1|r1.*distill/i.test(model);
