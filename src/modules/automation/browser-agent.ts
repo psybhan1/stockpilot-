@@ -192,8 +192,17 @@ export async function runWebsiteOrderAgent(
           { encoding: "utf8" }
         ).trim();
         if (found && fs.existsSync(found)) {
-          // Make executable
-          fs.chmodSync(found, 0o755);
+          // Make ALL binaries in the Chrome directory executable —
+          // unzipper strips Unix permissions so chrome, chrome_crashpad_handler,
+          // and other helpers all need +x.
+          const chromeDir = path.dirname(found);
+          try {
+            const files = fs.readdirSync(chromeDir);
+            for (const f of files) {
+              const full = path.join(chromeDir, f);
+              try { fs.chmodSync(full, 0o755); } catch { /* skip non-files */ }
+            }
+          } catch { /* ignore */ }
           execPath = found;
           console.log(`[browser-agent] Chrome ready at: ${execPath}`);
         }
