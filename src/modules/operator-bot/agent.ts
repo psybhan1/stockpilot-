@@ -1024,13 +1024,15 @@ type GroqMessage = {
 };
 
 // Default model — override with GROQ_BOT_MODEL env var.
-// Model selection: must be on Groq AND support tool calling.
-// As of Apr 2026, available + working:
-//   - llama-3.3-70b-versatile (reliable, supports tools)
-//   - qwen/qwen3-32b (smart reasoning, supports tools)
-//   - meta-llama/llama-4-scout-17b-16e-instruct (multimodal)
-// Decommissioned: deepseek-r1, llama-4-maverick
-const DEFAULT_MODEL = "qwen/qwen3-32b";
+// Model: must be on Groq free tier + support tool calling + handle
+// our ~4K token system prompt within the TPM limit.
+// llama-3.3-70b is the ONLY one that checks all three boxes:
+//   - 131K context window (our prompt fits easily)
+//   - 6000 RPM free tier (vs 6000 TPM on Qwen3/Scout)
+//   - Native tool calling (no text-parsing hacks)
+//   - Proven reliable (was the original model before we experimented)
+// The improved system prompt is what makes it smarter now, not the model.
+const DEFAULT_MODEL = "llama-3.3-70b-versatile";
 
 function isR1Model(model: string): boolean {
   return /deepseek.*r1|r1.*distill/i.test(model);
