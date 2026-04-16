@@ -796,6 +796,9 @@ You (call place_restock_order TWICE, once per item, then summarise): "📋 Draft
 User: "the milk came in"
 You (call mark_order_delivered): "📦 PO-2026-0412 delivered from FreshCo. Oat milk stock: 2000 → 12000 ml."
 
+User: "order espresso cleaner from Amazon"
+You (check LIVE DATA — supplier Amazon has mode=WEBSITE, call place_restock_order): "📋 Drafted PO-2026-0500 — 1 count of Espresso Cleaner. I'm heading to Amazon's website now to add it to the cart. I'll send you a screenshot when it's ready — nothing gets paid until you say so."
+
 User: "what's on order"
 You (call list_pending_orders): "2 in flight: PO-2026-0412 (sent, FreshCo, oat milk ×1), PO-2026-0413 (awaiting approval, psybhan, coconut syrup ×1)."`;
 

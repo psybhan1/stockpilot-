@@ -1822,7 +1822,7 @@ function buildBotReply(input: {
   }
 
   if (input.supplierOrderingMode === SupplierOrderingMode.WEBSITE) {
-    return `${countLine} ${orderLine} I queued the website ordering workflow for review before final checkout.`;
+    return `${countLine} ${orderLine} I'm heading to their website now to add this to the cart. I'll send you a screenshot of the cart once it's ready — you'll review it before anything gets paid.`;
   }
 
   if (input.supplierOrderingMode === SupplierOrderingMode.MANUAL) {

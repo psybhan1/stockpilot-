@@ -75,6 +75,36 @@ export async function runWebsiteOrderAgent(
       quantity: line.quantityOrdered,
     }));
 
+    // Tell the manager we're working on it — keeps the conversation
+    // flowing naturally in the Telegram chat.
+    const managers = await db.user.findMany({
+      where: {
+        telegramChatId: { not: null },
+        roles: { some: { locationId: po.location.id } },
+      },
+      select: { telegramChatId: true },
+      take: 3,
+    });
+    if (managers.length === 0) {
+      // Fallback: get any manager with a chat id.
+      const fallback = await db.user.findMany({
+        where: { telegramChatId: { not: null } },
+        select: { telegramChatId: true },
+        take: 3,
+      });
+      managers.push(...fallback);
+    }
+
+    const itemList = searchTerms.map((t) => `• ${t.quantity}× ${t.query}`).join("\n");
+    for (const m of managers) {
+      if (!m.telegramChatId) continue;
+      await sendTelegramMessage(
+        m.telegramChatId,
+        `🌐 Opening *${po.supplier.name}*'s website to add:\n${itemList}\n\nHang tight — I'll send you a screenshot of the cart when it's ready.`,
+        { parseMode: "Markdown" }
+      ).catch(() => {});
+    }
+
     // Launch headless Chromium.
     const chromium = (await import("@sparticuz/chromium")).default;
     const puppeteer = (await import("puppeteer-core")).default;
@@ -129,18 +159,18 @@ export async function runWebsiteOrderAgent(
     )?.screenshot ?? screenshots[screenshots.length - 1]?.screenshot ?? null;
 
     const summary =
-      `🛒 *Website order for ${po.orderNumber}*\n\n` +
+      `🛒 Cart ready on *${po.supplier.name}* for *${po.orderNumber}*!\n\n` +
       results
         .map(
           (r) =>
             `${r.added ? "✅" : "⚠️"} ${r.query}${r.reason ? ` — _${r.reason}_` : ""}`
         )
         .join("\n") +
-      `\n\n${itemsAdded}/${results.length} items added to cart on ${po.supplier.name}.` +
+      `\n\n${itemsAdded} of ${results.length} items added.` +
       (itemsFailed > 0
-        ? `\n⚠️ ${itemsFailed} items need manual attention.`
-        : "") +
-      `\n\n_Open the cart on your device to review and pay. StockPilot will NEVER auto-complete payment._`;
+        ? ` ${itemsFailed} couldn't be found — you may need to add ${itemsFailed === 1 ? "it" : "them"} manually.`
+        : " Everything looks good.") +
+      `\n\nI will *never* pay without your say-so. Tap below to confirm you'll handle checkout, or cancel if the cart doesn't look right.`;
 
     // Save results on the AgentTask.
     await db.agentTask.update({
@@ -157,16 +187,8 @@ export async function runWebsiteOrderAgent(
       },
     });
 
-    // Notify managers on Telegram with the cart screenshot.
-    const managers = await db.user.findMany({
-      where: {
-        telegramChatId: { not: null },
-        roles: { some: { locationId: po.location.id } },
-      },
-      select: { telegramChatId: true },
-      take: 3,
-    });
-
+    // Send cart screenshot + approval buttons to the same managers
+    // we messaged at the start.
     for (const m of managers) {
       if (!m.telegramChatId) continue;
       try {
@@ -177,13 +199,11 @@ export async function runWebsiteOrderAgent(
             replyMarkup: [
               [
                 {
-                  text: "✅ Looks good — I'll pay myself",
+                  text: "✅ Looks good, I'll checkout myself",
                   callback_data: `website_cart_approve:${agentTaskId}`,
                 },
-              ],
-              [
                 {
-                  text: "✖ Cancel",
+                  text: "✖ Cancel order",
                   callback_data: `website_cart_cancel:${agentTaskId}`,
                 },
               ],
@@ -195,11 +215,11 @@ export async function runWebsiteOrderAgent(
             replyMarkup: [
               [
                 {
-                  text: "✅ I'll handle it from here",
+                  text: "✅ Looks good, I'll checkout myself",
                   callback_data: `website_cart_approve:${agentTaskId}`,
                 },
                 {
-                  text: "✖ Cancel",
+                  text: "✖ Cancel order",
                   callback_data: `website_cart_cancel:${agentTaskId}`,
                 },
               ],
