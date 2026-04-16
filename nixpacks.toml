@@ -17,12 +17,7 @@ aptPkgs = [
 cmds = ["npm install --legacy-peer-deps"]
 
 [phases.build]
-cmds = [
-  "npm run vercel-build",
-  "npx @puppeteer/browsers install chrome@stable --path /app/.chrome-cache",
-  "find /app/.chrome-cache -name 'chrome' -type f | head -1 > /app/.chrome-path",
-  "echo 'Chrome installed at:' && cat /app/.chrome-path"
-]
+cmds = ["npm run vercel-build"]
 
 [start]
 cmd = "node .next/standalone/server.js"

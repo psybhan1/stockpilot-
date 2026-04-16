@@ -116,39 +116,55 @@ export async function runWebsiteOrderAgent(
 
     // Find Chrome binary — check puppeteer cache, common system
     // paths, and PUPPETEER_EXECUTABLE_PATH env var.
-    // Chrome path resolution: the build step writes the path to a
-    // known file. We read it at runtime.
+    // Chrome is downloaded at runtime on first use and cached in
+    // /tmp/.chrome-cache (survives within a container's lifetime).
+    // Build-time installs don't persist on Railway nixpacks.
+    const CACHE_DIR = "/tmp/.chrome-cache";
     let execPath = process.env.PUPPETEER_EXECUTABLE_PATH ?? "";
+
+    // Check system paths first (fast)
     if (!execPath || !fs.existsSync(execPath)) {
-      // Read from the build-time marker file
-      const markerPaths = ["/app/.chrome-path", ".chrome-path"];
-      for (const marker of markerPaths) {
-        if (fs.existsSync(marker)) {
-          execPath = fs.readFileSync(marker, "utf8").trim();
-          if (execPath && fs.existsSync(execPath)) break;
-        }
-      }
-    }
-    if (!execPath || !fs.existsSync(execPath)) {
-      // Brute-force search in the known install directory
-      try {
-        const found = execSync(
-          `find /app/.chrome-cache -name "chrome" -type f 2>/dev/null | head -1`,
-          { encoding: "utf8" }
-        ).trim();
-        if (found && fs.existsSync(found)) execPath = found;
-      } catch { /* ignore */ }
-    }
-    if (!execPath || !fs.existsSync(execPath)) {
-      // Last resort: system paths
       for (const p of ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]) {
         if (fs.existsSync(p)) { execPath = p; break; }
       }
     }
+
+    // Check runtime cache
     if (!execPath || !fs.existsSync(execPath)) {
-      throw new Error(
-        `Chrome not found anywhere. Tried: /app/.chrome-path marker, /app/.chrome-cache/, system paths, PUPPETEER_EXECUTABLE_PATH env.`
-      );
+      try {
+        const found = execSync(
+          `find ${CACHE_DIR} -name "chrome" -type f 2>/dev/null | head -1`,
+          { encoding: "utf8" }
+        ).trim();
+        if (found && fs.existsSync(found)) execPath = found;
+      } catch { /* not cached yet */ }
+    }
+
+    // Download Chrome at runtime if not found (first use only, ~30-60s)
+    if (!execPath || !fs.existsSync(execPath)) {
+      console.log("[browser-agent] Chrome not found — downloading at runtime (first use only)...");
+      try {
+        execSync(
+          `npx @puppeteer/browsers install chrome@stable --path ${CACHE_DIR}`,
+          { stdio: "inherit", timeout: 120000 }
+        );
+        const found = execSync(
+          `find ${CACHE_DIR} -name "chrome" -type f | head -1`,
+          { encoding: "utf8" }
+        ).trim();
+        if (found && fs.existsSync(found)) {
+          execPath = found;
+          console.log(`[browser-agent] Chrome downloaded to: ${execPath}`);
+        }
+      } catch (dlErr) {
+        throw new Error(
+          `Failed to download Chrome at runtime: ${dlErr instanceof Error ? dlErr.message : String(dlErr)}`
+        );
+      }
+    }
+
+    if (!execPath || !fs.existsSync(execPath)) {
+      throw new Error("Chrome still not found after download attempt.");
     }
 
     console.log(`[browser-agent] Using Chrome at: ${execPath}`);
