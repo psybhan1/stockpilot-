@@ -404,6 +404,9 @@ async function websiteCartApproveFromBot(
   if (!agentTaskId) return { ok: false, toast: "Missing task", editText: "" };
   const task = await db.agentTask.findUnique({
     where: { id: agentTaskId },
+    // Pull the line items so we can rebuild the cart links — without
+    // ASINs the user has nothing tappable to open and (rightly)
+    // complains "where's the cart?".
     select: {
       id: true,
       status: true,
@@ -412,6 +415,14 @@ async function websiteCartApproveFromBot(
           id: true,
           orderNumber: true,
           supplier: { select: { name: true, website: true } },
+          lines: {
+            select: {
+              description: true,
+              quantityOrdered: true,
+              notes: true,
+              inventoryItem: { select: { name: true } },
+            },
+          },
         },
       },
     },
@@ -427,15 +438,37 @@ async function websiteCartApproveFromBot(
     data: { status: PurchaseOrderStatus.ACKNOWLEDGED },
   });
 
-  const url = task.purchaseOrder.supplier?.website ?? "";
+  // Re-derive the cart links so the Approved-state message keeps the
+  // tap targets visible — without this, the user only sees the link
+  // on the original cart-ready message and has to scroll up.
+  const { buildCartLinks } = await import("@/modules/automation/cart-links");
+  const { extractLineProductUrl } = await import("@/modules/automation/browser-agent");
+  const links = buildCartLinks({
+    supplierWebsite: task.purchaseOrder.supplier?.website ?? null,
+    supplierName: task.purchaseOrder.supplier?.name ?? "supplier",
+    lines: task.purchaseOrder.lines.map((l) => ({
+      description: l.description || l.inventoryItem.name,
+      quantityOrdered: l.quantityOrdered,
+      productUrl: extractLineProductUrl(l.notes),
+    })),
+  });
+
+  const editKeyboard: InlineKeyboard = [];
+  const urlRow: InlineKeyboard[number] = [];
+  if (links.addToMyCartUrl) urlRow.push({ text: "🛍 Add to MY cart", url: links.addToMyCartUrl });
+  if (links.openCartUrl) urlRow.push({ text: links.openCartLabel, url: links.openCartUrl });
+  if (urlRow.length > 0) editKeyboard.push(urlRow);
+
   return {
     ok: true,
     toast: "Cart approved",
     editText:
       `✅ *${task.purchaseOrder.orderNumber}* cart approved.\n\n` +
-      `Open ${url ? `[${task.purchaseOrder.supplier?.name ?? "supplier site"}](${url})` : "the supplier website"} on your phone/laptop to review the cart and complete payment.\n\n` +
+      (links.addToMyCartUrl
+        ? `Tap *Add to MY cart* below to load these into your own ${task.purchaseOrder.supplier?.name ?? "supplier"} account, or *${links.openCartLabel}* if you've already saved your login.\n\n`
+        : `Tap *${links.openCartLabel}* on your phone/laptop to review the cart and complete payment.\n\n`) +
       `_StockPilot will never auto-pay. Your cart is waiting for you._`,
-    editKeyboard: null,
+    editKeyboard: editKeyboard.length > 0 ? editKeyboard : null,
   };
 }
 

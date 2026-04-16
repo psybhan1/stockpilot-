@@ -20,6 +20,7 @@ import { sendTelegramMessage, sendTelegramPhoto } from "@/lib/telegram-bot";
 import { addItemsToAmazonCart } from "@/modules/automation/sites/amazon";
 import { addItemsToGenericSite } from "@/modules/automation/sites/generic";
 import { AGENT_TIMEOUT_MS } from "@/modules/automation/browser-safety";
+import { buildCartLinks, buildCartReadyKeyboard } from "@/modules/automation/cart-links";
 
 export type BrowserAgentResult = {
   ok: boolean;
@@ -335,6 +336,34 @@ export async function runWebsiteOrderAgent(
       },
     });
 
+    // Build cart-link buttons. Two buttons may appear:
+    //   - "🛍 Add to MY cart" (Amazon, when we recovered ASINs from
+    //     pasted product URLs) — deep-link the user's logged-in
+    //     Amazon session to add the items even without saved cookies.
+    //   - "🛒 Open Amazon cart" / "🌐 Open <supplier>" — works
+    //     immediately when the manager has saved cookies (agent's
+    //     cart IS their cart); for other users it at least gets them
+    //     to the right site signed in to their own account.
+    const cartLinks = buildCartLinks({
+      supplierWebsite: po.supplier.website,
+      supplierName: po.supplier.name,
+      lines: po.lines.map((l) => ({
+        description: l.description || l.inventoryItem.name,
+        quantityOrdered: l.quantityOrdered,
+        productUrl: extractLineProductUrl(l.notes),
+      })),
+    });
+    const replyMarkup = buildCartReadyKeyboard({ agentTaskId, links: cartLinks });
+
+    // Append a one-line hint to the caption so users without saved
+    // cookies don't get confused by an empty cart on their phone.
+    const captionExtra = cartLinks.addToMyCartUrl
+      ? `\n\n👉 Tap *Add to MY cart* to load these into your own Amazon account.`
+      : credentials
+        ? "" // user has cookies → opening the cart link will show items
+        : `\n\n_Heads up: without saved login (Settings → Suppliers → Website login), the agent's cart isn't tied to your account — tap *Open ${po.supplier.name}* and add the items there._`;
+    const fullCaption = `${summary}${captionExtra}`;
+
     // Send cart screenshot + approval buttons to the same managers
     // we messaged at the start.
     for (const m of managers) {
@@ -342,36 +371,14 @@ export async function runWebsiteOrderAgent(
       try {
         if (cartScreenshot) {
           await sendTelegramPhoto(m.telegramChatId, cartScreenshot, {
-            caption: summary.slice(0, 1024),
+            caption: fullCaption.slice(0, 1024),
             parseMode: "Markdown",
-            replyMarkup: [
-              [
-                {
-                  text: "✅ Looks good, I'll checkout myself",
-                  callback_data: `website_cart_approve:${agentTaskId}`,
-                },
-                {
-                  text: "✖ Cancel order",
-                  callback_data: `website_cart_cancel:${agentTaskId}`,
-                },
-              ],
-            ],
+            replyMarkup,
           });
         } else {
-          await sendTelegramMessage(m.telegramChatId, summary, {
+          await sendTelegramMessage(m.telegramChatId, fullCaption, {
             parseMode: "Markdown",
-            replyMarkup: [
-              [
-                {
-                  text: "✅ Looks good, I'll checkout myself",
-                  callback_data: `website_cart_approve:${agentTaskId}`,
-                },
-                {
-                  text: "✖ Cancel order",
-                  callback_data: `website_cart_cancel:${agentTaskId}`,
-                },
-              ],
-            ],
+            replyMarkup,
           });
         }
       } catch (err) {

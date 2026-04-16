@@ -32,11 +32,21 @@ const TELEGRAM_ALLOWED_UPDATES = ["message", "callback_query"];
 
 // ── Inline keyboard helpers ────────────────────────────────────────────
 
-export type InlineButton = {
-  text: string;
-  /** Callback payload. Max 64 bytes when encoded. */
-  callback_data: string;
-};
+// Telegram inline buttons can fire a callback OR open a URL in the
+// user's browser. We model both — callers can mix them in one
+// keyboard (e.g. "Open my cart" url-button next to "Cancel order"
+// callback-button).
+export type InlineButton =
+  | {
+      text: string;
+      /** Callback payload. Max 64 bytes when encoded. */
+      callback_data: string;
+    }
+  | {
+      text: string;
+      /** Tapping opens this URL in the user's default browser. */
+      url: string;
+    };
 
 export type InlineKeyboard = InlineButton[][];
 
