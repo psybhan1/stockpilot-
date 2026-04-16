@@ -171,12 +171,20 @@ export async function runWebsiteOrderAgent(
         const arrayBuf = await downloadRes.arrayBuffer();
         fs.writeFileSync(zipPath, Buffer.from(arrayBuf));
 
-        // Extract the zip using Python (always available on nixpacks;
-        // unzip/jar are NOT in the runtime container).
-        execSync(
-          `python3 -c "import zipfile; zipfile.ZipFile('${zipPath}').extractall('${CACHE_DIR}/chrome-extracted')"`,
-          { stdio: "pipe", timeout: 60000 }
-        );
+        // Extract using the pure-JS 'unzipper' package (no system
+        // deps needed — Railway's runtime has no unzip/python3).
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const unzipper = require("unzipper") as {
+          Extract: (opts: { path: string }) => NodeJS.WritableStream;
+        };
+        const extractDir = `${CACHE_DIR}/chrome-extracted`;
+        fs.mkdirSync(extractDir, { recursive: true });
+        await new Promise<void>((resolve, reject) => {
+          fs.createReadStream(zipPath)
+            .pipe(unzipper.Extract({ path: extractDir }))
+            .on("close", resolve)
+            .on("error", reject);
+        });
 
         // Find the chrome binary inside
         const found = execSync(
