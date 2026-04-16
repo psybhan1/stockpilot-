@@ -3,7 +3,7 @@
 # reliable than @sparticuz/chromium on Railway because Next.js
 # standalone mode strips binary assets from node_modules.
 aptPkgs = [
-  "chromium",
+  "unzip", "wget",
   "libnss3", "libatk-bridge2.0-0", "libdrm2", "libxkbcommon0",
   "libgbm1", "libgtk-3-0", "libasound2", "libxshmfence1",
   "libx11-xcb1", "fonts-liberation", "libpango-1.0-0",

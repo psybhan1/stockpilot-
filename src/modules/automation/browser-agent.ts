@@ -140,25 +140,57 @@ export async function runWebsiteOrderAgent(
       } catch { /* not cached yet */ }
     }
 
-    // Download Chrome at runtime if not found (first use only, ~30-60s)
+    // Download Chrome at runtime if not found (first use only, ~30-60s).
+    // Uses a direct URL since npx isn't in the standalone runtime.
     if (!execPath || !fs.existsSync(execPath)) {
-      console.log("[browser-agent] Chrome not found — downloading at runtime (first use only)...");
+      console.log("[browser-agent] Chrome not found — downloading at runtime...");
       try {
-        execSync(
-          `npx @puppeteer/browsers install chrome@stable --path ${CACHE_DIR}`,
-          { stdio: "inherit", timeout: 120000 }
-        );
+        const CHROME_DIR = `${CACHE_DIR}/chrome`;
+        fs.mkdirSync(CHROME_DIR, { recursive: true });
+
+        // Fetch the latest Chrome for Testing stable version
+        const versionsUrl = "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json";
+        const versionsRes = await fetch(versionsUrl);
+        const versionsData = (await versionsRes.json()) as {
+          channels: {
+            Stable: {
+              version: string;
+              downloads: {
+                chrome: Array<{ platform: string; url: string }>;
+              };
+            };
+          };
+        };
+        const chromeUrl = versionsData.channels.Stable.downloads.chrome
+          .find((d) => d.platform === "linux64")?.url;
+        if (!chromeUrl) throw new Error("No linux64 Chrome download URL found");
+
+        console.log(`[browser-agent] Downloading from: ${chromeUrl}`);
+        const zipPath = `${CACHE_DIR}/chrome.zip`;
+        const downloadRes = await fetch(chromeUrl);
+        const arrayBuf = await downloadRes.arrayBuffer();
+        fs.writeFileSync(zipPath, Buffer.from(arrayBuf));
+
+        // Extract the zip
+        execSync(`cd ${CACHE_DIR} && unzip -o chrome.zip -d chrome-extracted`, {
+          stdio: "pipe",
+          timeout: 60000,
+        });
+
+        // Find the chrome binary inside
         const found = execSync(
-          `find ${CACHE_DIR} -name "chrome" -type f | head -1`,
+          `find ${CACHE_DIR}/chrome-extracted -name "chrome" -type f | head -1`,
           { encoding: "utf8" }
         ).trim();
         if (found && fs.existsSync(found)) {
+          // Make executable
+          fs.chmodSync(found, 0o755);
           execPath = found;
-          console.log(`[browser-agent] Chrome downloaded to: ${execPath}`);
+          console.log(`[browser-agent] Chrome ready at: ${execPath}`);
         }
       } catch (dlErr) {
         throw new Error(
-          `Failed to download Chrome at runtime: ${dlErr instanceof Error ? dlErr.message : String(dlErr)}`
+          `Failed to download Chrome: ${dlErr instanceof Error ? dlErr.message : String(dlErr)}`
         );
       }
     }
