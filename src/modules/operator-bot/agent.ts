@@ -1024,7 +1024,10 @@ type GroqMessage = {
 };
 
 // Default model — override with GROQ_BOT_MODEL env var.
-const DEFAULT_MODEL = "deepseek-r1-distill-llama-70b";
+// R1 was decommissioned on Groq (400 model_decommissioned).
+// Maverick is the best free model on Groq that supports native
+// tool calling + is smart enough for reasoning.
+const DEFAULT_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct";
 
 function isR1Model(model: string): boolean {
   return /deepseek.*r1|r1.*distill/i.test(model);
