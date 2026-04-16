@@ -2,12 +2,20 @@
 // generic-item-name heuristic. Both are the key pieces that prevent
 // the "searches for 'Item from Amazon'" bug from recurring.
 
-const { parseProductMetadata, fetchProductMetadata } = await import(
-  "../src/modules/automation/product-metadata.ts"
-);
+const { parseProductMetadata, fetchProductMetadata, _resetProductMetadataCacheForTests } =
+  await import("../src/modules/automation/product-metadata.ts");
 const { looksLikeGenericItemName } = await import(
   "../src/modules/operator-bot/agent.ts"
 );
+
+// Reset cache before each scenario so state doesn't leak between
+// scenarios (the real thing is a module-level Map). Tests also pass
+// skipPuppeteer=true so we don't accidentally try to launch real
+// Chrome during tests.
+function freshOpts(extras: Record<string, unknown> = {}) {
+  _resetProductMetadataCacheForTests();
+  return { skipPuppeteer: true, skipCache: false, ...extras };
+}
 
 let passed = 0;
 let failed = 0;
@@ -112,94 +120,90 @@ await runScenario("parseProductMetadata: empty HTML returns nulls", () => {
 
 // ── fetchProductMetadata with injected fetch ──────────────────────
 await runScenario("fetchProductMetadata: happy path returns parsed metadata", async () => {
-  const meta = await fetchProductMetadata("https://fake.example/product", {
+  const meta = await fetchProductMetadata("https://fake.example/product", freshOpts({
     fetchImpl: async () =>
       new Response(
         `<meta property="og:title" content="My Cool Product">`,
         { status: 200, headers: { "Content-Type": "text/html" } }
       ),
-  });
+  }));
   assert(meta?.title === "My Cool Product", `title extracted (got: ${meta?.title})`);
 });
 
 await runScenario("fetchProductMetadata: 404 returns null", async () => {
-  const meta = await fetchProductMetadata("https://fake.example/404", {
+  const meta = await fetchProductMetadata("https://fake.example/404", freshOpts({
     fetchImpl: async () => new Response("not found", { status: 404 }),
-  });
+  }));
   assert(meta === null, "404 → null");
 });
 
 await runScenario("fetchProductMetadata: non-HTML content-type returns null", async () => {
-  const meta = await fetchProductMetadata("https://fake.example/image.png", {
+  const meta = await fetchProductMetadata("https://fake.example/image.png", freshOpts({
     fetchImpl: async () =>
       new Response("binary", {
         status: 200,
         headers: { "Content-Type": "image/png" },
       }),
-  });
+  }));
   assert(meta === null, "non-HTML → null");
 });
 
 await runScenario("fetchProductMetadata: thrown error returns null (no propagation)", async () => {
-  const meta = await fetchProductMetadata("https://fake.example/x", {
+  const meta = await fetchProductMetadata("https://fake.example/x", freshOpts({
     fetchImpl: async () => {
       throw new Error("network down");
     },
-  });
+  }));
   assert(meta === null, "network error → null");
 });
 
-// ── Microlink fallback ─────────────────────────────────────────────
+// ── Puppeteer primary + microlink fallback ────────────────────────
 await runScenario(
-  "fetchProductMetadata: Amazon URL skips direct + hits microlink first",
+  "fetchProductMetadata: Amazon URL → puppeteer primary (skips direct)",
   async () => {
     const hits: string[] = [];
+    let puppeteerCalls = 0;
     const meta = await fetchProductMetadata(
       "https://www.amazon.ca/dp/B000FDL68W?ref=foo",
-      {
-        fetchImpl: async (url) => {
+      freshOpts({
+        skipPuppeteer: false,
+        fetchImpl: async (url: string | URL | Request) => {
           const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : String(url);
           hits.push(href);
-          if (href.startsWith("https://api.microlink.io")) {
-            return new Response(
-              JSON.stringify({
-                status: "success",
-                data: {
-                  title: "Urnex Rinza Alkaline Formula Milk Frother Cleaner, 33.6 Ounce",
-                  description: "For use on the milk systems of coffee machines",
-                  image: { url: "https://cdn.example/rinza.jpg" },
-                },
-              }),
-              { status: 200, headers: { "Content-Type": "application/json" } }
-            );
-          }
-          return new Response("direct should not be called", { status: 500 });
+          return new Response("should not be called", { status: 500 });
         },
-      }
+        puppeteerImpl: async (u: string) => {
+          puppeteerCalls += 1;
+          return {
+            title: "Urnex Rinza Alkaline Formula Milk Frother Cleaner, 33.6 Ounce",
+            description: "For use on the milk systems of coffee machines",
+            imageUrl: null,
+          };
+        },
+      })
     );
     assert(meta !== null, "metadata returned");
     assert(
       meta?.title === "Urnex Rinza Alkaline Formula Milk Frother Cleaner, 33.6 Ounce",
-      `real title via microlink (got: ${meta?.title})`
+      `real title via puppeteer (got: ${meta?.title})`
     );
-    assert(meta?.source === "microlink", `source=microlink (got: ${meta?.source})`);
+    assert(meta?.source === "puppeteer", `source=puppeteer (got: ${meta?.source})`);
+    assert(puppeteerCalls === 1, "puppeteer was called once");
     assert(
-      hits.length === 1,
-      `only ONE fetch fired for Amazon (got ${hits.length}) — direct was skipped`
-    );
-    assert(
-      hits[0].startsWith("https://api.microlink.io"),
-      "that one fetch went to microlink"
+      hits.length === 0,
+      `direct fetch NOT called (got ${hits.length}) — Amazon is known-blocked`
     );
   }
 );
 
 await runScenario(
-  "fetchProductMetadata: direct hits for non-blocked site, microlink never called",
+  "fetchProductMetadata: direct hits for non-blocked site, puppeteer + microlink never called",
   async () => {
     const hits: string[] = [];
-    const meta = await fetchProductMetadata("https://small-site.example/cool-widget", {
-      fetchImpl: async (url) => {
+    let puppeteerCalls = 0;
+    const meta = await fetchProductMetadata("https://small-site.example/cool-widget", freshOpts({
+      skipPuppeteer: false,
+      fetchImpl: async (url: string | URL | Request) => {
         const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : String(url);
         hits.push(href);
         if (href.startsWith("https://small-site.example")) {
@@ -210,10 +214,15 @@ await runScenario(
         }
         return new Response("unreachable", { status: 500 });
       },
-    });
+      puppeteerImpl: async () => {
+        puppeteerCalls += 1;
+        return null;
+      },
+    }));
     assert(meta?.title === "Cool Widget 2.0", `direct title (got: ${meta?.title})`);
     assert(meta?.source === "direct", `source=direct (got: ${meta?.source})`);
     assert(hits.length === 1, "only direct was called");
+    assert(puppeteerCalls === 0, "puppeteer NOT called (direct won)");
     assert(
       !hits.some((h) => h.startsWith("https://api.microlink.io")),
       "microlink NOT called"
@@ -222,46 +231,16 @@ await runScenario(
 );
 
 await runScenario(
-  "fetchProductMetadata: direct fails → microlink rescues (non-Amazon site)",
+  "fetchProductMetadata: direct fails + puppeteer fails → microlink rescues",
   async () => {
     const hits: string[] = [];
-    const meta = await fetchProductMetadata("https://obscure.example/product", {
-      fetchImpl: async (url) => {
+    let puppeteerCalls = 0;
+    const meta = await fetchProductMetadata("https://obscure.example/product", freshOpts({
+      skipPuppeteer: false,
+      fetchImpl: async (url: string | URL | Request) => {
         const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : String(url);
         hits.push(href);
         if (href.startsWith("https://obscure.example")) {
-          // Direct returns captcha with no metadata
-          return new Response(`<html><head><title>Bot Check</title></head></html>`, {
-            status: 200,
-            headers: { "Content-Type": "text/html" },
-          });
-        }
-        if (href.startsWith("https://api.microlink.io")) {
-          return new Response(
-            JSON.stringify({
-              status: "success",
-              data: { title: "Real Product Name", image: { url: null } },
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } }
-          );
-        }
-        return new Response("wat", { status: 500 });
-      },
-    });
-    // Direct returned <title>Bot Check</title>. Title is present, so
-    // microlink isn't called (by design — length check ≥ 3). This
-    // asserts we fall through to microlink ONLY when direct returned
-    // nothing or too-short. Actually "Bot Check" has length 9, so
-    // direct "wins" — but that's the correct behavior. For a real
-    // "microlink rescues" scenario, direct must return empty.
-    // Re-test with empty direct:
-    const hits2: string[] = [];
-    const meta2 = await fetchProductMetadata("https://obscure.example/product", {
-      fetchImpl: async (url) => {
-        const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : String(url);
-        hits2.push(href);
-        if (href.startsWith("https://obscure.example")) {
-          // No metadata at all
           return new Response(`<html><head></head></html>`, {
             status: 200,
             headers: { "Content-Type": "text/html" },
@@ -278,48 +257,143 @@ await runScenario(
         }
         return new Response("wat", { status: 500 });
       },
-    });
-    assert(meta?.title === "Bot Check", "direct won when it had content");
-    assert(meta2?.title === "Rescued Title", `microlink rescued (got: ${meta2?.title})`);
-    assert(meta2?.source === "microlink", "source flagged microlink");
-    assert(hits2.length === 2, "both direct and microlink were called");
+      puppeteerImpl: async () => {
+        puppeteerCalls += 1;
+        return null; // puppeteer also fails
+      },
+    }));
+    assert(meta?.title === "Rescued Title", `microlink rescued (got: ${meta?.title})`);
+    assert(meta?.source === "microlink", "source flagged microlink");
+    assert(puppeteerCalls === 1, "puppeteer was attempted");
+    assert(hits.some((h) => h.startsWith("https://api.microlink.io")), "microlink called");
   }
 );
 
-await runScenario("fetchProductMetadata: microlink JSON error → null", async () => {
-  const meta = await fetchProductMetadata("https://www.amazon.com/dp/XXX", {
+await runScenario("fetchProductMetadata: microlink JSON fail status → null", async () => {
+  const meta = await fetchProductMetadata("https://www.amazon.com/dp/XXX", freshOpts({
+    skipPuppeteer: true,
     fetchImpl: async () =>
       new Response(
         JSON.stringify({ status: "fail", message: "quota exceeded" }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       ),
-  });
+  }));
   assert(meta === null, "non-success status → null");
 });
 
 await runScenario("fetchProductMetadata: microlink HTTP error → null", async () => {
-  const meta = await fetchProductMetadata("https://www.amazon.com/dp/XXX", {
+  const meta = await fetchProductMetadata("https://www.amazon.com/dp/XXX", freshOpts({
+    skipPuppeteer: true,
     fetchImpl: async () => new Response("429", { status: 429 }),
-  });
+  }));
   assert(meta === null, "HTTP error → null");
 });
 
-await runScenario("fetchProductMetadata: preferService=true skips direct", async () => {
-  const hits: string[] = [];
-  await fetchProductMetadata("https://small-site.example/x", {
-    preferService: true,
-    fetchImpl: async (url) => {
-      const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : String(url);
-      hits.push(href);
-      return new Response(
-        JSON.stringify({ status: "success", data: { title: "Forced Service" } }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    },
+// ── Cache tests ────────────────────────────────────────────────────
+await runScenario("fetchProductMetadata: same URL twice → cache hit", async () => {
+  _resetProductMetadataCacheForTests();
+  let fetchCount = 0;
+  const stub = async (url: string | URL | Request) => {
+    const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : String(url);
+    fetchCount += 1;
+    if (href.startsWith("https://small-site.example")) {
+      return new Response(`<meta property="og:title" content="Cached Widget">`, {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+    }
+    return new Response("x", { status: 500 });
+  };
+
+  const first = await fetchProductMetadata("https://small-site.example/x", {
+    skipPuppeteer: true,
+    fetchImpl: stub as typeof fetch,
   });
-  assert(hits.length === 1, "only one fetch");
-  assert(hits[0].startsWith("https://api.microlink.io"), "went straight to microlink");
+  assert(first?.source === "direct", "first call hits direct");
+  assert(fetchCount === 1, `fetched once (got ${fetchCount})`);
+
+  const second = await fetchProductMetadata("https://small-site.example/x", {
+    skipPuppeteer: true,
+    fetchImpl: stub as typeof fetch,
+  });
+  assert(second?.title === "Cached Widget", "cached title returned");
+  assert(second?.source === "cache", `source=cache (got: ${second?.source})`);
+  assert(fetchCount === 1, `still 1 fetch — cache prevented second (got ${fetchCount})`);
 });
+
+await runScenario(
+  "fetchProductMetadata: cacheKey normalises tracking params so /dp/X?ref=A and /dp/X?ref=B hit same entry",
+  async () => {
+    _resetProductMetadataCacheForTests();
+    let puppeteerCalls = 0;
+    const puppeteerImpl = async () => {
+      puppeteerCalls += 1;
+      return { title: "Amazon Product", description: null, imageUrl: null };
+    };
+    const first = await fetchProductMetadata(
+      "https://www.amazon.com/dp/B005YJZE2I?ref=foo",
+      { skipPuppeteer: false, puppeteerImpl, fetchImpl: undefined }
+    );
+    const second = await fetchProductMetadata(
+      "https://www.amazon.com/dp/B005YJZE2I?ref=bar&pd_rd_w=x",
+      { skipPuppeteer: false, puppeteerImpl, fetchImpl: undefined }
+    );
+    assert(first?.title === "Amazon Product", "first hit");
+    assert(second?.source === "cache", "second was a cache hit despite different tracking params");
+    assert(
+      puppeteerCalls === 1,
+      `puppeteer only called once across both (got ${puppeteerCalls})`
+    );
+  }
+);
+
+await runScenario("fetchProductMetadata: skipCache=true forces re-fetch", async () => {
+  _resetProductMetadataCacheForTests();
+  let fetchCount = 0;
+  const stub = async () => {
+    fetchCount += 1;
+    return new Response(`<meta property="og:title" content="Fresh Widget">`, {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    });
+  };
+  await fetchProductMetadata("https://small-site.example/x", {
+    skipPuppeteer: true,
+    fetchImpl: stub as typeof fetch,
+  });
+  await fetchProductMetadata("https://small-site.example/x", {
+    skipPuppeteer: true,
+    skipCache: true,
+    fetchImpl: stub as typeof fetch,
+  });
+  assert(fetchCount === 2, `two fetches when skipCache=true (got ${fetchCount})`);
+});
+
+await runScenario(
+  "fetchProductMetadata: preferService=true skips direct + prefers puppeteer path",
+  async () => {
+    _resetProductMetadataCacheForTests();
+    const hits: string[] = [];
+    let puppeteerCalls = 0;
+    await fetchProductMetadata("https://small-site.example/x", {
+      preferService: true,
+      fetchImpl: (async (url) => {
+        const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : String(url);
+        hits.push(href);
+        return new Response("y", { status: 500 });
+      }) as typeof fetch,
+      puppeteerImpl: async () => {
+        puppeteerCalls += 1;
+        return { title: "Forced Puppeteer", description: null, imageUrl: null };
+      },
+    });
+    assert(puppeteerCalls === 1, "puppeteer used");
+    assert(
+      !hits.some((h) => h.startsWith("https://small-site.example")),
+      "direct NOT called when preferService=true"
+    );
+  }
+);
 
 // ── looksLikeGenericItemName heuristic ────────────────────────────
 await runScenario("looksLikeGenericItemName: catches placeholder names", () => {

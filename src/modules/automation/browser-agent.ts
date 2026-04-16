@@ -22,6 +22,7 @@ import { addItemsToGenericSite } from "@/modules/automation/sites/generic";
 import { AGENT_TIMEOUT_MS } from "@/modules/automation/browser-safety";
 import { buildCartLinks, buildCartReadyKeyboard } from "@/modules/automation/cart-links";
 import { recordAgentStep } from "@/modules/automation/agent-steps";
+import { findOrDownloadChrome } from "@/modules/automation/chrome-launcher";
 import { env } from "@/lib/env";
 
 export type BrowserAgentResult = {
@@ -149,118 +150,12 @@ export async function runWebsiteOrderAgent(
       notes: `Opening ${po.supplier.name} · ${searchTerms.length} line${searchTerms.length === 1 ? "" : "s"}`,
     });
 
-    // Launch Chrome using puppeteer's own browser management.
-    // `npx puppeteer browsers install chrome` runs at build time
-    // and caches the binary. puppeteer-core finds it via the
-    // PUPPETEER_CACHE_DIR or default ~/.cache/puppeteer path.
+    // Launch Chrome via the shared launcher (see chrome-launcher.ts).
+    // Runtime download + cache handled there. Shared with the
+    // product-metadata puppeteer fetcher so both paths reuse the
+    // same /tmp/.chrome-cache binary.
     const puppeteer = (await import("puppeteer-core")).default;
-    const fs = await import("node:fs");
-    const path = await import("node:path");
-    const { execSync } = await import("node:child_process");
-
-    // Find Chrome binary — check puppeteer cache, common system
-    // paths, and PUPPETEER_EXECUTABLE_PATH env var.
-    // Chrome is downloaded at runtime on first use and cached in
-    // /tmp/.chrome-cache (survives within a container's lifetime).
-    // Build-time installs don't persist on Railway nixpacks.
-    const CACHE_DIR = "/tmp/.chrome-cache";
-    let execPath = process.env.PUPPETEER_EXECUTABLE_PATH ?? "";
-
-    // Check system paths first (fast)
-    if (!execPath || !fs.existsSync(execPath)) {
-      for (const p of ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]) {
-        if (fs.existsSync(p)) { execPath = p; break; }
-      }
-    }
-
-    // Check runtime cache
-    if (!execPath || !fs.existsSync(execPath)) {
-      try {
-        const found = execSync(
-          `find ${CACHE_DIR} -name "chrome" -type f 2>/dev/null | head -1`,
-          { encoding: "utf8" }
-        ).trim();
-        if (found && fs.existsSync(found)) execPath = found;
-      } catch { /* not cached yet */ }
-    }
-
-    // Download Chrome at runtime if not found (first use only, ~30-60s).
-    // Uses a direct URL since npx isn't in the standalone runtime.
-    if (!execPath || !fs.existsSync(execPath)) {
-      console.log("[browser-agent] Chrome not found — downloading at runtime...");
-      try {
-        const CHROME_DIR = `${CACHE_DIR}/chrome`;
-        fs.mkdirSync(CHROME_DIR, { recursive: true });
-
-        // Fetch the latest Chrome for Testing stable version
-        const versionsUrl = "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json";
-        const versionsRes = await fetch(versionsUrl);
-        const versionsData = (await versionsRes.json()) as {
-          channels: {
-            Stable: {
-              version: string;
-              downloads: {
-                chrome: Array<{ platform: string; url: string }>;
-              };
-            };
-          };
-        };
-        const chromeUrl = versionsData.channels.Stable.downloads.chrome
-          .find((d) => d.platform === "linux64")?.url;
-        if (!chromeUrl) throw new Error("No linux64 Chrome download URL found");
-
-        console.log(`[browser-agent] Downloading from: ${chromeUrl}`);
-        const zipPath = `${CACHE_DIR}/chrome.zip`;
-        const downloadRes = await fetch(chromeUrl);
-        const arrayBuf = await downloadRes.arrayBuffer();
-        fs.writeFileSync(zipPath, Buffer.from(arrayBuf));
-
-        // Extract using the pure-JS 'unzipper' package (no system
-        // deps needed — Railway's runtime has no unzip/python3).
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const unzipper = require("unzipper") as {
-          Extract: (opts: { path: string }) => NodeJS.WritableStream;
-        };
-        const extractDir = `${CACHE_DIR}/chrome-extracted`;
-        fs.mkdirSync(extractDir, { recursive: true });
-        await new Promise<void>((resolve, reject) => {
-          fs.createReadStream(zipPath)
-            .pipe(unzipper.Extract({ path: extractDir }))
-            .on("close", resolve)
-            .on("error", reject);
-        });
-
-        // Find the chrome binary inside
-        const found = execSync(
-          `find ${CACHE_DIR}/chrome-extracted -name "chrome" -type f | head -1`,
-          { encoding: "utf8" }
-        ).trim();
-        if (found && fs.existsSync(found)) {
-          // Make ALL binaries in the Chrome directory executable —
-          // unzipper strips Unix permissions so chrome, chrome_crashpad_handler,
-          // and other helpers all need +x.
-          const chromeDir = path.dirname(found);
-          try {
-            const files = fs.readdirSync(chromeDir);
-            for (const f of files) {
-              const full = path.join(chromeDir, f);
-              try { fs.chmodSync(full, 0o755); } catch { /* skip non-files */ }
-            }
-          } catch { /* ignore */ }
-          execPath = found;
-          console.log(`[browser-agent] Chrome ready at: ${execPath}`);
-        }
-      } catch (dlErr) {
-        throw new Error(
-          `Failed to download Chrome: ${dlErr instanceof Error ? dlErr.message : String(dlErr)}`
-        );
-      }
-    }
-
-    if (!execPath || !fs.existsSync(execPath)) {
-      throw new Error("Chrome still not found after download attempt.");
-    }
-
+    const execPath = await findOrDownloadChrome("[browser-agent]");
     console.log(`[browser-agent] Using Chrome at: ${execPath}`);
     browser = await puppeteer.launch({
       args: [

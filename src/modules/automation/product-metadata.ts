@@ -5,19 +5,31 @@
  * Amazon's `/dp/B000FDL68W?ref=...` format), instead of falling back
  * to a useless placeholder like "Item from Amazon".
  *
- * Two-tier strategy:
- *   1. Direct HTTP GET with a browser User-Agent — fast, free, and
- *      works on most sites. BUT Amazon aggressively blocks cloud-
- *      provider IPs (Railway, AWS, Fly) with a captcha page that
- *      has no og:title, so direct always fails for Amazon in prod.
- *   2. Microlink.io fallback — free public API, runs the URL through
- *      their own rendering farm (residential IPs, real browsers)
- *      and returns clean metadata. Fires when direct returned no
- *      title. Free tier: 50 requests/day per IP.
+ * Three-tier strategy with an in-memory cache on top:
  *
- * Failures return null so callers can fall back to whatever name
- * they had. Detailed console logging so production issues are
- * debuggable from Railway logs alone.
+ *   0. CACHE — same URL within an hour → instant return. Doubles
+ *      as a rate-limit shield for microlink.
+ *
+ *   1. DIRECT HTTP — plain fetch with a browser UA. Fast (<1s), free.
+ *      Works on most sites. Skipped for known bot-blocking hostnames
+ *      (Amazon, Costco, Walmart, etc.) so we don't waste 5s on a
+ *      guaranteed captcha page.
+ *
+ *   2. PUPPETEER (our own Chrome) — primary for bot-blocked sites,
+ *      fallback for everything else. Completely free, no rate limit,
+ *      no third-party dependency, reuses the Chrome binary the
+ *      ordering agent already downloaded to /tmp/.chrome-cache.
+ *      Slower (~3-5s) but reliable — real browser TLS fingerprint.
+ *      Browser instance is process-shared + idle-closes after 5min
+ *      so back-to-back fetches only pay launch cost once.
+ *
+ *   3. MICROLINK.IO — last-resort emergency fallback. Free public
+ *      API (50 req/day/IP, no key required). Only fires if both
+ *      direct AND puppeteer failed. In practice puppeteer always
+ *      wins on Railway, so we rarely if ever hit this.
+ *
+ * Failures return null. All decisions log to console so production
+ * issues are debuggable from Railway logs alone.
  */
 
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -33,8 +45,58 @@ export type ProductMetadata = {
   description: string | null;
   imageUrl: string | null;
   /** Which path produced the metadata — for logging + debug. */
-  source?: "direct" | "microlink" | "none";
+  source?: "direct" | "puppeteer" | "microlink" | "cache" | "none";
 };
+
+// ── In-memory URL → metadata cache ──────────────────────────────────
+// Same URL pasted twice (by the same or different managers) → second
+// hit is instant, doesn't spend Chrome / microlink budget.
+type CacheEntry = { at: number; value: ProductMetadata };
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const CACHE_MAX_ENTRIES = 500;
+const cache = new Map<string, CacheEntry>();
+
+function cacheKey(url: string): string {
+  // Normalise URL for caching — strip tracking query params that
+  // don't affect the product identity (ref, pd_rd_*, psc, etc.).
+  try {
+    const parsed = new URL(url);
+    const keep = new URLSearchParams();
+    for (const [k, v] of parsed.searchParams.entries()) {
+      if (/^(?:tag|asin|k|q)$/i.test(k)) keep.set(k, v);
+    }
+    parsed.search = keep.toString();
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function cacheGet(url: string): ProductMetadata | null {
+  const key = cacheKey(url);
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.at > CACHE_TTL_MS) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function cacheSet(url: string, value: ProductMetadata): void {
+  const key = cacheKey(url);
+  cache.set(key, { at: Date.now(), value });
+  // Simple FIFO eviction when we exceed the cap.
+  if (cache.size > CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest) cache.delete(oldest);
+  }
+}
+
+/** Test helper: reset the cache so scenarios don't bleed into each other. */
+export function _resetProductMetadataCacheForTests(): void {
+  cache.clear();
+}
 
 /**
  * Hostnames where we've empirically confirmed direct fetch is
@@ -61,39 +123,93 @@ function isKnownToBlockDirect(url: string): boolean {
 }
 
 /**
- * Primary public API. Tries direct fetch first (unless the URL is on
- * our bot-detection blocklist), then falls back to microlink.io if
- * direct returned no title.
+ * Primary public API. Order of attempts (first title wins):
+ *   0. In-memory cache (1h TTL)
+ *   1. Direct HTTP fetch — skipped for known-blocked hostnames
+ *   2. Puppeteer (our own Chrome) — unlimited, free, reliable
+ *   3. Microlink.io — 50/day free emergency fallback
+ *
+ * Tests inject `fetchImpl` + `puppeteerImpl` to stub network calls.
  */
 export async function fetchProductMetadata(
   url: string,
   options?: {
     timeoutMs?: number;
     fetchImpl?: typeof fetch;
-    /** Skip the direct fetch and go straight to microlink. */
+    /** Skip direct fetch entirely (force service/puppeteer path). */
     preferService?: boolean;
+    /** Test-only: inject a stub for the puppeteer path. */
+    puppeteerImpl?: (url: string) => Promise<ProductMetadata | null>;
+    /** Test-only: disable puppeteer fallback (e.g. when Chrome isn't available). */
+    skipPuppeteer?: boolean;
+    /** Test-only: bypass the in-memory cache. */
+    skipCache?: boolean;
   }
 ): Promise<ProductMetadata | null> {
   const label = truncateForLog(url, 80);
+
+  // Cache hit → instant return.
+  if (!options?.skipCache) {
+    const cached = cacheGet(url);
+    if (cached) {
+      console.log(`[product-metadata] cache hit for ${label}: "${truncateForLog(cached.title ?? "", 60)}"`);
+      return { ...cached, source: "cache" };
+    }
+  }
+
   const skipDirect = options?.preferService || isKnownToBlockDirect(url);
 
+  // Tier 1: direct HTTP (skipped for known-blocked hostnames).
   if (!skipDirect) {
     const direct = await fetchDirect(url, options);
     if (direct?.title && direct.title.length >= 3) {
       console.log(`[product-metadata] direct hit for ${label}: "${truncateForLog(direct.title, 60)}"`);
-      return { ...direct, source: "direct" };
+      const result = { ...direct, source: "direct" as const };
+      cacheSet(url, result);
+      return result;
     }
-    console.log(`[product-metadata] direct missed for ${label}; trying microlink`);
+    console.log(`[product-metadata] direct missed for ${label}; trying puppeteer`);
   } else {
-    console.log(`[product-metadata] skipping direct for ${label} (known to block); using microlink`);
+    console.log(`[product-metadata] skipping direct for ${label} (known to block); using puppeteer`);
   }
 
+  // Tier 2: puppeteer (our own Chrome — free, unlimited).
+  if (!options?.skipPuppeteer) {
+    const fetcher =
+      options?.puppeteerImpl ??
+      (async (u: string) => {
+        try {
+          const mod = await import("@/modules/automation/product-metadata-puppeteer");
+          return await mod.fetchViaPuppeteer(u);
+        } catch (err) {
+          console.log(
+            "[product-metadata] puppeteer module unavailable:",
+            err instanceof Error ? err.message : String(err)
+          );
+          return null;
+        }
+      });
+    const viaPuppeteer = await fetcher(url);
+    if (viaPuppeteer?.title && viaPuppeteer.title.length >= 3) {
+      console.log(
+        `[product-metadata] puppeteer hit for ${label}: "${truncateForLog(viaPuppeteer.title, 60)}"`
+      );
+      const result = { ...viaPuppeteer, source: "puppeteer" as const };
+      cacheSet(url, result);
+      return result;
+    }
+    console.log(`[product-metadata] puppeteer missed for ${label}; trying microlink`);
+  }
+
+  // Tier 3: microlink.io emergency fallback.
   const viaService = await fetchViaMicrolink(url, options);
   if (viaService?.title) {
     console.log(
       `[product-metadata] microlink hit for ${label}: "${truncateForLog(viaService.title, 60)}"`
     );
-    return { ...viaService, source: "microlink" };
+    const result = { ...viaService, source: "microlink" as const };
+    cacheSet(url, result);
+    return result;
   }
   console.log(`[product-metadata] all paths failed for ${label}`);
   return null;
