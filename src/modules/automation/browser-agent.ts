@@ -336,17 +336,23 @@ export async function runWebsiteOrderAgent(
       },
     });
 
-    // Build cart-link buttons. Two buttons may appear:
-    //   - "🛍 Add to MY cart" (Amazon, when we recovered ASINs from
-    //     pasted product URLs) — deep-link the user's logged-in
-    //     Amazon session to add the items even without saved cookies.
-    //   - "🛒 Open Amazon cart" / "🌐 Open <supplier>" — works
-    //     immediately when the manager has saved cookies (agent's
-    //     cart IS their cart); for other users it at least gets them
-    //     to the right site signed in to their own account.
+    // Build cart-link buttons. Behavior depends on whether the
+    // manager set up saved cookies for this supplier:
+    //   - WITH cookies → agent built the cart in their REAL Amazon
+    //     session, so we show "🛒 Open my Amazon cart" — clicking
+    //     opens their populated cart immediately.
+    //   - WITHOUT cookies → the agent's cart vanishes when the
+    //     headless browser closes. Public Amazon URLs to "transfer"
+    //     a cart to a logged-out user don't work (we tried, real
+    //     users hit empty carts). So we instead show one product-
+    //     page button per line so the manager can tap each one and
+    //     add to their own cart with one extra tap. Plus a heavy
+    //     hint to set up saved cookies for next time.
+    const hasCredentials = !!credentials;
     const cartLinks = buildCartLinks({
       supplierWebsite: po.supplier.website,
       supplierName: po.supplier.name,
+      hasCredentials,
       lines: po.lines.map((l) => ({
         description: l.description || l.inventoryItem.name,
         quantityOrdered: l.quantityOrdered,
@@ -355,13 +361,11 @@ export async function runWebsiteOrderAgent(
     });
     const replyMarkup = buildCartReadyKeyboard({ agentTaskId, links: cartLinks });
 
-    // Append a one-line hint to the caption so users without saved
-    // cookies don't get confused by an empty cart on their phone.
-    const captionExtra = cartLinks.addToMyCartUrl
-      ? `\n\n👉 Tap *Add to MY cart* to load these into your own Amazon account.`
-      : credentials
-        ? "" // user has cookies → opening the cart link will show items
-        : `\n\n_Heads up: without saved login (Settings → Suppliers → Website login), the agent's cart isn't tied to your account — tap *Open ${po.supplier.name}* and add the items there._`;
+    const captionExtra = hasCredentials
+      ? `\n\n✓ Items are in *your* Amazon account (saved login). Tap above to checkout.`
+      : cartLinks.productButtons.length > 0
+        ? `\n\n_Tap each product below to open it on Amazon and Add to Cart in your own account._\n_(Set up saved login at Settings → Suppliers → Website login to skip this step next time.)_`
+        : `\n\n_Without a saved login the agent's cart can't be transferred to your account. Open *${po.supplier.name}* and add the items there, or set up Settings → Suppliers → Website login._`;
     const fullCaption = `${summary}${captionExtra}`;
 
     // Send cart screenshot + approval buttons to the same managers

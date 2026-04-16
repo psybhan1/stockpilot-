@@ -439,13 +439,25 @@ async function websiteCartApproveFromBot(
   });
 
   // Re-derive the cart links so the Approved-state message keeps the
-  // tap targets visible — without this, the user only sees the link
-  // on the original cart-ready message and has to scroll up.
+  // tap targets visible. We need to know whether the agent had saved
+  // credentials — that determines whether "open cart" actually shows
+  // a populated cart, or whether we should instead show per-product
+  // buttons for the user to add manually.
+  const freshSupplier = await db.supplier.findFirst({
+    where: { purchaseOrders: { some: { id: task.purchaseOrder.id } } },
+    select: { websiteCredentials: true },
+  });
+  const { decryptSupplierCredentials } = await import(
+    "@/modules/suppliers/website-credentials"
+  );
+  const hasCredentials = !!decryptSupplierCredentials(freshSupplier?.websiteCredentials);
+
   const { buildCartLinks } = await import("@/modules/automation/cart-links");
   const { extractLineProductUrl } = await import("@/modules/automation/browser-agent");
   const links = buildCartLinks({
     supplierWebsite: task.purchaseOrder.supplier?.website ?? null,
     supplierName: task.purchaseOrder.supplier?.name ?? "supplier",
+    hasCredentials,
     lines: task.purchaseOrder.lines.map((l) => ({
       description: l.description || l.inventoryItem.name,
       quantityOrdered: l.quantityOrdered,
@@ -454,20 +466,27 @@ async function websiteCartApproveFromBot(
   });
 
   const editKeyboard: InlineKeyboard = [];
-  const urlRow: InlineKeyboard[number] = [];
-  if (links.addToMyCartUrl) urlRow.push({ text: "🛍 Add to MY cart", url: links.addToMyCartUrl });
-  if (links.openCartUrl) urlRow.push({ text: links.openCartLabel, url: links.openCartUrl });
-  if (urlRow.length > 0) editKeyboard.push(urlRow);
+  if (links.openCartUrl) {
+    editKeyboard.push([{ text: links.openCartLabel, url: links.openCartUrl }]);
+  }
+  for (const btn of links.productButtons) {
+    editKeyboard.push([btn]);
+  }
+
+  const supplierName = task.purchaseOrder.supplier?.name ?? "the supplier";
+  const body = hasCredentials
+    ? `✓ The items are in your real ${supplierName} cart (saved login). Tap *${links.openCartLabel}* to checkout.`
+    : links.productButtons.length > 0
+      ? `Tap each product below to open it on ${supplierName} and Add to Cart in your own account.\n\n_Next time, save your ${supplierName} login at Settings → Suppliers and the agent will put items straight into your real cart._`
+      : `Open *${supplierName}* and add the items to your own cart.\n\n_Next time, save your ${supplierName} login at Settings → Suppliers and the agent will put items straight into your real cart._`;
 
   return {
     ok: true,
     toast: "Cart approved",
     editText:
       `✅ *${task.purchaseOrder.orderNumber}* cart approved.\n\n` +
-      (links.addToMyCartUrl
-        ? `Tap *Add to MY cart* below to load these into your own ${task.purchaseOrder.supplier?.name ?? "supplier"} account, or *${links.openCartLabel}* if you've already saved your login.\n\n`
-        : `Tap *${links.openCartLabel}* on your phone/laptop to review the cart and complete payment.\n\n`) +
-      `_StockPilot will never auto-pay. Your cart is waiting for you._`,
+      `${body}\n\n` +
+      `_StockPilot never auto-pays._`,
     editKeyboard: editKeyboard.length > 0 ? editKeyboard : null,
   };
 }

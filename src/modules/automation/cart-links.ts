@@ -1,25 +1,28 @@
 /**
  * Builds tap-to-open buttons for the cart-ready Telegram message.
  *
- * Two kinds of links are produced when applicable:
+ * The hard truth about transferring an Amazon cart in 2026: the old
+ * `/gp/aws/cart/add.html?ASIN.1=...` Associates URL is unreliable —
+ * Amazon either drops the items at the sign-in redirect or silently
+ * shows an empty cart. The ONLY reliable way to put items into the
+ * manager's real Amazon cart is to use saved cookies (the agent runs
+ * in the manager's logged-in session, so the cart it builds IS the
+ * manager's cart). Without cookies, the agent's cart lives in its
+ * own ephemeral session and the manager has to re-add the items in
+ * their own browser.
  *
- *   1. **Open-cart link** — `https://www.amazon.com/gp/cart/view.html`
- *      (or just the supplier home page for non-Amazon sites). Useful
- *      when the user has saved cookies for the supplier — the agent's
- *      cart IS their cart, so opening this link in their browser shows
- *      everything ready for checkout.
+ * So the buttons we render depend on `hasCredentials`:
  *
- *   2. **Add-to-MY-cart deep link** — for Amazon, the
- *      `/gp/aws/cart/add.html?ASIN.1=...&Quantity.1=...` pattern lets
- *      the user one-tap-add the items to their OWN logged-in cart.
- *      Critical for users who DON'T have saved cookies — the agent's
- *      anonymous cart vanishes when its headless browser closes, so
- *      this is the only way they can finish the order without
- *      re-typing the product names.
+ *   WITH cookies:
+ *     - "🛒 Open my cart on Amazon" — works, cart is populated
  *
- * Returns an empty result when no useful link can be built (e.g.
- * unknown site, no ASINs detectable). Caller decides which buttons
- * to render.
+ *   WITHOUT cookies (or non-Amazon supplier):
+ *     - One "📦 <name>" button per line item, opening the product
+ *       page directly so the manager can tap "Add to Cart" themselves
+ *     - "🌐 Open <supplier>" as a fallback
+ *
+ * No more broken `add.html` URL. We learned the hard way (real user
+ * tapped "Add to MY cart", logged in, found an empty cart).
  */
 
 export type CartLine = {
@@ -31,11 +34,27 @@ export type CartLine = {
   productUrl: string | null;
 };
 
+export type ProductPageButton = {
+  text: string;
+  url: string;
+};
+
 export type CartLinks = {
-  /** Opens the supplier's cart page (or homepage). Always present when supplierUrl is. */
+  /**
+   * Opens the supplier's cart page when the agent has saved
+   * credentials (cart was built in the manager's real session).
+   * Null otherwise — opening the cart in a fresh session shows
+   * nothing useful.
+   */
   openCartUrl: string | null;
-  /** Amazon-only: pre-filled cart-add URL for user's own session. */
-  addToMyCartUrl: string | null;
+  /**
+   * Direct links to the product pages — used when no credentials
+   * are saved, so the manager can tap straight to each product and
+   * add it to their own cart manually. Empty array for generic
+   * sites (no per-product URL available) or when credentials make
+   * them unnecessary.
+   */
+  productButtons: ProductPageButton[];
   /** Human-friendly label for the open-cart button (varies by site). */
   openCartLabel: string;
   /** Whether this is an Amazon-style supplier — controls which buttons to show. */
@@ -91,6 +110,14 @@ export function buildCartLinks(input: {
   supplierWebsite: string | null;
   supplierName: string;
   lines: CartLine[];
+  /**
+   * True when the agent ran with the manager's saved cookies, so
+   * the cart it built is in the manager's REAL Amazon account.
+   * Without cookies, "open cart" lands them in their own empty
+   * cart — so we suppress that button and offer per-product links
+   * instead.
+   */
+  hasCredentials: boolean;
 }): CartLinks {
   const isAmazon =
     !!detectAmazonHostname(input.supplierWebsite) ||
@@ -99,37 +126,39 @@ export function buildCartLinks(input: {
 
   if (isAmazon) {
     const storefront = pickAmazonStorefront(input.supplierWebsite);
-    const openCartUrl = `${storefront}/gp/cart/view.html`;
 
-    // Build add-to-cart URL from any ASINs we can recover. Amazon
-    // accepts up to 30 line items in this URL, plenty for our use.
-    const params = new URLSearchParams();
-    let lineNumber = 1;
-    for (const line of input.lines) {
+    // Direct product-page buttons (used when no cookies). Cap at 3
+    // to keep the keyboard tidy; multi-line POs above that are
+    // rare and the open-cart fallback still works.
+    const productButtons: ProductPageButton[] = [];
+    for (const line of input.lines.slice(0, 3)) {
       const asin = extractAmazonAsin(line.productUrl);
       if (!asin) continue;
-      params.append(`ASIN.${lineNumber}`, asin);
-      params.append(`Quantity.${lineNumber}`, String(Math.max(1, line.quantityOrdered)));
-      lineNumber += 1;
+      const labelBase = (line.description || "").trim();
+      const label = labelBase.length > 24 ? labelBase.slice(0, 22) + "…" : labelBase;
+      productButtons.push({
+        text: label ? `📦 ${label}` : "📦 Open product",
+        url: `${storefront}/dp/${asin}`,
+      });
     }
-    const addToMyCartUrl =
-      lineNumber > 1
-        ? `${storefront}/gp/aws/cart/add.html?${params.toString()}`
-        : null;
 
     return {
-      openCartUrl,
-      addToMyCartUrl,
-      openCartLabel: "🛒 Open Amazon cart",
+      // Open-cart only useful when cookies put the items in the
+      // manager's real cart. Otherwise it's misleading.
+      openCartUrl: input.hasCredentials ? `${storefront}/gp/cart/view.html` : null,
+      productButtons,
+      openCartLabel: "🛒 Open my Amazon cart",
       isAmazon: true,
     };
   }
 
-  // Generic site — best we can do is link to the home page and
-  // hope the user can navigate to their cart from there.
+  // Generic non-Amazon supplier. We don't know the cart-page URL
+  // structure, so we link to the home page. With cookies, opening
+  // the home page lets them click their cart icon. Without, they
+  // can at least navigate to the products.
   return {
     openCartUrl: input.supplierWebsite || null,
-    addToMyCartUrl: null,
+    productButtons: [],
     openCartLabel: `🌐 Open ${input.supplierName}`,
     isAmazon: false,
   };
@@ -140,6 +169,12 @@ export function buildCartLinks(input: {
  * Telegram message. Returns an array of rows ready to drop into
  * `replyMarkup`. Always includes the approve/cancel callback row;
  * URL buttons are added when the helper produces them.
+ *
+ * Layout:
+ *   - Row 1: "🛒 Open my Amazon cart" (only when hasCredentials)
+ *   - Rows 2..N: one product-page button per line (max 3, no
+ *     cookies case only)
+ *   - Last row: ✅ Looks good / ✖ Cancel callbacks
  */
 export function buildCartReadyKeyboard(input: {
   agentTaskId: string;
@@ -147,23 +182,17 @@ export function buildCartReadyKeyboard(input: {
 }): Array<Array<{ text: string; callback_data: string } | { text: string; url: string }>> {
   const rows: Array<Array<{ text: string; callback_data: string } | { text: string; url: string }>> = [];
 
-  // URL row(s) on top — most affordant tap target.
-  const urlRow: Array<{ text: string; url: string }> = [];
-  if (input.links.addToMyCartUrl) {
-    urlRow.push({
-      text: "🛍 Add to MY cart",
-      url: input.links.addToMyCartUrl,
-    });
-  }
   if (input.links.openCartUrl) {
-    urlRow.push({
-      text: input.links.openCartLabel,
-      url: input.links.openCartUrl,
-    });
+    rows.push([{ text: input.links.openCartLabel, url: input.links.openCartUrl }]);
   }
-  if (urlRow.length > 0) rows.push(urlRow);
 
-  // Callback row underneath.
+  // Product-page links — one per row so the labels (which include
+  // truncated product names) don't get squashed.
+  for (const btn of input.links.productButtons) {
+    rows.push([btn]);
+  }
+
+  // Always-present approve/cancel row.
   rows.push([
     {
       text: "✅ Looks good, I'll checkout myself",
