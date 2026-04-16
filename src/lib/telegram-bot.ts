@@ -125,6 +125,53 @@ export async function sendTelegramMessage(
 }
 
 /**
+ * Sends a photo (as a Buffer) to a Telegram chat. Used for cart
+ * screenshots from the browser ordering agent.
+ */
+export async function sendTelegramPhoto(
+  chatId: string,
+  photo: Buffer,
+  options?: {
+    caption?: string;
+    parseMode?: "Markdown" | "HTML";
+    replyMarkup?: InlineKeyboard;
+  }
+): Promise<SendTelegramMessageResult> {
+  if (!env.TELEGRAM_BOT_TOKEN) {
+    return { ok: false, skipped: true, reason: "Missing TELEGRAM_BOT_TOKEN" };
+  }
+
+  const form = new FormData();
+  form.append("chat_id", chatId);
+  form.append("photo", new Blob([new Uint8Array(photo)], { type: "image/jpeg" }), "cart.jpg");
+  if (options?.caption) form.append("caption", options.caption);
+  if (options?.parseMode) form.append("parse_mode", options.parseMode);
+  if (options?.replyMarkup) {
+    form.append(
+      "reply_markup",
+      JSON.stringify({ inline_keyboard: options.replyMarkup })
+    );
+  }
+
+  const response = await fetch(
+    `${env.TELEGRAM_BOT_API_BASE_URL.replace(/\/$/, "")}/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`,
+    { method: "POST", body: form }
+  );
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as { description?: string };
+    throw new Error(
+      payload.description ?? `Telegram sendPhoto failed with status ${response.status}`
+    );
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    result?: { message_id?: number };
+  };
+  return { ok: true, skipped: false, messageId: payload.result?.message_id };
+}
+
+/**
  * Shows a "typing…" indicator in the Telegram chat for up to 5 seconds.
  * Helpful when a downstream call (supplier dispatch, agent tool) is
  * going to take more than ~1s — gives the user immediate feedback

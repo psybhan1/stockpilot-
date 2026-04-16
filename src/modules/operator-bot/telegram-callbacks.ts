@@ -60,6 +60,12 @@ export async function handleTelegramCallback(
       case "po_snooze_delivery":
         result = await snoozeDeliveryFromBot(resourceId, ctx);
         break;
+      case "website_cart_approve":
+        result = await websiteCartApproveFromBot(resourceId, ctx);
+        break;
+      case "website_cart_cancel":
+        result = await websiteCartCancelFromBot(resourceId, ctx);
+        break;
       case "noop":
         result = { ok: true, toast: "", editText: "" };
         break;
@@ -385,6 +391,83 @@ async function snoozeDeliveryFromBot(
     ok: true,
     toast: "Snoozed 24h",
     editText: `⏰ *${po.orderNumber}* snoozed — I'll check back tomorrow.`,
+    editKeyboard: null,
+  };
+}
+
+// ── Website cart approval ────────────────────────────────────────────
+
+async function websiteCartApproveFromBot(
+  agentTaskId: string,
+  _ctx: { chatId: string; userId?: string | null }
+): Promise<CallbackResult> {
+  if (!agentTaskId) return { ok: false, toast: "Missing task", editText: "" };
+  const task = await db.agentTask.findUnique({
+    where: { id: agentTaskId },
+    select: {
+      id: true,
+      status: true,
+      purchaseOrder: {
+        select: {
+          id: true,
+          orderNumber: true,
+          supplier: { select: { name: true, website: true } },
+        },
+      },
+    },
+  });
+  if (!task?.purchaseOrder) return { ok: false, toast: "Not found", editText: "Task not found." };
+
+  await db.agentTask.update({
+    where: { id: agentTaskId },
+    data: { status: "COMPLETED" as never },
+  });
+  await db.purchaseOrder.update({
+    where: { id: task.purchaseOrder.id },
+    data: { status: PurchaseOrderStatus.ACKNOWLEDGED },
+  });
+
+  const url = task.purchaseOrder.supplier?.website ?? "";
+  return {
+    ok: true,
+    toast: "Cart approved",
+    editText:
+      `✅ *${task.purchaseOrder.orderNumber}* cart approved.\n\n` +
+      `Open ${url ? `[${task.purchaseOrder.supplier?.name ?? "supplier site"}](${url})` : "the supplier website"} on your phone/laptop to review the cart and complete payment.\n\n` +
+      `_StockPilot will never auto-pay. Your cart is waiting for you._`,
+    editKeyboard: null,
+  };
+}
+
+async function websiteCartCancelFromBot(
+  agentTaskId: string,
+  _ctx: { chatId: string; userId?: string | null }
+): Promise<CallbackResult> {
+  if (!agentTaskId) return { ok: false, toast: "Missing task", editText: "" };
+  const task = await db.agentTask.findUnique({
+    where: { id: agentTaskId },
+    select: {
+      id: true,
+      purchaseOrder: { select: { id: true, orderNumber: true } },
+    },
+  });
+  if (!task) return { ok: false, toast: "Not found", editText: "Task not found." };
+
+  await db.agentTask.update({
+    where: { id: agentTaskId },
+    data: { status: "FAILED" as never },
+  });
+  if (task.purchaseOrder) {
+    await db.purchaseOrder.update({
+      where: { id: task.purchaseOrder.id },
+      data: { status: PurchaseOrderStatus.CANCELLED },
+    });
+  }
+
+  return {
+    ok: true,
+    toast: "Cancelled",
+    editText: `✖ Website order ${task.purchaseOrder?.orderNumber ?? ""} cancelled. Cart was not purchased.`,
     editKeyboard: null,
   };
 }
