@@ -82,17 +82,17 @@ const TOOLS: ToolSchema[] = [
           current_quantity: {
             type: "string",
             description:
-              "Current on-hand quantity the user reported, in display units (e.g. '2' if they said '2 left'). 0 if unknown / not mentioned.",
+              "Current on-hand quantity the user reported (e.g. '2' if they said '2 left'). ALWAYS pass '0' if unknown or not mentioned. Never pass null.",
           },
           requested_quantity: {
             type: "string",
             description:
-              "OPTIONAL. The exact amount the user wants to ORDER (not what's left). Use the number they spoke, e.g. 12 for 'order 12 oz', 5 for '5 bags'. Omit if the user didn't specify an order quantity.",
+              "The exact amount to ORDER. Pass '0' or omit if user didn't specify. E.g. '12' for 'order 12 oz', '5' for '5 bags'. Never pass null.",
           },
           requested_unit: {
             type: "string",
             description:
-              "OPTIONAL. The unit the user used for requested_quantity. Free text — 'oz', 'lb', 'kg', 'g', 'ml', 'l', 'bag', 'case', 'each', etc. Pass exactly what they said. Required if requested_quantity is set.",
+              "The unit for requested_quantity. E.g. 'oz', 'bag', 'kg'. Pass '' (empty string) if not applicable. Never pass null.",
           },
         },
         required: ["item_id"],
