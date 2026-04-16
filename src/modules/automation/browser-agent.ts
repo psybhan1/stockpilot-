@@ -116,39 +116,38 @@ export async function runWebsiteOrderAgent(
 
     // Find Chrome binary — check puppeteer cache, common system
     // paths, and PUPPETEER_EXECUTABLE_PATH env var.
+    // Chrome path resolution: the build step writes the path to a
+    // known file. We read it at runtime.
     let execPath = process.env.PUPPETEER_EXECUTABLE_PATH ?? "";
     if (!execPath || !fs.existsSync(execPath)) {
-      // Search puppeteer cache directories
-      const cacheDirs = [
-        path.join(process.env.HOME ?? "/root", ".cache", "puppeteer"),
-        "/root/.cache/puppeteer",
-        "/app/.cache/puppeteer",
-      ];
-      for (const dir of cacheDirs) {
-        if (fs.existsSync(dir)) {
-          try {
-            // Find any chrome binary in the cache
-            const found = execSync(`find ${dir} -name "chrome" -type f 2>/dev/null | head -1`, {
-              encoding: "utf8",
-            }).trim();
-            if (found && fs.existsSync(found)) {
-              execPath = found;
-              break;
-            }
-          } catch { /* ignore */ }
+      // Read from the build-time marker file
+      const markerPaths = ["/app/.chrome-path", ".chrome-path"];
+      for (const marker of markerPaths) {
+        if (fs.existsSync(marker)) {
+          execPath = fs.readFileSync(marker, "utf8").trim();
+          if (execPath && fs.existsSync(execPath)) break;
         }
       }
     }
-    // Fallback: system-installed paths
     if (!execPath || !fs.existsSync(execPath)) {
+      // Brute-force search in the known install directory
+      try {
+        const found = execSync(
+          `find /app/.chrome-cache -name "chrome" -type f 2>/dev/null | head -1`,
+          { encoding: "utf8" }
+        ).trim();
+        if (found && fs.existsSync(found)) execPath = found;
+      } catch { /* ignore */ }
+    }
+    if (!execPath || !fs.existsSync(execPath)) {
+      // Last resort: system paths
       for (const p of ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]) {
         if (fs.existsSync(p)) { execPath = p; break; }
       }
     }
     if (!execPath || !fs.existsSync(execPath)) {
       throw new Error(
-        `Chrome not found. Searched puppeteer cache + system paths. ` +
-        `Set PUPPETEER_EXECUTABLE_PATH env var or run 'npx puppeteer browsers install chrome' at build time.`
+        `Chrome not found anywhere. Tried: /app/.chrome-path marker, /app/.chrome-cache/, system paths, PUPPETEER_EXECUTABLE_PATH env.`
       );
     }
 
