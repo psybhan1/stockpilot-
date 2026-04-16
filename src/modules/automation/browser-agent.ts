@@ -17,7 +17,6 @@ import { AgentTaskStatus, type Prisma } from "@/lib/prisma";
 import { db } from "@/lib/db";
 import { botTelemetry } from "@/lib/bot-telemetry";
 import { sendTelegramMessage, sendTelegramPhoto } from "@/lib/telegram-bot";
-// import { decryptCredential } from "@/lib/credential-encryption"; // v2: once Supplier has encrypted credentials
 import { addItemsToAmazonCart } from "@/modules/automation/sites/amazon";
 import { addItemsToGenericSite } from "@/modules/automation/sites/generic";
 import { AGENT_TIMEOUT_MS } from "@/modules/automation/browser-safety";
@@ -63,12 +62,19 @@ export async function runWebsiteOrderAgent(
       return fail("Supplier has no website URL configured.");
     }
 
-    // v1: run without login — most sites (Amazon) allow adding to
-    // cart anonymously. The manager logs in on their own device to
-    // review the cart and pay. Credential-based login is planned
-    // for v2 once we add an encrypted `websiteCredentials` JSON
-    // field to the Supplier model.
-    const credentials = null;
+    // Decrypt the manager's stored website-login credentials, if any.
+    // Two paths supported (see modules/suppliers/website-credentials.ts):
+    //   - "cookies": session cookies pasted from the manager's own
+    //     browser → injected into the page before the first nav
+    //     (preferred — bypasses captcha/2FA, robust on Amazon)
+    //   - "password": classic form login → the adapter attempts a
+    //     login flow before searching (best-effort; fragile on sites
+    //     with bot detection)
+    // Falls back to anonymous mode if no creds or decryption fails.
+    const { decryptSupplierCredentials } = await import(
+      "@/modules/suppliers/website-credentials"
+    );
+    const credentials = decryptSupplierCredentials(po.supplier.websiteCredentials);
 
     const searchTerms = po.lines.map((line) => ({
       query: line.description || line.inventoryItem.name,
@@ -276,13 +282,15 @@ export async function runWebsiteOrderAgent(
       if (isAmazon) {
         const amazonResult = await addItemsToAmazonCart(page, searchTerms, {
           domain: supplierUrl.replace(/\/+$/, ""),
+          credentials,
         });
         return { results: amazonResult.results, screenshots: amazonResult.screenshots };
       } else {
         const genericResult = await addItemsToGenericSite(
           page,
           supplierUrl,
-          searchTerms
+          searchTerms,
+          { credentials }
         );
         return { results: genericResult.results, screenshots: genericResult.screenshots };
       }

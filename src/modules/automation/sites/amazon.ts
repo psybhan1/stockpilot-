@@ -1,17 +1,17 @@
 /**
  * Amazon-specific browser adapter. Knows how to:
- *   1. Search for an item on amazon.com
- *   2. Click the best result
- *   3. Set quantity
- *   4. Add to cart
- *   5. Navigate to the cart page and screenshot
+ *   1. (Optional) Inject session cookies / form-login the manager
+ *   2. Search for an item on amazon.com (or go direct to a pasted URL)
+ *   3. Click the best result
+ *   4. Set quantity
+ *   5. Add to cart
+ *   6. Navigate to the cart page and screenshot
  *
- * Does NOT handle login (Amazon's login flow has aggressive bot
- * detection with CAPTCHA + SMS 2FA). Instead, the agent should be
- * used with a fresh session where the user pre-authenticates once
- * via a stored browser profile or cookie injection. For v1 we run
- * anonymously (many Amazon items can be added to cart without login)
- * and the manager logs in on their own device to pay.
+ * Login: cookie injection is the reliable path (bypasses captcha +
+ * 2FA; the manager exports their cookies once via a bookmarklet on
+ * the supplier settings page). Form login is best-effort — it works
+ * on accounts without 2FA and when Amazon doesn't surface a captcha,
+ * but anyone serious about ordering should use cookies.
  */
 
 import type { Page } from "puppeteer-core";
@@ -19,6 +19,7 @@ import {
   isForbiddenButton,
   takeStepScreenshot,
 } from "@/modules/automation/browser-safety";
+import type { SupplierWebsiteCredentials } from "@/modules/suppliers/website-credentials";
 
 export type AmazonSearchResult = {
   query: string;
@@ -29,7 +30,10 @@ export type AmazonSearchResult = {
 export async function addItemsToAmazonCart(
   page: Page,
   items: Array<{ query: string; quantity: number; directUrl?: string | null }>,
-  options?: { domain?: string }
+  options?: {
+    domain?: string;
+    credentials?: SupplierWebsiteCredentials | null;
+  }
 ): Promise<{
   results: AmazonSearchResult[];
   screenshots: Array<{ stepName: string; screenshot: Buffer }>;
@@ -37,6 +41,21 @@ export async function addItemsToAmazonCart(
   const domain = options?.domain ?? "https://www.amazon.com";
   const screenshots: Array<{ stepName: string; screenshot: Buffer }> = [];
   const results: AmazonSearchResult[] = [];
+
+  // Pre-flight: log in (or inject cookies) if the manager supplied
+  // credentials. Errors here are logged but don't abort the flow —
+  // anonymous mode still works for many items.
+  if (options?.credentials) {
+    try {
+      const loginScreens = await applyAmazonCredentials(page, domain, options.credentials);
+      screenshots.push(...loginScreens);
+    } catch (err) {
+      screenshots.push(await takeStepScreenshot(page, "login-failed"));
+      // Don't return — fall through to anonymous mode and let the
+      // manager see the screenshot of why login broke.
+      console.warn("[amazon] login attempt failed:", err instanceof Error ? err.message : err);
+    }
+  }
 
   for (const item of items) {
     try {
@@ -153,4 +172,79 @@ export async function addItemsToAmazonCart(
   }
 
   return { results, screenshots };
+}
+
+/**
+ * Either inject the manager's session cookies (preferred) or attempt
+ * a form-based login. Returns screenshots of the login state for the
+ * cart-summary message — the manager sees whether they're actually
+ * signed in before approving payment.
+ */
+async function applyAmazonCredentials(
+  page: Page,
+  domain: string,
+  credentials: SupplierWebsiteCredentials
+): Promise<Array<{ stepName: string; screenshot: Buffer }>> {
+  const screenshots: Array<{ stepName: string; screenshot: Buffer }> = [];
+
+  if (credentials.kind === "cookies") {
+    // Default missing domain to the supplier root so cookies hop
+    // across amazon.com / .ca / etc. correctly.
+    const fallbackDomain = new URL(domain).hostname.replace(/^www\./, "");
+    const cookies = credentials.cookies.map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain ?? `.${fallbackDomain}`,
+      path: c.path ?? "/",
+      ...(c.expires ? { expires: c.expires } : {}),
+      ...(typeof c.httpOnly === "boolean" ? { httpOnly: c.httpOnly } : {}),
+      ...(typeof c.secure === "boolean" ? { secure: c.secure } : { secure: true }),
+      ...(c.sameSite ? { sameSite: c.sameSite } : {}),
+    }));
+    // puppeteer-core's setCookie accepts a variadic list.
+    await page.setCookie(...cookies);
+    await page.goto(domain, { waitUntil: "domcontentloaded", timeout: 20000 });
+    screenshots.push(await takeStepScreenshot(page, "after-cookie-login"));
+    return screenshots;
+  }
+
+  // Form-login fallback. Will frequently fail on accounts with 2FA or
+  // when Amazon serves a captcha — that's why cookies are preferred.
+  const loginUrl = credentials.loginUrl ?? `${domain}/ap/signin`;
+  await page.goto(loginUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+  screenshots.push(await takeStepScreenshot(page, "login-page"));
+
+  // Email step.
+  const emailInput = await page.$("#ap_email");
+  if (!emailInput) {
+    screenshots.push(await takeStepScreenshot(page, "login-no-email-field"));
+    throw new Error("Amazon login page didn't expose the expected email field.");
+  }
+  await emailInput.type(credentials.username, { delay: 30 });
+  const continueBtn = await page.$("#continue");
+  if (continueBtn) await continueBtn.click();
+  await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null);
+
+  // Password step.
+  const passwordInput = await page.$("#ap_password");
+  if (!passwordInput) {
+    screenshots.push(await takeStepScreenshot(page, "login-no-password-field"));
+    throw new Error("Amazon login page didn't expose the expected password field (captcha?).");
+  }
+  await passwordInput.type(credentials.password, { delay: 30 });
+  const signInBtn = await page.$("#signInSubmit");
+  if (signInBtn) await signInBtn.click();
+  await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => null);
+
+  screenshots.push(await takeStepScreenshot(page, "after-form-login"));
+
+  // Quick sniff: did we end up on a 2FA / captcha challenge?
+  const currentUrl = page.url();
+  if (/auth-challenge|captcha|mfa|approval/i.test(currentUrl)) {
+    throw new Error(
+      `Amazon presented a challenge page (${new URL(currentUrl).pathname}). Use cookie-based login instead.`
+    );
+  }
+
+  return screenshots;
 }

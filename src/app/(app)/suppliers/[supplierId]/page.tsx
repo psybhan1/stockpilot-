@@ -3,7 +3,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Globe, Mail, Phone, Truck } from "lucide-react";
 
-import { upsertSupplierAction, upsertSupplierItemAction } from "@/app/actions/operations";
+import {
+  clearSupplierCredentialsAction,
+  setSupplierCredentialsAction,
+  upsertSupplierAction,
+  upsertSupplierItemAction,
+} from "@/app/actions/operations";
+import { summariseStoredCredentials } from "@/modules/suppliers/website-credentials";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -174,6 +180,13 @@ export default async function SupplierDetailPage({
               </div>
             </form>
           </Panel>
+
+          <WebsiteLoginPanel
+            supplierId={supplier.id}
+            supplierName={supplier.name}
+            credentialsState={summariseStoredCredentials(supplier.websiteCredentials)}
+            siteUrl={supplier.website ?? null}
+          />
 
           <Panel
             title="Supplier catalog"
@@ -526,3 +539,152 @@ const weekdayOptions = [
   { label: "Fri", value: 5 },
   { label: "Sat", value: 6 },
 ];
+
+type CredentialsState = ReturnType<typeof summariseStoredCredentials>;
+
+function WebsiteLoginPanel({
+  supplierId,
+  supplierName,
+  credentialsState,
+  siteUrl,
+}: {
+  supplierId: string;
+  supplierName: string;
+  credentialsState: CredentialsState;
+  siteUrl: string | null;
+}) {
+  const isConnected = credentialsState.kind !== "none";
+
+  return (
+    <Panel
+      title="Website login (optional)"
+      description={
+        "Store credentials so the browser ordering agent can sign in instead of running anonymously. " +
+        "Cookie paste is the reliable path for sites with captcha or 2FA (Amazon, Costco, etc.)."
+      }
+    >
+      <div className="rounded-[22px] border border-border/60 bg-card/50 p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="font-medium">
+              {credentialsState.kind === "none" && "Not connected — agent runs anonymously."}
+              {credentialsState.kind === "password" &&
+                `Connected via password (${credentialsState.username})`}
+              {credentialsState.kind === "cookies" &&
+                `Connected via cookies (${credentialsState.cookieCount} cookie${credentialsState.cookieCount === 1 ? "" : "s"}${credentialsState.primaryDomain ? ` · ${credentialsState.primaryDomain}` : ""})`}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {isConnected
+                ? "The agent will use these on the next website-mode purchase order for this supplier."
+                : "Until you connect, the agent adds items to a guest cart and you log in yourself before paying."}
+            </p>
+          </div>
+          {isConnected ? (
+            <form action={clearSupplierCredentialsAction}>
+              <input type="hidden" name="supplierId" value={supplierId} />
+              <Button
+                type="submit"
+                variant="outline"
+                className="rounded-2xl"
+              >
+                Disconnect
+              </Button>
+            </form>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* ── Cookie paste (recommended) ─────────────────────────── */}
+        <form
+          action={setSupplierCredentialsAction}
+          className="space-y-3 rounded-[22px] border border-border/60 bg-card p-4"
+        >
+          <input type="hidden" name="supplierId" value={supplierId} />
+          <input type="hidden" name="credentialKind" value="cookies" />
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+              Recommended
+            </span>
+            <h3 className="text-base font-semibold">Paste session cookies</h3>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Sign in to {supplierName} on your own browser, export the cookies for that domain
+            with a free extension like
+            {" "}<a
+              href="https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline-offset-2 hover:underline"
+            >Cookie-Editor</a>
+            {" "}(use “Export → JSON”), and paste the JSON below. The agent injects them and
+            inherits your authenticated session — no captcha or 2FA prompt to fight.
+          </p>
+          <Textarea
+            name="cookieJson"
+            placeholder='[{"name":"session-token","value":"...","domain":".amazon.com",...}]'
+            required
+            className="min-h-32 rounded-[20px] font-mono text-xs"
+          />
+          <div className="flex justify-end">
+            <Button type="submit" className="rounded-2xl">
+              {credentialsState.kind === "cookies" ? "Replace cookies" : "Save cookies"}
+            </Button>
+          </div>
+        </form>
+
+        {/* ── Password fallback ──────────────────────────────────── */}
+        <form
+          action={setSupplierCredentialsAction}
+          className="space-y-3 rounded-[22px] border border-border/60 bg-card p-4"
+        >
+          <input type="hidden" name="supplierId" value={supplierId} />
+          <input type="hidden" name="credentialKind" value="password" />
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium uppercase tracking-wider text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+              Fallback
+            </span>
+            <h3 className="text-base font-semibold">Username + password</h3>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Best-effort form login. Works on supplier sites without 2FA / captcha. Amazon will
+            usually challenge a fresh login from a new IP — prefer cookies above.
+          </p>
+          <Input
+            name="username"
+            type="text"
+            placeholder="Username or email"
+            required
+            autoComplete="off"
+            className="h-10 rounded-2xl"
+          />
+          <Input
+            name="password"
+            type="password"
+            placeholder="Password"
+            required
+            autoComplete="new-password"
+            className="h-10 rounded-2xl"
+          />
+          <Input
+            name="loginUrl"
+            type="url"
+            placeholder={`Optional — login URL (defaults to ${siteUrl ?? "supplier site"}/ap/signin)`}
+            className="h-10 rounded-2xl"
+          />
+          <div className="flex justify-end">
+            <Button type="submit" variant="outline" className="rounded-2xl">
+              {credentialsState.kind === "password" ? "Replace credentials" : "Save credentials"}
+            </Button>
+          </div>
+        </form>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Encrypted with AES-256-GCM at rest. Decrypted only inside the browser-agent process at
+        purchase-order dispatch time and never logged. The agent never auto-pays — you always
+        review the cart screenshot and confirm checkout yourself.
+      </p>
+    </Panel>
+  );
+}

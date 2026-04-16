@@ -469,6 +469,11 @@ model Supplier {
   minimumOrderQuantity   Int                     @default(1)
   notes                  String?
   credentialsConfigured  Boolean                 @default(false)
+  /// AES-256-GCM-encrypted JSON blob of website-login credentials.
+  /// Shape: { kind: "password", username, password } or
+  ///        { kind: "cookies", cookies: [{ name, value, domain, ... }] }.
+  /// See lib/credential-encryption.ts; decrypt only at PO-dispatch time.
+  websiteCredentials     String?
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   location               Location                @relation(fields: [locationId], references: [id], onDelete: Cascade)

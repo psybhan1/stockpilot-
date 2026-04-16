@@ -470,6 +470,8 @@ model Supplier {
   minimumOrderQuantity   Int                     @default(1)
   notes                  String?
   credentialsConfigured  Boolean                 @default(false)
+  /// AES-256-GCM-encrypted JSON blob of website-login credentials.
+  websiteCredentials     String?
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   location               Location                @relation(fields: [locationId], references: [id], onDelete: Cascade)

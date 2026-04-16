@@ -11,6 +11,7 @@ import {
   isForbiddenButton,
   takeStepScreenshot,
 } from "@/modules/automation/browser-safety";
+import type { SupplierWebsiteCredentials } from "@/modules/suppliers/website-credentials";
 
 export type GenericSearchResult = {
   query: string;
@@ -46,12 +47,47 @@ export async function addItemsToGenericSite(
   page: Page,
   siteUrl: string,
   items: Array<{ query: string; quantity: number; directUrl?: string | null }>,
+  options?: { credentials?: SupplierWebsiteCredentials | null }
 ): Promise<{
   results: GenericSearchResult[];
   screenshots: Array<{ stepName: string; screenshot: Buffer }>;
 }> {
   const screenshots: Array<{ stepName: string; screenshot: Buffer }> = [];
   const results: GenericSearchResult[] = [];
+
+  // Cookie injection (preferred): set the manager's session cookies
+  // before any nav so the supplier site sees them as authenticated
+  // immediately. Form-login on a generic site is too brittle (every
+  // site has different selectors) — we only support the cookie path
+  // here. If creds.kind === "password" we ignore them with a logged
+  // warning and fall back to anonymous mode.
+  if (options?.credentials) {
+    if (options.credentials.kind === "cookies") {
+      try {
+        const fallbackDomain = new URL(siteUrl).hostname.replace(/^www\./, "");
+        const cookies = options.credentials.cookies.map((c) => ({
+          name: c.name,
+          value: c.value,
+          domain: c.domain ?? `.${fallbackDomain}`,
+          path: c.path ?? "/",
+          ...(c.expires ? { expires: c.expires } : {}),
+          ...(typeof c.httpOnly === "boolean" ? { httpOnly: c.httpOnly } : {}),
+          ...(typeof c.secure === "boolean" ? { secure: c.secure } : { secure: true }),
+          ...(c.sameSite ? { sameSite: c.sameSite } : {}),
+        }));
+        await page.setCookie(...cookies);
+      } catch (err) {
+        console.warn(
+          "[generic] cookie injection failed:",
+          err instanceof Error ? err.message : err
+        );
+      }
+    } else {
+      console.warn(
+        "[generic] password-mode credentials aren't supported on the generic adapter — site-specific selectors needed. Using cookie mode instead is recommended."
+      );
+    }
+  }
 
   // If every item has a direct URL we can skip the landing page and
   // jump straight to each product. Otherwise load the landing once

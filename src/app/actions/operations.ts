@@ -844,6 +844,100 @@ export async function upsertSupplierAction(formData: FormData) {
   revalidatePath(`/suppliers/${supplier.id}`);
 }
 
+// ── Supplier website-login credentials ──────────────────────────────
+// Manager pastes either a username+password OR a session-cookie JSON
+// export, we encrypt with AES-256-GCM and store on Supplier.
+// websiteCredentials. The browser ordering agent decrypts at PO
+// dispatch time and either logs in or injects the cookies — see
+// modules/automation/browser-agent.ts.
+
+export async function setSupplierCredentialsAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const supplierId = String(formData.get("supplierId") ?? "");
+  const kind = String(formData.get("credentialKind") ?? "password");
+
+  if (!supplierId) {
+    throw new Error("supplierId is required.");
+  }
+
+  await db.supplier.findFirstOrThrow({
+    where: { id: supplierId, locationId: session.locationId },
+    select: { id: true },
+  });
+
+  const { encryptSupplierCredentials, parseCookieJson } = await import(
+    "@/modules/suppliers/website-credentials"
+  );
+
+  let encrypted: string;
+  if (kind === "cookies") {
+    const raw = String(formData.get("cookieJson") ?? "");
+    const cookies = parseCookieJson(raw);
+    encrypted = encryptSupplierCredentials({ kind: "cookies", cookies });
+  } else {
+    encrypted = encryptSupplierCredentials({
+      kind: "password",
+      username: String(formData.get("username") ?? ""),
+      password: String(formData.get("password") ?? ""),
+      loginUrl: readNullableStringValue(formData, "loginUrl") ?? undefined,
+    });
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.supplier.update({
+      where: { id: supplierId },
+      data: {
+        websiteCredentials: encrypted,
+        credentialsConfigured: true,
+      },
+    });
+    await createAuditLogTx(tx, {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "supplier.credentials_set",
+      entityType: "supplier",
+      entityId: supplierId,
+      details: { kind },
+    });
+  });
+
+  revalidateOperations();
+  revalidatePath(`/suppliers/${supplierId}`);
+}
+
+export async function clearSupplierCredentialsAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const supplierId = String(formData.get("supplierId") ?? "");
+  if (!supplierId) {
+    throw new Error("supplierId is required.");
+  }
+
+  await db.supplier.findFirstOrThrow({
+    where: { id: supplierId, locationId: session.locationId },
+    select: { id: true },
+  });
+
+  await db.$transaction(async (tx) => {
+    await tx.supplier.update({
+      where: { id: supplierId },
+      data: {
+        websiteCredentials: null,
+        credentialsConfigured: false,
+      },
+    });
+    await createAuditLogTx(tx, {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "supplier.credentials_cleared",
+      entityType: "supplier",
+      entityId: supplierId,
+    });
+  });
+
+  revalidateOperations();
+  revalidatePath(`/suppliers/${supplierId}`);
+}
+
 export async function upsertSupplierItemAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const supplierId = String(formData.get("supplierId") ?? "");
