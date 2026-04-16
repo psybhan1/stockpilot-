@@ -248,8 +248,8 @@ const TOOLS: ToolSchema[] = [
             description: "Best guess: CLEANING, PACKAGING, COFFEE, DAIRY, ALT_DAIRY, SYRUP, BAKERY_INGREDIENT, PAPER_GOODS, SUPPLY, RETAIL. Default to SUPPLY if unsure.",
           },
           quantity: {
-            type: "number",
-            description: "How many to order. Default 1 if user didn't specify.",
+            type: "string",
+            description: "How many to order. Default '1' if user didn't specify.",
           },
           supplier_name: {
             type: "string",
