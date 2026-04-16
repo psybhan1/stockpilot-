@@ -285,14 +285,8 @@ export async function handleInboundManagerBotMessage(
 
         return agentResult;
       } catch (agentError) {
-        // Log LOUDLY and fall through to legacy path so the bot still
-        // works if the agent is mis-configured. Without this console.error
-        // the failure was invisible — the legacy path silently handled it
-        // and gave bad results (like ordering the wrong item).
-        console.error(
-          "[bot] Agent failed, falling back to legacy intent-classifier:",
-          agentError instanceof Error ? agentError.message : agentError
-        );
+        const errMsg = agentError instanceof Error ? agentError.message : String(agentError);
+        console.error("[bot] Agent failed:", errMsg);
         await db.auditLog.create({
           data: {
             locationId: managerContext.locationId,
@@ -300,11 +294,30 @@ export async function handleInboundManagerBotMessage(
             action: "bot.agent_failed",
             entityType: "botChannel",
             entityId: input.sourceMessageId ?? `${input.channel.toLowerCase()}-message`,
-            details: {
-              error: agentError instanceof Error ? agentError.message : String(agentError),
-            },
+            details: { error: errMsg },
           },
-        });
+        }).catch(() => {});
+
+        // If the error is a rate limit or model issue, DON'T fall
+        // through to the legacy classifier — it gives wrong answers.
+        // Instead return a helpful "try again" message. Only fall
+        // through for genuine agent bugs (unexpected exceptions).
+        if (/rate.limit|429|413|model.*decommission|model.*not.found/i.test(errMsg)) {
+          await completeBotMessageReceipt({
+            receiptId,
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            reply: "I'm a bit overloaded right now — give me 30 seconds and try again. (Groq rate limit hit)",
+            purchaseOrderId: null,
+            orderNumber: null,
+            metadata: toInputJsonValue({ error: errMsg, source: "rate_limit" }),
+          });
+          return {
+            ok: true,
+            reply: "I'm a bit overloaded right now — give me 30 seconds and try again.",
+            replyScenario: "rate_limited",
+          };
+        }
       }
     }
 
