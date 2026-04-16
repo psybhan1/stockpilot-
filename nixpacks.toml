@@ -19,9 +19,7 @@ cmds = ["npm install --legacy-peer-deps"]
 [phases.build]
 cmds = [
   "npm run vercel-build",
-  "mkdir -p .next/standalone/node_modules/@sparticuz/chromium/bin",
-  "cp -r node_modules/@sparticuz/chromium/bin/* .next/standalone/node_modules/@sparticuz/chromium/bin/",
-  "cp node_modules/@sparticuz/chromium/package.json .next/standalone/node_modules/@sparticuz/chromium/"
+  "npx puppeteer browsers install chrome"
 ]
 
 [start]

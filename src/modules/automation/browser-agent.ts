@@ -105,33 +105,54 @@ export async function runWebsiteOrderAgent(
       ).catch(() => {});
     }
 
-    // Launch headless Chromium using the system-installed binary
-    // (installed via apt in nixpacks.toml). More reliable than
-    // @sparticuz/chromium on Railway because Next.js standalone
-    // mode strips binary assets from node_modules.
+    // Launch Chrome using puppeteer's own browser management.
+    // `npx puppeteer browsers install chrome` runs at build time
+    // and caches the binary. puppeteer-core finds it via the
+    // PUPPETEER_CACHE_DIR or default ~/.cache/puppeteer path.
     const puppeteer = (await import("puppeteer-core")).default;
-
-    // Find system Chromium — different distros put it in different places.
-    const possiblePaths = [
-      "/usr/bin/chromium",
-      "/usr/bin/chromium-browser",
-      "/usr/bin/google-chrome",
-      "/usr/bin/google-chrome-stable",
-    ];
-    let execPath: string | null = null;
     const fs = await import("node:fs");
-    for (const p of possiblePaths) {
-      if (fs.existsSync(p)) {
-        execPath = p;
-        break;
+    const path = await import("node:path");
+    const { execSync } = await import("node:child_process");
+
+    // Find Chrome binary — check puppeteer cache, common system
+    // paths, and PUPPETEER_EXECUTABLE_PATH env var.
+    let execPath = process.env.PUPPETEER_EXECUTABLE_PATH ?? "";
+    if (!execPath || !fs.existsSync(execPath)) {
+      // Search puppeteer cache directories
+      const cacheDirs = [
+        path.join(process.env.HOME ?? "/root", ".cache", "puppeteer"),
+        "/root/.cache/puppeteer",
+        "/app/.cache/puppeteer",
+      ];
+      for (const dir of cacheDirs) {
+        if (fs.existsSync(dir)) {
+          try {
+            // Find any chrome binary in the cache
+            const found = execSync(`find ${dir} -name "chrome" -type f 2>/dev/null | head -1`, {
+              encoding: "utf8",
+            }).trim();
+            if (found && fs.existsSync(found)) {
+              execPath = found;
+              break;
+            }
+          } catch { /* ignore */ }
+        }
       }
     }
-    if (!execPath) {
+    // Fallback: system-installed paths
+    if (!execPath || !fs.existsSync(execPath)) {
+      for (const p of ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]) {
+        if (fs.existsSync(p)) { execPath = p; break; }
+      }
+    }
+    if (!execPath || !fs.existsSync(execPath)) {
       throw new Error(
-        "Chromium not found. Install it: add 'chromium' to aptPkgs in nixpacks.toml"
+        `Chrome not found. Searched puppeteer cache + system paths. ` +
+        `Set PUPPETEER_EXECUTABLE_PATH env var or run 'npx puppeteer browsers install chrome' at build time.`
       );
     }
 
+    console.log(`[browser-agent] Using Chrome at: ${execPath}`);
     browser = await puppeteer.launch({
       args: [
         "--no-sandbox",
