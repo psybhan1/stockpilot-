@@ -73,6 +73,38 @@ export function toHostnameRoot(url: string): string {
   }
 }
 
+// Common supplier names → known website roots. Used when a manager
+// says "add 5 of X from LCBO" with no URL — we set the supplier up
+// in WEBSITE mode pointing at the home page so the browser agent
+// has somewhere to start. The agent will search-by-name from there.
+//
+// Only includes brands we've confirmed are useful starting points
+// for the generic search adapter. Rest fall through to MANUAL mode
+// (the user can always add a URL later via Settings).
+const KNOWN_SUPPLIER_WEBSITES: Record<string, string> = {
+  amazon: "https://www.amazon.com",
+  "amazon.com": "https://www.amazon.com",
+  "amazon.ca": "https://www.amazon.ca",
+  costco: "https://www.costco.com",
+  "costco.com": "https://www.costco.com",
+  walmart: "https://www.walmart.com",
+  target: "https://www.target.com",
+  lcbo: "https://www.lcbo.com",
+  sysco: "https://shop.sysco.com",
+  webstaurant: "https://www.webstaurantstore.com",
+  webstaurantstore: "https://www.webstaurantstore.com",
+  staples: "https://www.staples.com",
+  "home depot": "https://www.homedepot.com",
+  homedepot: "https://www.homedepot.com",
+  ikea: "https://www.ikea.com",
+  uline: "https://www.uline.com",
+};
+
+export function lookupKnownSupplierWebsite(supplierName: string): string | null {
+  const key = supplierName.trim().toLowerCase();
+  return KNOWN_SUPPLIER_WEBSITES[key] ?? null;
+}
+
 // ── Tool schemas (OpenAI-compatible, Groq understands this format) ───────────
 type ToolSchema = {
   type: "function";
@@ -496,7 +528,16 @@ export async function executeTool(
       // tacking the search path onto a deep product URL. The full
       // pasted URL is preserved on the PO line so the agent can
       // navigate directly to that product page when present.
-      const supplierWebsiteRoot = websiteUrl ? toHostnameRoot(websiteUrl) : "";
+      //
+      // Two ways to end up with a website:
+      //   - User pasted a URL → derive root from it
+      //   - No URL, but supplier_name matches a well-known brand
+      //     (LCBO, Costco, Amazon, ...) → use the canonical root so
+      //     the browser agent has somewhere to search
+      const supplierWebsiteRoot =
+        (websiteUrl ? toHostnameRoot(websiteUrl) : "") ||
+        lookupKnownSupplierWebsite(supplierName) ||
+        "";
       if (!itemName) return { content: "ERROR: item_name required." };
 
       try {
@@ -544,16 +585,17 @@ export async function executeTool(
           });
           if (existing) {
             supplierId = existing.id;
-            // Backfill website + flip to WEBSITE mode when the user
-            // attaches a URL to a supplier we previously created with
-            // no URL (or in MANUAL mode). Without this, the second
-            // paste of the same Amazon link silently keeps the supplier
-            // in MANUAL mode and the browser-agent dispatch bails out
-            // with "Supplier has no website URL configured".
+            // Backfill website + flip to WEBSITE mode whenever we
+            // can determine a hostname (either from a fresh URL or
+            // from the known-supplier lookup). Without this, the
+            // second paste of the same Amazon link silently keeps
+            // the supplier in MANUAL mode and the browser-agent
+            // dispatch bails out with "Supplier has no website URL
+            // configured".
             const existingWebsiteIsRoot =
               !!existing.website && /^https?:\/\/[^/]+\/?$/i.test(existing.website);
             if (
-              websiteUrl &&
+              supplierWebsiteRoot &&
               (!existing.website ||
                 !existingWebsiteIsRoot ||
                 existing.orderingMode !== "WEBSITE")
@@ -571,7 +613,7 @@ export async function executeTool(
               data: {
                 locationId: ctx.locationId,
                 name: supplierName,
-                orderingMode: websiteUrl ? "WEBSITE" : "MANUAL",
+                orderingMode: supplierWebsiteRoot ? "WEBSITE" : "MANUAL",
                 website: supplierWebsiteRoot || null,
                 leadTimeDays: 3,
               },
@@ -983,8 +1025,10 @@ const SYSTEM_PROMPT_BASE = `You are StockBuddy — a sharp, concise inventory as
 3. Honor user's quantity verbatim. "12 oz" → pass 12 oz. Don't round or override.
 4. yes/approve/ok/👍 → approve_recent_order. no/cancel/nvm/❌ → cancel_recent_order.
 5. ANY message containing a URL (https://, http://, amzn.to, a.co, costco.com, etc.) + ANY order intent ("add to cart", "order this", "we need this", "get me", "buy this", "order this for me") → ALWAYS call quick_add_and_order with website_url set. NEVER call place_restock_order for URL messages (it has no website_url field — the URL would be lost). NEVER call start_add_item_flow for URL messages. quick_add_and_order is idempotent — call it even when the item already exists in LIVE DATA. Derive supplier_name from the hostname (amazon.com/amzn.to/a.co → "Amazon", costco.com → "Costco"). Never ask "what's it for?" on cleaning/packaging supplies.
-6. NEVER say tool names, empty placeholders, or "How can I help?". Sound like a colleague.
-7. 1-3 sentences max. Don't repeat yourself.
+5b. ORDER INTENT + SUPPLIER NAME but NO URL ("add 5 bottles of X to my LCBO cart", "order Y from Costco", "buy Z at Walmart") → call quick_add_and_order ONCE PER ITEM with item_name + quantity + supplier_name set and website_url="". Each call drafts a separate PO. After all calls, summarise: "📋 Drafted 2 POs — 5 bottles of X + 3 boxes of Y from LCBO. Approve them to send."
+6. NEVER claim "I can't access websites" or "I can only draft purchase orders" — when an order intent comes in, call quick_add_and_order. The browser ordering agent runs after PO approval and handles the website. Refusing to act is the wrong answer.
+7. NEVER say tool names, empty placeholders, or "How can I help?". Sound like a colleague.
+8. 1-3 sentences max per call. Don't repeat yourself.
 
 ## EXAMPLES
 User: "oat milk 2 left" → call place_restock_order, reply: "📋 Drafted PO — 10 L oat milk from FreshCo. Approve?"
@@ -993,6 +1037,8 @@ User: "approve" → call approve_recent_order, reply: "✅ Sent to FreshCo."
 User: "add this to my cart https://a.co/abc123" → quick_add_and_order(item_name="Amazon item", category="SUPPLY", quantity="1", supplier_name="Amazon", website_url="https://a.co/abc123"). Reply: "✅ Added + drafted PO. Approve?"
 User: "order this https://www.amazon.com/Urnex-Cafiza-Espresso-Cleaning-Tablets/dp/B005YJZE2I" → quick_add_and_order(item_name="Urnex Cafiza Espresso Cleaning Tablets", category="CLEANING", quantity="1", supplier_name="Amazon", website_url="https://www.amazon.com/Urnex-Cafiza-Espresso-Cleaning-Tablets/dp/B005YJZE2I"). Reply: "✅ Added + drafted PO. Approve?"
 User: "get me 3 of these https://www.costco.com/oat-milk.html" (item already exists) → STILL quick_add_and_order(item_name="Oat Milk", category="ALT_DAIRY", quantity="3", supplier_name="Costco", website_url="..."). Reply: "✅ Drafted PO for 3. Approve?"
+User: "add 5 bottles of jp wisers and 3 box of bella terra in my cart in lcbo website" → call quick_add_and_order TWICE: (1) item_name="JP Wisers", category="SUPPLY", quantity="5", supplier_name="LCBO", website_url=""  (2) item_name="Bella Terra", category="SUPPLY", quantity="3", supplier_name="LCBO", website_url="". Reply: "📋 Drafted 2 POs from LCBO — 5 JP Wisers + 3 Bella Terra. Approve to send."
+User: "order from amazon: 2 cans of cleaner" → quick_add_and_order(item_name="Cleaner", category="CLEANING", quantity="2", supplier_name="Amazon", website_url=""). NEVER refuse with "I can't access websites".
 User: "what do I need" → list below-par items from LIVE DATA, offer to draft all.
 User: "nvm" → cancel_recent_order, reply: "Cancelled."`;
 

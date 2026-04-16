@@ -349,23 +349,36 @@ export async function runWebsiteOrderAgent(
     //     add to their own cart with one extra tap. Plus a heavy
     //     hint to set up saved cookies for next time.
     const hasCredentials = !!credentials;
+    // Match adapter results back to PO lines by query string so we
+    // know which lines actually made it into the cart and which
+    // didn't. Failed lines get a search-by-name button instead of a
+    // direct product link (which would point at the same broken URL
+    // that just failed).
     const cartLinks = buildCartLinks({
       supplierWebsite: po.supplier.website,
       supplierName: po.supplier.name,
       hasCredentials,
-      lines: po.lines.map((l) => ({
-        description: l.description || l.inventoryItem.name,
-        quantityOrdered: l.quantityOrdered,
-        productUrl: extractLineProductUrl(l.notes),
-      })),
+      lines: po.lines.map((l) => {
+        const query = l.description || l.inventoryItem.name;
+        const result = results.find((r) => r.query === query);
+        return {
+          description: query,
+          quantityOrdered: l.quantityOrdered,
+          productUrl: extractLineProductUrl(l.notes),
+          added: result ? result.added : true,
+        };
+      }),
     });
     const replyMarkup = buildCartReadyKeyboard({ agentTaskId, links: cartLinks });
 
-    const captionExtra = hasCredentials
-      ? `\n\n✓ Items are in *your* Amazon account (saved login). Tap above to checkout.`
-      : cartLinks.productButtons.length > 0
-        ? `\n\n_Tap each product below to open it on Amazon and Add to Cart in your own account._\n_(Set up saved login at Settings → Suppliers → Website login to skip this step next time.)_`
-        : `\n\n_Without a saved login the agent's cart can't be transferred to your account. Open *${po.supplier.name}* and add the items there, or set up Settings → Suppliers → Website login._`;
+    const allFailed = itemsAdded === 0 && results.length > 0;
+    const captionExtra = allFailed
+      ? `\n\n_The product page didn't load or had no Add-to-Cart button (often a region-locked, removed, or wrong URL). Tap *Search* below to find the right product on ${po.supplier.name} yourself._`
+      : hasCredentials
+        ? `\n\n✓ Items are in *your* ${po.supplier.name} account (saved login). Tap above to checkout.`
+        : cartLinks.productButtons.length > 0
+          ? `\n\n_Tap each product below to open it on ${po.supplier.name} and Add to Cart in your own account._\n_(Set up saved login at Settings → Suppliers → Website login to skip this step next time.)_`
+          : `\n\n_Without a saved login the agent's cart can't be transferred to your account. Open *${po.supplier.name}* and add the items there, or set up Settings → Suppliers → Website login._`;
     const fullCaption = `${summary}${captionExtra}`;
 
     // Send cart screenshot + approval buttons to the same managers

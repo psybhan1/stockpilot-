@@ -31,10 +31,10 @@ function assert(cond: unknown, label: string) {
   }
 }
 
-async function runScenario(name: string, fn: () => void) {
+async function runScenario(name: string, fn: () => void | Promise<void>) {
   console.log(`\n━━ ${name}`);
   try {
-    fn();
+    await fn();
   } catch (err) {
     failed += 1;
     const msg = err instanceof Error ? err.message : String(err);
@@ -228,7 +228,7 @@ await runScenario("Amazon locale: .ca supplier → amazon.ca product links", () 
   );
 });
 
-await runScenario("Amazon shortlink without ASIN → no product buttons + no open-cart (no creds)", () => {
+await runScenario("Amazon shortlink without ASIN → search-by-name fallback", () => {
   const links = buildCartLinks({
     supplierWebsite: "https://www.amazon.com",
     supplierName: "Amazon",
@@ -237,7 +237,18 @@ await runScenario("Amazon shortlink without ASIN → no product buttons + no ope
       { description: "thing", quantityOrdered: 1, productUrl: "https://a.co/d/abc123" },
     ],
   });
-  assert(links.productButtons.length === 0, "no product buttons (ASIN unrecoverable)");
+  // Without an ASIN we can't link to the product page, but we can
+  // still send the user to a search results page for the item name.
+  // Better than nothing.
+  assert(links.productButtons.length === 1, "search-by-name button");
+  assert(
+    links.productButtons[0].text.startsWith("🔍"),
+    "is a search button"
+  );
+  assert(
+    links.productButtons[0].url.includes("/s?k=thing"),
+    "search URL by name"
+  );
   assert(links.openCartUrl === null, "no open-cart (no creds)");
 });
 
@@ -356,6 +367,111 @@ await runScenario("Keyboard with no URLs → just callback row", () => {
     kb[0].every((b) => "callback_data" in b),
     "row is callback-only"
   );
+});
+
+// ── Failure case: agent couldn't add anything ──────────────────────
+await runScenario("All lines failed → product link replaced with search button", () => {
+  const links = buildCartLinks({
+    supplierWebsite: "https://www.amazon.com",
+    supplierName: "Amazon",
+    hasCredentials: false,
+    lines: [
+      {
+        description: "Espresso Machine Cleaner",
+        quantityOrdered: 1,
+        productUrl: "https://www.amazon.com/Bad-Product/dp/B005YJZE2I",
+        added: false,
+      },
+    ],
+  });
+  // The user's lived experience: agent landed on Amazon's 404 dog
+  // page, ATC button not found. Sending them to the SAME broken
+  // product URL would just reproduce the bug.
+  assert(links.productButtons.length === 1, "still shows a button");
+  assert(
+    links.productButtons[0].text.startsWith("🔍"),
+    `now a search button: ${links.productButtons[0].text}`
+  );
+  assert(
+    links.productButtons[0].url.includes("/s?k=Espresso"),
+    `search URL by item name: ${links.productButtons[0].url}`
+  );
+  assert(
+    !links.productButtons[0].url.includes("/dp/B005YJZE2I"),
+    "broken product URL is NOT linked"
+  );
+});
+
+await runScenario("All lines failed + credentials set → still no open-cart", () => {
+  // Even with cookies, if nothing was added the cart is empty in
+  // the user's account too. Don't show open-cart.
+  const links = buildCartLinks({
+    supplierWebsite: "https://www.amazon.com",
+    supplierName: "Amazon",
+    hasCredentials: true,
+    lines: [
+      {
+        description: "Failed Item",
+        quantityOrdered: 1,
+        productUrl: "https://www.amazon.com/dp/B0BAD00000",
+        added: false,
+      },
+    ],
+  });
+  assert(links.openCartUrl === null, "no open-cart when nothing was added");
+  assert(
+    links.productButtons[0].text.startsWith("🔍"),
+    "still falls back to search"
+  );
+});
+
+await runScenario("Mixed success/failure → success gets product link, failure gets search", () => {
+  const links = buildCartLinks({
+    supplierWebsite: "https://www.amazon.com",
+    supplierName: "Amazon",
+    hasCredentials: false,
+    lines: [
+      {
+        description: "Good Item",
+        quantityOrdered: 1,
+        productUrl: "https://www.amazon.com/dp/B0GOOD0000",
+        added: true,
+      },
+      {
+        description: "Bad Item",
+        quantityOrdered: 1,
+        productUrl: "https://www.amazon.com/dp/B0BAD00000",
+        added: false,
+      },
+    ],
+  });
+  assert(links.productButtons.length === 2, "both buttons present");
+  const goodBtn = links.productButtons.find((b) => b.text.includes("Good Item"));
+  const badBtn = links.productButtons.find((b) => b.text.includes("Bad Item"));
+  assert(goodBtn?.text.startsWith("📦"), "successful item gets product emoji");
+  assert(goodBtn?.url.includes("/dp/B0GOOD0000"), "success → /dp/ link");
+  assert(badBtn?.text.startsWith("🔍"), "failed item gets search emoji");
+  assert(
+    badBtn?.url.includes("/s?k=Bad%20Item"),
+    `failure → /s?k= link (got: ${badBtn?.url})`
+  );
+});
+
+// ── Known-supplier lookup ──────────────────────────────────────────
+await runScenario("lookupKnownSupplierWebsite handles common brands", async () => {
+  const { lookupKnownSupplierWebsite } = await import(
+    "../src/modules/operator-bot/agent.ts"
+  );
+  assert(lookupKnownSupplierWebsite("Amazon") === "https://www.amazon.com", "Amazon");
+  assert(lookupKnownSupplierWebsite("amazon") === "https://www.amazon.com", "case-insensitive");
+  assert(lookupKnownSupplierWebsite("LCBO") === "https://www.lcbo.com", "LCBO");
+  assert(lookupKnownSupplierWebsite("lcbo") === "https://www.lcbo.com", "lcbo lowercase");
+  assert(lookupKnownSupplierWebsite("Costco") === "https://www.costco.com", "Costco");
+  assert(lookupKnownSupplierWebsite("Walmart") === "https://www.walmart.com", "Walmart");
+  assert(lookupKnownSupplierWebsite("Sysco") === "https://shop.sysco.com", "Sysco");
+  assert(lookupKnownSupplierWebsite("Home Depot") === "https://www.homedepot.com", "Home Depot");
+  assert(lookupKnownSupplierWebsite("UnknownBrand") === null, "unknown → null");
+  assert(lookupKnownSupplierWebsite("") === null, "empty → null");
 });
 
 // ── Summary ────────────────────────────────────────────────────────

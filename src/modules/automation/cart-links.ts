@@ -32,6 +32,14 @@ export type CartLine = {
   quantityOrdered: number;
   /** Pasted product URL — we extract ASINs from here. May be null. */
   productUrl: string | null;
+  /**
+   * Whether the agent successfully added this line to the cart. When
+   * false, we suppress the per-product link (it almost certainly
+   * points at the same broken page that just failed) and prefer a
+   * search-by-name URL instead so the manager can find the product
+   * themselves.
+   */
+  added?: boolean;
 };
 
 export type ProductPageButton = {
@@ -126,26 +134,47 @@ export function buildCartLinks(input: {
 
   if (isAmazon) {
     const storefront = pickAmazonStorefront(input.supplierWebsite);
+    const truncate = (s: string) => (s.length > 24 ? s.slice(0, 22) + "…" : s);
 
-    // Direct product-page buttons (used when no cookies). Cap at 3
-    // to keep the keyboard tidy; multi-line POs above that are
-    // rare and the open-cart fallback still works.
+    // Build buttons line-by-line. For each line:
+    //   - If added=true (or unset, meaning unknown — assume ok) AND
+    //     we have an ASIN → /dp/<ASIN> direct link
+    //   - If added=false (the agent failed on this line, usually
+    //     because the URL was broken) → search-by-name URL instead,
+    //     so the manager can find a working product page
+    //   - Cap at 3 to keep the keyboard tidy
     const productButtons: ProductPageButton[] = [];
     for (const line of input.lines.slice(0, 3)) {
-      const asin = extractAmazonAsin(line.productUrl);
-      if (!asin) continue;
       const labelBase = (line.description || "").trim();
-      const label = labelBase.length > 24 ? labelBase.slice(0, 22) + "…" : labelBase;
-      productButtons.push({
-        text: label ? `📦 ${label}` : "📦 Open product",
-        url: `${storefront}/dp/${asin}`,
-      });
+      const label = truncate(labelBase) || "product";
+      const asin = extractAmazonAsin(line.productUrl);
+      const wasAdded = line.added !== false; // undefined → assume yes
+      if (asin && wasAdded) {
+        productButtons.push({
+          text: `📦 ${label}`,
+          url: `${storefront}/dp/${asin}`,
+        });
+      } else if (labelBase) {
+        // Search fallback. Strip emoji from the search query but
+        // leave it on the button label so it's distinguishable from
+        // the success-case button.
+        productButtons.push({
+          text: `🔍 Search: ${label}`,
+          url: `${storefront}/s?k=${encodeURIComponent(labelBase)}`,
+        });
+      }
     }
 
+    // Heuristic: if no line was successfully added, we had a total
+    // failure. In that case the open-cart link would point at an
+    // empty cart even with cookies (because nothing was added to
+    // the user's session either). Show search-only.
+    const anyAdded = input.lines.some((l) => l.added !== false);
+    const openCartUrl =
+      input.hasCredentials && anyAdded ? `${storefront}/gp/cart/view.html` : null;
+
     return {
-      // Open-cart only useful when cookies put the items in the
-      // manager's real cart. Otherwise it's misleading.
-      openCartUrl: input.hasCredentials ? `${storefront}/gp/cart/view.html` : null,
+      openCartUrl,
       productButtons,
       openCartLabel: "🛒 Open my Amazon cart",
       isAmazon: true,
