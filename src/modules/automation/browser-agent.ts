@@ -227,16 +227,30 @@ export async function runWebsiteOrderAgent(
         "--no-first-run",
         "--no-zygote",
         "--single-process",
+        // Anti-bot-detection flags
+        "--disable-blink-features=AutomationControlled",
+        "--disable-features=IsolateOrigins,site-per-process",
+        "--window-size=1280,900",
       ],
       defaultViewport: { width: 1280, height: 900 },
       executablePath: execPath,
-      headless: true,
+      headless: "shell" as unknown as boolean, // "new" headless mode is more detectable
     });
 
     const page = await browser.newPage();
+
+    // Anti-detection stealth
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      // @ts-expect-error -- fake chrome runtime
+      window.chrome = { runtime: {} };
+    });
     await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     );
+    await page.setExtraHTTPHeaders({
+      "Accept-Language": "en-US,en;q=0.9",
+    });
 
     // Determine which adapter to use based on the URL.
     const isAmazon = /amazon\.(com|ca|co\.uk|de|fr|es|it|co\.jp)/i.test(supplierUrl);
