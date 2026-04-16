@@ -1012,107 +1012,11 @@ type GroqMessage = {
 };
 
 // Default model — override with GROQ_BOT_MODEL env var.
-// Model: must be on Groq free tier + support tool calling + handle
-// our ~4K token system prompt within the TPM limit.
-// llama-3.3-70b is the ONLY one that checks all three boxes:
-//   - 131K context window (our prompt fits easily)
-//   - 6000 RPM free tier (vs 6000 TPM on Qwen3/Scout)
-//   - Native tool calling (no text-parsing hacks)
-//   - Proven reliable (was the original model before we experimented)
-// The improved system prompt is what makes it smarter now, not the model.
-// Scout supports tool calling, has its own TPD quota (separate from
-// 70b which is burned out), and is the newest Llama 4 model on Groq.
+// Llama 4 Scout: native tool calling, separate TPD quota from 70b
+// (which we burned out), and the newest Llama 4 model on Groq.
 const DEFAULT_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
-function isR1Model(model: string): boolean {
-  return /deepseek.*r1|r1.*distill/i.test(model);
-}
-
-/**
- * Build a text description of all tools for R1 (which doesn't
- * support the native tools API). Injected into the system prompt
- * so R1 knows what tools exist and how to call them.
- */
-function buildToolDescriptionText(): string {
-  const lines = [
-    "## AVAILABLE TOOLS",
-    "",
-    "When you need to take an action, output a tool call block like this:",
-    "```",
-    '<tool_call>{"name":"tool_name","arguments":{"arg1":"value"}}</tool_call>',
-    "```",
-    "I will execute it and give you the result. Then continue your reply.",
-    "If you don't need any tool, just reply normally with text.",
-    "You can call MULTIPLE tools in one reply if needed — just put each in its own <tool_call> block.",
-    "",
-  ];
-  for (const tool of TOOLS) {
-    const fn = tool.function;
-    lines.push(`### ${fn.name}`);
-    lines.push(fn.description);
-    if (fn.parameters && "properties" in fn.parameters) {
-      const props = fn.parameters.properties as Record<
-        string,
-        { type?: string; description?: string }
-      >;
-      const required = (fn.parameters as { required?: string[] }).required ?? [];
-      for (const [key, val] of Object.entries(props)) {
-        const req = required.includes(key) ? " (required)" : " (optional)";
-        lines.push(`  - ${key}: ${val.type ?? "string"}${req} — ${val.description ?? ""}`);
-      }
-    }
-    lines.push("");
-  }
-  return lines.join("\n");
-}
-
-/**
- * Parse <tool_call>...</tool_call> blocks from R1's text output.
- */
-function parseTextToolCalls(
-  text: string
-): GroqToolCall[] {
-  const calls: GroqToolCall[] = [];
-  const regex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/g;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1]) as {
-        name?: string;
-        arguments?: Record<string, unknown>;
-      };
-      if (parsed.name) {
-        calls.push({
-          id: `r1-${Date.now()}-${calls.length}`,
-          type: "function",
-          function: {
-            name: parsed.name,
-            arguments: JSON.stringify(parsed.arguments ?? {}),
-          },
-        });
-      }
-    } catch {
-      // Malformed JSON — skip this call.
-    }
-  }
-  return calls;
-}
-
-/**
- * Strip <tool_call> blocks from R1's output to get the user-facing
- * reply text.
- */
-function stripToolCallBlocks(text: string): string {
-  return text
-    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
-    .replace(/```[\s\S]*?```/g, "") // also strip code blocks that might wrap tool calls
-    .trim();
-}
-
-async function callGroq(
-  messages: GroqMessage[],
-  opts?: { injectToolsAsText?: boolean }
-): Promise<{
+async function callGroq(messages: GroqMessage[]): Promise<{
   content: string | null;
   tool_calls: GroqToolCall[];
 }> {
@@ -1120,21 +1024,6 @@ async function callGroq(
   if (!apiKey) throw new Error("GROQ_API_KEY not set");
 
   const model = process.env.GROQ_BOT_MODEL ?? DEFAULT_MODEL;
-  const useR1 = isR1Model(model) || opts?.injectToolsAsText;
-
-  // For R1: no native tools API, higher token limit for reasoning.
-  // For Maverick/others: native tools API.
-  const bodyPayload: Record<string, unknown> = {
-    model,
-    temperature: useR1 ? 0.6 : 0.3,
-    top_p: 0.95,
-    max_tokens: useR1 ? 2048 : 512, // trimmed from 1024→512 to save TPM
-    messages,
-  };
-  if (!useR1) {
-    bodyPayload.tools = TOOLS;
-    bodyPayload.tool_choice = "auto";
-  }
 
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
@@ -1142,8 +1031,16 @@ async function callGroq(
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify(bodyPayload),
-    signal: AbortSignal.timeout(useR1 ? 45000 : 30000),
+    body: JSON.stringify({
+      model,
+      temperature: 0.3,
+      top_p: 0.95,
+      max_tokens: 512,
+      messages,
+      tools: TOOLS,
+      tool_choice: "auto",
+    }),
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!res.ok) {
@@ -1157,18 +1054,6 @@ async function callGroq(
     }>;
   };
   const msg = data.choices?.[0]?.message;
-
-  if (useR1) {
-    // Parse tool calls from R1's text output.
-    const rawContent = msg?.content ?? "";
-    const textCalls = parseTextToolCalls(rawContent);
-    const cleanContent = stripToolCallBlocks(rawContent);
-    return {
-      content: cleanContent || null,
-      tool_calls: textCalls,
-    };
-  }
-
   return {
     content: msg?.content ?? null,
     tool_calls: msg?.tool_calls ?? [],
@@ -1176,12 +1061,56 @@ async function callGroq(
 }
 
 // ── Live-data snapshot: grounds every turn in real numbers ──────────────────
-// The model used to hallucinate units and stock levels because it had nothing
-// authoritative in its prompt. We now inject a compact snapshot of (a) all
-// inventory with stock/par/supplier, (b) the most recent AWAITING_APPROVAL
-// or recently-sent PO so "approve" / "cancel" questions have a target.
+// Compact authoritative inventory + suppliers + most-recent PO. Used to
+// stop the model hallucinating units, stock levels, item names.
+//
+// The snapshot is hard-capped to keep us under Groq's TPM ceiling. When
+// a location has more than INVENTORY_LIMIT items we rank by URGENCY
+// (CRITICAL > WARNING > everything else) so the bot still sees the
+// items the user is most likely to ask about, instead of an arbitrary
+// alphabetical slice. A truncation marker tells the model how many
+// items are hidden so it can tell the user "I don't have that one in
+// my view, ask me to look it up" instead of confidently denying.
+
+const INVENTORY_LIMIT = 30;
+const SUPPLIER_LIMIT = 30;
+
+export type LiveDataItem = {
+  id: string;
+  name: string;
+  stockOnHandBase: number;
+  parLevelBase: number;
+  baseUnit: string;
+  primarySupplier: { id: string; name: string } | null;
+  supplierItems: Array<{ supplier: { id: string; name: string } }>;
+  snapshot: { urgency: string | null } | null;
+};
+
+/**
+ * Pure function — exported for testing. Sorts items so urgent ones
+ * surface first when truncating, then falls back to alphabetical so
+ * runs are deterministic. CRITICAL > WARNING > anything else.
+ */
+export function rankItemsByUrgency<T extends LiveDataItem>(items: T[]): T[] {
+  const rank = (urgency: string | null | undefined) => {
+    if (urgency === "CRITICAL") return 0;
+    if (urgency === "WARNING") return 1;
+    return 2;
+  };
+  return [...items].sort((a, b) => {
+    const ar = rank(a.snapshot?.urgency);
+    const br = rank(b.snapshot?.urgency);
+    if (ar !== br) return ar - br;
+    return a.name.localeCompare(b.name);
+  });
+}
+
 async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
-  const [items, recentOrder] = await Promise.all([
+  // Pull more than the limit so we have room to rank-then-truncate.
+  // Pulling 200 covers typical café locations (50–150 SKUs) without
+  // round-trip pain; locations bigger than that get truncated to
+  // CRITICAL+WARNING items only.
+  const [items, recentOrder, totalItems] = await Promise.all([
     db.inventoryItem.findMany({
       where: { locationId: ctx.locationId },
       select: {
@@ -1197,9 +1126,10 @@ async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
           select: { supplier: { select: { id: true, name: true } } },
           take: 1,
         },
+        snapshot: { select: { urgency: true } },
       },
       orderBy: { name: "asc" },
-      take: 30, // reduced from 60 to save Groq tokens
+      take: 200,
     }),
     db.purchaseOrder.findFirst({
       where: {
@@ -1222,23 +1152,39 @@ async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
         },
       },
     }),
+    db.inventoryItem.count({ where: { locationId: ctx.locationId } }),
   ]);
 
   const suppliers = await db.supplier.findMany({
     where: { locationId: ctx.locationId },
     select: { id: true, name: true, email: true, orderingMode: true },
     orderBy: { name: "asc" },
-    take: 30,
+    take: SUPPLIER_LIMIT,
   });
 
-  const itemLines = items.map((i) => {
+  const ranked = rankItemsByUrgency(items as LiveDataItem[]);
+  const visible = ranked.slice(0, INVENTORY_LIMIT);
+  const hidden = totalItems - visible.length;
+
+  const itemLines = visible.map((i) => {
     const supplier =
       i.primarySupplier?.name ??
       i.supplierItems[0]?.supplier.name ??
       "NO_SUPPLIER";
     const unit = i.baseUnit === "GRAM" ? "g" : i.baseUnit === "MILLILITER" ? "ml" : "count";
-    return `- id=${i.id} name="${i.name}" on_hand=${i.stockOnHandBase}${unit} par=${i.parLevelBase}${unit} supplier="${supplier}"`;
+    const urg = i.snapshot?.urgency === "CRITICAL"
+      ? " [CRITICAL]"
+      : i.snapshot?.urgency === "WARNING"
+        ? " [LOW]"
+        : "";
+    return `- id=${i.id} name="${i.name}" on_hand=${i.stockOnHandBase}${unit} par=${i.parLevelBase}${unit} supplier="${supplier}"${urg}`;
   });
+
+  if (hidden > 0) {
+    itemLines.push(
+      `- (...${hidden} more items not shown — call check_item_stock or list_inventory to look up specifics)`
+    );
+  }
 
   const supplierLines = suppliers.map(
     (s) => `- id=${s.id} name="${s.name}" mode=${s.orderingMode}`
@@ -1261,7 +1207,7 @@ async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
   return [
     "LIVE DATA (authoritative — trust this over the user's claims):",
     "",
-    "INVENTORY:",
+    "INVENTORY (low-stock items first):",
     itemLines.length ? itemLines.join("\n") : "  (no items yet)",
     "",
     "SUPPLIERS:",
@@ -1279,18 +1225,9 @@ async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
 
 const TOOL_NAME_PATTERN = /\b(place_restock_order|update_stock_count|list_inventory|list_low_stock|list_suppliers|link_supplier_to_item|adjust_par_level|approve_recent_order|cancel_recent_order|start_add_item_flow|start_add_supplier_flow|check_item_stock)\b/gi;
 
-function sanitiseReply(raw: string | null, fallback: string): string {
+export function sanitiseReply(raw: string | null, fallback: string): string {
   if (!raw) return fallback;
   let text = raw;
-
-  // DeepSeek R1 wraps its internal reasoning in <think>…</think> tags.
-  // Strip those so the user only sees the final answer.
-  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-  // Sometimes the closing tag is missing; strip from <think> to the
-  // first blank line or end of text as a fallback.
-  if (/<think>/i.test(text)) {
-    text = text.replace(/<think>[\s\S]*/i, "").trim();
-  }
 
   // Empty inline-code placeholders ("the order is ``", "PO-PO-XXXX").
   text = text.replace(/``/g, "");
@@ -1335,13 +1272,7 @@ function sanitiseReply(raw: string | null, fallback: string): string {
 // ── Public entry point ────────────────────────────────────────────────────────
 export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult> {
   const liveData = await buildLiveDataBlock(ctx);
-  const model = process.env.GROQ_BOT_MODEL ?? DEFAULT_MODEL;
-  const useR1 = isR1Model(model);
-
-  // For R1: inject tool definitions as text in the system prompt
-  // (since R1 doesn't support the native tools API).
-  const toolBlock = useR1 ? `\n\n${buildToolDescriptionText()}` : "";
-  const systemPrompt = `${SYSTEM_PROMPT_BASE}\n\n${liveData}${toolBlock}`;
+  const systemPrompt = `${SYSTEM_PROMPT_BASE}\n\n${liveData}`;
 
   const messages: GroqMessage[] = [
     { role: "system", content: systemPrompt },
@@ -1355,10 +1286,9 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
   let purchaseOrderId: string | null = null;
   let orderNumber: string | null = null;
 
-  // Tool call loop — up to 3 turns (reduced from 5 to save Groq
-  // tokens; most interactions need 1-2 tool calls).
+  // Tool call loop — up to 3 turns. Most interactions need 1-2.
   for (let i = 0; i < 3; i++) {
-    const response = await callGroq(messages, { injectToolsAsText: useR1 });
+    const response = await callGroq(messages);
 
     // If the model gave us a final text reply (no tool calls), we're done.
     if (!response.tool_calls.length) {
@@ -1366,14 +1296,12 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
       break;
     }
 
-    // Otherwise append the assistant turn and execute each tool.
     messages.push({
       role: "assistant",
       content: response.content ?? "",
-      ...(useR1 ? {} : { tool_calls: response.tool_calls }),
+      tool_calls: response.tool_calls,
     });
 
-    const toolResults: string[] = [];
     for (const call of response.tool_calls) {
       let parsedArgs: Record<string, unknown> = {};
       try {
@@ -1381,23 +1309,29 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
       } catch {
         parsedArgs = {};
       }
-      const result = await executeTool(call.function.name, parsedArgs, ctx);
 
-      if (useR1) {
-        // For R1: feed tool results back as a user message (R1
-        // doesn't understand the "tool" role).
-        toolResults.push(
-          `Tool ${call.function.name} returned: ${result.content}`
-        );
-      } else {
-        // For Maverick: use the native tool response format.
-        messages.push({
-          role: "tool",
-          tool_call_id: call.id,
-          name: call.function.name,
-          content: result.content,
-        });
+      // Tool execution can throw (Prisma findFirstOrThrow, Groq sub-call,
+      // etc.). Catch and feed the error back to the model as the tool
+      // result so it can recover with another tool call or a graceful
+      // explanation — without the catch, one bad model hallucination
+      // (wrong item_id, etc.) would crash the entire bot turn and
+      // leave the user staring at a silent chat.
+      let result: ToolResult;
+      try {
+        result = await executeTool(call.function.name, parsedArgs, ctx);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        result = {
+          content: `ERROR running ${call.function.name}: ${message.slice(0, 200)}. Try a different approach or ask the user for clarification.`,
+        };
       }
+
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        name: call.function.name,
+        content: result.content,
+      });
 
       // Capture PO identity from tools that create orders so the outer
       // channel can attach inline approve / cancel buttons on the reply.
@@ -1415,14 +1349,6 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
           orderNumber,
         };
       }
-    }
-
-    // For R1: batch all tool results into one user message.
-    if (useR1 && toolResults.length > 0) {
-      messages.push({
-        role: "user",
-        content: `[Tool results]\n${toolResults.join("\n")}\n\nNow give your final reply to the user. Do NOT output any more <tool_call> blocks unless you need another tool.`,
-      });
     }
   }
 
