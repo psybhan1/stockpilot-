@@ -878,15 +878,15 @@ async function callGroq(messages: GroqMessage[]): Promise<{
       // tool names into user replies and emitted empty placeholder
       // values like "The order number is ``". 70b is boring and
       // disciplined — exactly what this bot needs.
-      // DeepSeek R1 distill — a genuine reasoning model that thinks
-      // step-by-step before answering, like Claude/o1 but free on
-      // Groq. Slower (~5-8s) but dramatically smarter than Llama
-      // 3.3/4 for ambiguous inputs, multi-step logic, and catching
-      // what the user actually meant. Override with GROQ_BOT_MODEL.
-      model: process.env.GROQ_BOT_MODEL ?? "deepseek-r1-distill-llama-70b",
-      temperature: 0.6, // R1 needs a bit more temperature to reason well
+      // Llama 4 Maverick — 128-expert MoE, free on Groq, supports
+      // tool calling (which DeepSeek R1 does NOT on Groq). The
+      // reasoning-first system prompt does the heavy lifting for
+      // intelligence; Maverick is the execution engine.
+      // Override with GROQ_BOT_MODEL if you want to experiment.
+      model: process.env.GROQ_BOT_MODEL ?? "meta-llama/llama-4-maverick-17b-128e-instruct",
+      temperature: 0.3,
       top_p: 0.95,
-      max_tokens: 2048, // R1 uses tokens for internal reasoning + final reply
+      max_tokens: 1024,
       tools: TOOLS,
       tool_choice: "auto",
       messages,

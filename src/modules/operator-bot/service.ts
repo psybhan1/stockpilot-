@@ -285,8 +285,14 @@ export async function handleInboundManagerBotMessage(
 
         return agentResult;
       } catch (agentError) {
-        // Log and fall through to legacy path so the bot still works if the
-        // agent is mis-configured.
+        // Log LOUDLY and fall through to legacy path so the bot still
+        // works if the agent is mis-configured. Without this console.error
+        // the failure was invisible — the legacy path silently handled it
+        // and gave bad results (like ordering the wrong item).
+        console.error(
+          "[bot] Agent failed, falling back to legacy intent-classifier:",
+          agentError instanceof Error ? agentError.message : agentError
+        );
         await db.auditLog.create({
           data: {
             locationId: managerContext.locationId,
