@@ -1024,10 +1024,13 @@ type GroqMessage = {
 };
 
 // Default model — override with GROQ_BOT_MODEL env var.
-// R1 was decommissioned on Groq (400 model_decommissioned).
-// Maverick is the best free model on Groq that supports native
-// tool calling + is smart enough for reasoning.
-const DEFAULT_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct";
+// Model selection: must be on Groq AND support tool calling.
+// As of Apr 2026, available + working:
+//   - llama-3.3-70b-versatile (reliable, supports tools)
+//   - qwen/qwen3-32b (smart reasoning, supports tools)
+//   - meta-llama/llama-4-scout-17b-16e-instruct (multimodal)
+// Decommissioned: deepseek-r1, llama-4-maverick
+const DEFAULT_MODEL = "qwen/qwen3-32b";
 
 function isR1Model(model: string): boolean {
   return /deepseek.*r1|r1.*distill/i.test(model);
