@@ -45,11 +45,32 @@ async function runScenario(name: string, fn: () => void | Promise<void>) {
 }
 
 // ── Mock fetch globally for any product-metadata calls the sniffer
-//    triggers when a URL has no slug. Returns an HTML stub with a
-//    predictable og:title so tests are deterministic.
+//    triggers when a URL has no slug. Amazon URLs now skip the
+//    direct fetch and go straight to microlink.io, so the mock needs
+//    to handle BOTH the direct URL pattern AND the microlink API
+//    shape `api.microlink.io/?url=<encoded>`.
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (url: string | URL | Request) => {
   const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : String(url);
+
+  // Microlink API call — return the real product title regardless of
+  // which upstream URL is encoded in the query. Tests only care that
+  // SOME title comes back.
+  if (href.startsWith("https://api.microlink.io")) {
+    return new Response(
+      JSON.stringify({
+        status: "success",
+        data: {
+          title: "Urnex Rinza Alkaline Formula Milk Frother Cleaner, 33.6 Ounce",
+          description: "For use on milk systems of coffee machines",
+          image: { url: null },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  // Direct fetch of a specific ASIN — return HTML with og:title.
   if (href.includes("/dp/B000FDL68W")) {
     return new Response(
       `<!doctype html><html><head>
@@ -58,8 +79,8 @@ globalThis.fetch = (async (url: string | URL | Request) => {
       { status: 200, headers: { "Content-Type": "text/html" } }
     );
   }
-  // Any other URL the tests might hit — return empty HTML so the
-  // sniffer falls back to its placeholder name.
+
+  // Any other URL — return empty HTML so the sniffer falls back.
   if (href.startsWith("http")) {
     return new Response("<!doctype html><html><head><title></title></head></html>", {
       status: 200,

@@ -5,15 +5,19 @@
  * Amazon's `/dp/B000FDL68W?ref=...` format), instead of falling back
  * to a useless placeholder like "Item from Amazon".
  *
- * Pure HTTP GET + HTML-regex parsing. No headless browser here —
- * that's reserved for the cart-filling agent that runs later. A 5s
- * timeout caps the worst case; failure returns null so callers can
- * fall back to whatever name they had.
+ * Two-tier strategy:
+ *   1. Direct HTTP GET with a browser User-Agent — fast, free, and
+ *      works on most sites. BUT Amazon aggressively blocks cloud-
+ *      provider IPs (Railway, AWS, Fly) with a captcha page that
+ *      has no og:title, so direct always fails for Amazon in prod.
+ *   2. Microlink.io fallback — free public API, runs the URL through
+ *      their own rendering farm (residential IPs, real browsers)
+ *      and returns clean metadata. Fires when direct returned no
+ *      title. Free tier: 50 requests/day per IP.
  *
- * Amazon sometimes serves a captcha to non-browser clients. A
- * realistic User-Agent and Accept-Language header side-step the
- * simplest checks; if we still get blocked, the browser agent's
- * post-navigation title-read (in browser-agent.ts) is the safety net.
+ * Failures return null so callers can fall back to whatever name
+ * they had. Detailed console logging so production issues are
+ * debuggable from Railway logs alone.
  */
 
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -22,13 +26,88 @@ const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
+const MICROLINK_ENDPOINT = "https://api.microlink.io/";
+
 export type ProductMetadata = {
   title: string | null;
   description: string | null;
   imageUrl: string | null;
+  /** Which path produced the metadata — for logging + debug. */
+  source?: "direct" | "microlink" | "none";
 };
 
+/**
+ * Hostnames where we've empirically confirmed direct fetch is
+ * blocked / returns no metadata. Short-circuit those straight to
+ * microlink — saves 5s wasted on a guaranteed-to-fail direct fetch.
+ */
+const DIRECT_FETCH_BLOCKED = [
+  /(^|\.)amazon\./i,
+  /(^|\.)amzn\.to$/i,
+  /(^|\.)a\.co$/i,
+  /(^|\.)costco\./i,
+  /(^|\.)walmart\./i,
+  /(^|\.)target\.com$/i,
+  /(^|\.)samsclub\.com$/i,
+];
+
+function isKnownToBlockDirect(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return DIRECT_FETCH_BLOCKED.some((rx) => rx.test(host));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Primary public API. Tries direct fetch first (unless the URL is on
+ * our bot-detection blocklist), then falls back to microlink.io if
+ * direct returned no title.
+ */
 export async function fetchProductMetadata(
+  url: string,
+  options?: {
+    timeoutMs?: number;
+    fetchImpl?: typeof fetch;
+    /** Skip the direct fetch and go straight to microlink. */
+    preferService?: boolean;
+  }
+): Promise<ProductMetadata | null> {
+  const label = truncateForLog(url, 80);
+  const skipDirect = options?.preferService || isKnownToBlockDirect(url);
+
+  if (!skipDirect) {
+    const direct = await fetchDirect(url, options);
+    if (direct?.title && direct.title.length >= 3) {
+      console.log(`[product-metadata] direct hit for ${label}: "${truncateForLog(direct.title, 60)}"`);
+      return { ...direct, source: "direct" };
+    }
+    console.log(`[product-metadata] direct missed for ${label}; trying microlink`);
+  } else {
+    console.log(`[product-metadata] skipping direct for ${label} (known to block); using microlink`);
+  }
+
+  const viaService = await fetchViaMicrolink(url, options);
+  if (viaService?.title) {
+    console.log(
+      `[product-metadata] microlink hit for ${label}: "${truncateForLog(viaService.title, 60)}"`
+    );
+    return { ...viaService, source: "microlink" };
+  }
+  console.log(`[product-metadata] all paths failed for ${label}`);
+  return null;
+}
+
+function truncateForLog(value: string, max: number): string {
+  if (value.length <= max) return value;
+  return value.slice(0, max - 1) + "…";
+}
+
+/**
+ * Plain HTTP GET + HTML regex parse. First-line-of-defence.
+ */
+async function fetchDirect(
   url: string,
   options?: { timeoutMs?: number; fetchImpl?: typeof fetch }
 ): Promise<ProductMetadata | null> {
@@ -62,6 +141,73 @@ export async function fetchProductMetadata(
     const body = await readFirstBytes(res, 512 * 1024);
     return parseProductMetadata(body);
   } catch {
+    return null;
+  }
+}
+
+/**
+ * Microlink.io fallback. Free tier: 50 req/day per IP (no API key).
+ * Handles Amazon, Costco, Walmart captchas because they run requests
+ * through residential proxies. Slightly slower (2-4s typical) but
+ * reliable for sites that block cloud IPs.
+ *
+ * Response shape (simplified):
+ *   {
+ *     status: "success",
+ *     data: {
+ *       title: "Urnex Rinza...",
+ *       description: "...",
+ *       image: { url: "https://..." },
+ *       ...
+ *     }
+ *   }
+ */
+async function fetchViaMicrolink(
+  url: string,
+  options?: { timeoutMs?: number; fetchImpl?: typeof fetch }
+): Promise<ProductMetadata | null> {
+  const timeoutMs = options?.timeoutMs ?? 8000;
+  const fetchImpl = options?.fetchImpl ?? globalThis.fetch;
+  const apiUrl = `${MICROLINK_ENDPOINT}?url=${encodeURIComponent(url)}`;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let res: Response;
+    try {
+      res = await fetchImpl(apiUrl, { signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) {
+      console.log(`[product-metadata] microlink HTTP ${res.status}`);
+      return null;
+    }
+    const json = (await res.json().catch(() => null)) as {
+      status?: string;
+      data?: {
+        title?: string | null;
+        description?: string | null;
+        image?: { url?: string | null } | null;
+      };
+      message?: string;
+    } | null;
+    if (!json) return null;
+    if (json.status !== "success") {
+      console.log(`[product-metadata] microlink status=${json.status} msg=${json.message ?? ""}`);
+      return null;
+    }
+    const data = json.data ?? {};
+    return {
+      title: cleanText(data.title ?? "") || null,
+      description: cleanText(data.description ?? "") || null,
+      imageUrl: data.image?.url ?? null,
+    };
+  } catch (err) {
+    console.log(
+      `[product-metadata] microlink error:`,
+      err instanceof Error ? err.message : String(err)
+    );
     return null;
   }
 }
