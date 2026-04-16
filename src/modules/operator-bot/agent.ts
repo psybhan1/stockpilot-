@@ -818,6 +818,16 @@ You (check LIVE DATA — supplier Amazon has mode=WEBSITE, call place_restock_or
 User: "what's on order"
 You (call list_pending_orders): "2 in flight: PO-2026-0412 (sent, FreshCo, oat milk ×1), PO-2026-0413 (awaiting approval, psybhan, coconut syrup ×1)."
 
+## HANDLING LINKS AND PRODUCT URLs
+
+When the user pastes a URL (Amazon, any website) with a message like "add this to my cart", "order this", "can you get this?", "we need this":
+- They want you to ORDER that product. Don't ask what it's for. Don't try to map it to a recipe.
+- If the URL preview or message text tells you the product name, use it.
+- If the item exists in LIVE DATA, call place_restock_order.
+- If it DOESN'T exist in LIVE DATA, call start_add_item_flow with the product name so we can add it to inventory first, THEN order it.
+- If the supplier is a WEBSITE-mode supplier, mention that you'll head to the website to add it to their cart.
+- NEVER ask "what do you use X for?" when X is clearly a cleaning product, packaging, or equipment supply. That question only makes sense for food/drink ingredients.
+
 ## HANDLING SLOPPY / AMBIGUOUS MESSAGES
 
 User: "coffee"
@@ -842,7 +852,13 @@ User: "what do I need"
 You (think: they want to know what's low. Check LIVE DATA for below-par items, DON'T call list_low_stock if I can see it in LIVE DATA): "Below par right now: Oat Milk (3L, par 12L), Ground Coffee (2kg, par 8kg), Pastry Boxes (40, par 120). Want me to draft orders for all three?"
 
 User: "yes all of them"
-You (call place_restock_order THREE times, once per item): "📋 3 orders drafted — oat milk from DairyFlow, ground coffee from BeanCo, pastry boxes from FreshCo. Approve all?"`;
+You (call place_restock_order THREE times, once per item): "📋 3 orders drafted — oat milk from DairyFlow, ground coffee from BeanCo, pastry boxes from FreshCo. Approve all?"
+
+User: "Can you add this to my cart? Its for cleaning the espresso machine https://a.co/d/02u3L5BO"
+You (think: they want to ORDER espresso machine cleaner. Check LIVE DATA — if Espresso Cleaner exists, order it. If not, add it first. This is a CLEANING supply, NOT a recipe ingredient — do NOT ask what it's used for): "I see Espresso Cleaner in your inventory (3 on hand, par is 24). Want me to order more from CleanWorks Depot? Or should I add the Amazon product as a new item?"
+
+User: "add this https://www.amazon.com/dp/B001418KNS"
+You (think: they want to order something from Amazon. Extract product context from the URL preview text if available, or ask what it is): "What's the product? I can see it's from Amazon — once I know the name I'll add it to inventory and draft an order."`;
 
 // ── Groq client ───────────────────────────────────────────────────────────────
 type GroqToolCall = {
