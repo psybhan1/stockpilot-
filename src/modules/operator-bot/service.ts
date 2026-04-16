@@ -230,6 +230,109 @@ export async function handleInboundManagerBotMessage(
 
     const pendingContext = extractPendingContext(recentReceipts[0]?.metadata);
 
+    // ── Pre-LLM deterministic sniffer ─────────────────────────────────────────
+    // Unambiguous order intents ("add 5 jp wisers from lcbo", "order this
+    // https://...") bypass the model entirely. The model sometimes refuses
+    // these with "I can't access external websites" — a safety-training
+    // artifact that no amount of prompt engineering fully suppresses — so
+    // we route them deterministically instead.
+    //
+    // Falls through to the agent when (a) not an order intent, or (b)
+    // an order intent we can't parse confidently, or (c) there's an
+    // active multi-turn workflow (would confuse the workflow engine).
+    {
+      const { sniffOrderIntent } = await import(
+        "@/modules/operator-bot/order-sniffer"
+      );
+      const sniffed = sniffOrderIntent(input.text);
+      if (sniffed && sniffed.orders.length > 0) {
+        const { executeTool } = await import("@/modules/operator-bot/agent");
+        const replies: string[] = [];
+        let firstPoId: string | null = null;
+        let firstOrderNumber: string | null = null;
+        for (const order of sniffed.orders) {
+          try {
+            const result = await executeTool(
+              "quick_add_and_order",
+              {
+                item_name: order.itemName,
+                category: "SUPPLY",
+                quantity: String(order.quantity),
+                supplier_name: order.supplierName,
+                website_url: order.websiteUrl,
+              },
+              {
+                locationId: managerContext.locationId,
+                userId: managerContext.userId,
+                channel: input.channel,
+                senderId: input.senderId,
+                sourceMessageId: input.sourceMessageId ?? null,
+                conversation: [],
+              }
+            );
+            replies.push(result.finalReply || result.content);
+            if (!firstPoId && result.purchaseOrderId) {
+              firstPoId = result.purchaseOrderId;
+              firstOrderNumber = result.orderNumber ?? null;
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            replies.push(`⚠ Couldn't draft ${order.itemName}: ${msg.slice(0, 120)}`);
+          }
+        }
+        const combinedReply =
+          sniffed.orders.length > 1
+            ? `📋 Drafted ${sniffed.orders.length} orders from *${sniffed.orders[0].supplierName}*:\n` +
+              sniffed.orders
+                .map((o) => `• ${o.quantity}× ${o.itemName}`)
+                .join("\n") +
+              `\n\nApprove each to send.`
+            : replies[0] ?? "Drafted.";
+
+        await db.auditLog.create({
+          data: {
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            action: "bot.outbound_replied",
+            entityType: "botChannel",
+            entityId:
+              input.sourceMessageId ?? `${input.channel.toLowerCase()}-message`,
+            details: {
+              channel: input.channel,
+              reply: combinedReply,
+              replyScenario: "sniffer",
+              orders: sniffed.orders.length,
+            },
+          },
+        });
+
+        await completeBotMessageReceipt({
+          receiptId,
+          locationId: managerContext.locationId,
+          userId: managerContext.userId,
+          reply: combinedReply,
+          purchaseOrderId: firstPoId,
+          orderNumber: firstOrderNumber,
+          metadata: toInputJsonValue({
+            channel: input.channel,
+            replyScenario: "sniffer",
+            sourceMessageId: input.sourceMessageId ?? null,
+            senderId: input.senderId,
+            replyProvider: "deterministic-sniffer",
+            ordersCount: sniffed.orders.length,
+          }),
+        });
+
+        return {
+          ok: true,
+          reply: combinedReply,
+          replyScenario: "sniffer",
+          purchaseOrderId: firstPoId,
+          orderNumber: firstOrderNumber,
+        };
+      }
+    }
+
     // ── Tool-calling agent path ────────────────────────────────────────────────
     // Try the real agent first — it sees the conversation, has tools, and
     // decides what to do. Falls through to the legacy intent-classifier only

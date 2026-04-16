@@ -77,32 +77,123 @@ export function toHostnameRoot(url: string): string {
 // says "add 5 of X from LCBO" with no URL — we set the supplier up
 // in WEBSITE mode pointing at the home page so the browser agent
 // has somewhere to start. The agent will search-by-name from there.
-//
-// Only includes brands we've confirmed are useful starting points
-// for the generic search adapter. Rest fall through to MANUAL mode
-// (the user can always add a URL later via Settings).
 const KNOWN_SUPPLIER_WEBSITES: Record<string, string> = {
+  // ── Big-box retail ────────────────────────────────────────────
   amazon: "https://www.amazon.com",
   "amazon.com": "https://www.amazon.com",
   "amazon.ca": "https://www.amazon.ca",
+  "amazon.co.uk": "https://www.amazon.co.uk",
   costco: "https://www.costco.com",
   "costco.com": "https://www.costco.com",
+  "costco.ca": "https://www.costco.ca",
+  "costco business": "https://www.costcobusinessdelivery.com",
   walmart: "https://www.walmart.com",
+  "walmart.ca": "https://www.walmart.ca",
   target: "https://www.target.com",
-  lcbo: "https://www.lcbo.com",
+  sams: "https://www.samsclub.com",
+  "sam's club": "https://www.samsclub.com",
+  samsclub: "https://www.samsclub.com",
+  bjs: "https://www.bjs.com",
+  "bj's": "https://www.bjs.com",
+  kroger: "https://www.kroger.com",
+  safeway: "https://www.safeway.com",
+  meijer: "https://www.meijer.com",
+  aldi: "https://shop.aldi.us",
+
+  // ── B2B foodservice ───────────────────────────────────────────
   sysco: "https://shop.sysco.com",
+  "us foods": "https://www.usfoods.com",
+  usfoods: "https://www.usfoods.com",
+  "gordon food service": "https://gfs.com",
+  "gordon foods": "https://gfs.com",
+  gfs: "https://gfs.com",
+  "restaurant depot": "https://www.restaurantdepot.com",
+  shamrock: "https://shamrockfoods.com",
+  "shamrock foods": "https://shamrockfoods.com",
+  "cash and carry": "https://www.smartfoodservice.com",
+  "smart foodservice": "https://www.smartfoodservice.com",
   webstaurant: "https://www.webstaurantstore.com",
   webstaurantstore: "https://www.webstaurantstore.com",
+  "restaurant supply": "https://www.webstaurantstore.com",
+  wasserstrom: "https://www.wasserstrom.com",
+
+  // ── Alcohol & beverage ────────────────────────────────────────
+  lcbo: "https://www.lcbo.com",
+  saq: "https://www.saq.com",
+  "bc liquor": "https://www.bcliquorstores.com",
+  bevmo: "https://www.bevmo.com",
+  "total wine": "https://www.totalwine.com",
+  totalwine: "https://www.totalwine.com",
+  "drizly": "https://drizly.com",
+  "wine.com": "https://www.wine.com",
+
+  // ── Office / industrial / general ─────────────────────────────
   staples: "https://www.staples.com",
+  "staples.ca": "https://www.staples.ca",
+  "office depot": "https://www.officedepot.com",
   "home depot": "https://www.homedepot.com",
   homedepot: "https://www.homedepot.com",
+  lowes: "https://www.lowes.com",
+  "lowe's": "https://www.lowes.com",
   ikea: "https://www.ikea.com",
   uline: "https://www.uline.com",
+  grainger: "https://www.grainger.com",
+  mcmaster: "https://www.mcmaster.com",
+  "mcmaster-carr": "https://www.mcmaster.com",
+
+  // ── Coffee / specialty ────────────────────────────────────────
+  peets: "https://www.peets.com",
+  "peet's": "https://www.peets.com",
+  "peet's coffee": "https://www.peets.com",
+  starbucks: "https://athome.starbucks.com",
+  "whole foods": "https://www.wholefoodsmarket.com",
+  wholefoods: "https://www.wholefoodsmarket.com",
+  "trader joe's": "https://www.traderjoes.com",
+
+  // ── Delivery platforms ────────────────────────────────────────
+  instacart: "https://www.instacart.com",
+  doordash: "https://www.doordash.com",
+  ubereats: "https://www.ubereats.com",
+  "uber eats": "https://www.ubereats.com",
 };
 
+/**
+ * Look up a supplier by name. Handles common variants:
+ *   - case-insensitive
+ *   - strip "the ", "store", "market", etc.
+ *   - strip trailing punctuation
+ *   - match partial names (e.g. "Amazon Prime" → amazon)
+ */
 export function lookupKnownSupplierWebsite(supplierName: string): string | null {
-  const key = supplierName.trim().toLowerCase();
-  return KNOWN_SUPPLIER_WEBSITES[key] ?? null;
+  const raw = supplierName.trim().toLowerCase();
+  if (!raw) return null;
+
+  // 1. Exact match.
+  if (KNOWN_SUPPLIER_WEBSITES[raw]) return KNOWN_SUPPLIER_WEBSITES[raw];
+
+  // 2. Strip leading possessives / articles + trailing noise words.
+  const stripped = raw
+    .replace(/^(?:the|my|our)\s+/, "")
+    .replace(/\s+(store|market|website|shop|cart|online|delivery)$/g, "")
+    .replace(/[.,!?]+$/g, "")
+    .trim();
+  if (stripped !== raw && KNOWN_SUPPLIER_WEBSITES[stripped]) {
+    return KNOWN_SUPPLIER_WEBSITES[stripped];
+  }
+
+  // 3. First-token match — "Amazon Prime" → amazon, "Costco Business" → costco business.
+  // Try the two-word prefix first (for "sam's club", "whole foods", etc.),
+  // then the one-word prefix.
+  const tokens = stripped.split(/\s+/);
+  if (tokens.length >= 2) {
+    const twoToken = `${tokens[0]} ${tokens[1]}`;
+    if (KNOWN_SUPPLIER_WEBSITES[twoToken]) return KNOWN_SUPPLIER_WEBSITES[twoToken];
+  }
+  if (tokens.length >= 1 && KNOWN_SUPPLIER_WEBSITES[tokens[0]]) {
+    return KNOWN_SUPPLIER_WEBSITES[tokens[0]];
+  }
+
+  return null;
 }
 
 // ── Tool schemas (OpenAI-compatible, Groq understands this format) ───────────

@@ -67,6 +67,53 @@ export async function addItemsToAmazonCart(
           timeout: 20000,
         });
         screenshots.push(await takeStepScreenshot(page, `product-direct-${item.query}`));
+
+        // Amazon's 404 dog page appears when the product was removed,
+        // is region-locked, or the URL is malformed. Detect it and
+        // fall back to searching for the item by name on the same
+        // storefront — much more likely to find a working SKU.
+        if (await isAmazonErrorPage(page)) {
+          screenshots.push(await takeStepScreenshot(page, `product-not-found-${item.query}`));
+          await page.goto(
+            `${domain}/s?k=${encodeURIComponent(item.query)}`,
+            { waitUntil: "domcontentloaded", timeout: 20000 }
+          );
+          await page
+            .waitForSelector('[data-component-type="s-search-result"]', { timeout: 10000 })
+            .catch(() => null);
+          screenshots.push(
+            await takeStepScreenshot(page, `search-fallback-${item.query}`)
+          );
+          const firstResult = await page.$(
+            '[data-component-type="s-search-result"] h2 a'
+          );
+          if (!firstResult) {
+            results.push({
+              query: item.query,
+              added: false,
+              reason:
+                "Product URL returned an error page and search found no alternative.",
+            });
+            continue;
+          }
+          const linkText =
+            (await firstResult.evaluate((el) => el.textContent ?? "")) ?? "";
+          if (isForbiddenButton(linkText)) {
+            results.push({
+              query: item.query,
+              added: false,
+              reason: `Safety-blocked search result: "${linkText.slice(0, 60)}"`,
+            });
+            continue;
+          }
+          await firstResult.click();
+          await page
+            .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 })
+            .catch(() => null);
+          screenshots.push(
+            await takeStepScreenshot(page, `product-from-search-${item.query}`)
+          );
+        }
       } else {
         // Search-by-name fallback for legacy POs / non-quick-add flows.
         await page.goto(`${domain}/s?k=${encodeURIComponent(item.query)}`, {
@@ -172,6 +219,58 @@ export async function addItemsToAmazonCart(
   }
 
   return { results, screenshots };
+}
+
+/**
+ * Heuristic: did we land on Amazon's "sorry, we couldn't find that
+ * page" error? The telltale signs are the signature "dogs of Amazon"
+ * image, specific error-page URLs, or the error copy in English or
+ * French (amazon.ca often returns FR for en-US visitors). Covers the
+ * user-reported failure where a product URL was region-locked on
+ * .ca and dumped them on the dog page.
+ *
+ * Exported for test coverage — detection logic is pure HTML/URL
+ * inspection so it can be unit-tested without launching Chrome.
+ */
+export function detectAmazonErrorFromState(input: {
+  url: string;
+  title: string;
+  bodyText: string;
+}): boolean {
+  const { url, title, bodyText } = input;
+  // URL signatures first (fast-path).
+  if (/\/(?:errors|404|gp\/aw\/errors|gp\/error)/i.test(url)) return true;
+  if (/\/b\?node=/i.test(url) && /lookup/i.test(url)) return true;
+  // Title signatures.
+  if (/page not found|couldn'?t find that page|sorry!? something/i.test(title)) {
+    return true;
+  }
+  if (/désolés|nous sommes désolés/i.test(title)) return true;
+  // Body-text signatures — English + French copies of the error page.
+  const body = bodyText.slice(0, 2000); // just the top of the body is enough
+  if (
+    /we (?:couldn'?t find|were unable to find) that page/i.test(body) ||
+    /page you (?:were|are) looking for/i.test(body) ||
+    /nous sommes désolés.*erreur.*s'est produite/i.test(body) ||
+    /page d'accueil d'amazon/i.test(body) ||
+    /dogs of amazon/i.test(body)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export async function isAmazonErrorPage(page: Page): Promise<boolean> {
+  try {
+    const url = page.url();
+    const title = await page.title().catch(() => "");
+    const bodyText = await page
+      .evaluate(() => document.body?.innerText ?? "")
+      .catch(() => "");
+    return detectAmazonErrorFromState({ url, title, bodyText });
+  } catch {
+    return false;
+  }
 }
 
 /**
