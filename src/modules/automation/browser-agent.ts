@@ -171,11 +171,12 @@ export async function runWebsiteOrderAgent(
         const arrayBuf = await downloadRes.arrayBuffer();
         fs.writeFileSync(zipPath, Buffer.from(arrayBuf));
 
-        // Extract the zip
-        execSync(`cd ${CACHE_DIR} && unzip -o chrome.zip -d chrome-extracted`, {
-          stdio: "pipe",
-          timeout: 60000,
-        });
+        // Extract the zip using Python (always available on nixpacks;
+        // unzip/jar are NOT in the runtime container).
+        execSync(
+          `python3 -c "import zipfile; zipfile.ZipFile('${zipPath}').extractall('${CACHE_DIR}/chrome-extracted')"`,
+          { stdio: "pipe", timeout: 60000 }
+        );
 
         // Find the chrome binary inside
         const found = execSync(
