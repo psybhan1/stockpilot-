@@ -95,7 +95,7 @@ const TOOLS: ToolSchema[] = [
               "OPTIONAL. The unit the user used for requested_quantity. Free text — 'oz', 'lb', 'kg', 'g', 'ml', 'l', 'bag', 'case', 'each', etc. Pass exactly what they said. Required if requested_quantity is set.",
           },
         },
-        required: ["item_id", "current_quantity"],
+        required: ["item_id"],
       },
     },
   },
