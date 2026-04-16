@@ -21,7 +21,5 @@ cmds = [
 ]
 
 [start]
-# @sparticuz/chromium looks for bin/ relative to its __dirname in
-# the root node_modules (not standalone). Symlink it so the library
-# finds its .br compressed Chromium binaries at runtime.
-cmd = "mkdir -p node_modules/@sparticuz/chromium && cp -rn .next/standalone/node_modules/@sparticuz/chromium/* node_modules/@sparticuz/chromium/ 2>/dev/null; ln -sf $(pwd)/.next/standalone/node_modules/@sparticuz node_modules/@sparticuz 2>/dev/null; node .next/standalone/server.js"
+# Diagnose + fix @sparticuz/chromium binary location at startup.
+cmd = "echo '=== Chromium binary check ===' && find / -name 'chromium.br' 2>/dev/null | head -5 && find / -path '*@sparticuz/chromium/bin*' -type d 2>/dev/null | head -5 && ls -la node_modules/@sparticuz/chromium/ 2>/dev/null | head && ls -la .next/standalone/node_modules/@sparticuz/chromium/ 2>/dev/null | head && echo '=== Starting server ===' && node .next/standalone/server.js"
