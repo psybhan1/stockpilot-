@@ -55,6 +55,7 @@ n8n/*.png
 .localtunnel*.log
 .tmp-*.png
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 test-results/
 
 # vercel
