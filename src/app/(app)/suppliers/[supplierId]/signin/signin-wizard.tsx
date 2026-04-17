@@ -98,6 +98,7 @@ function RemoteSigninPanel({
   >("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [currentUrl, setCurrentUrl] = useState<string | null>(null);
+  const [keyboardActive, setKeyboardActive] = useState(false);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -144,6 +145,92 @@ function RemoteSigninPanel({
     };
   }, [sessionId, supplierId]);
 
+  // Global keyboard capture while the sign-in panel is active.
+  // Previously we had a separate <input> the user had to focus
+  // BEFORE typing — confusing because they'd naturally click on
+  // the email field in the screenshot and start typing, and get
+  // nothing. Now keystrokes on this page are captured globally
+  // and forwarded to Chrome. We skip keystrokes that originated
+  // from a real form element (our Cancel button's focus ring,
+  // etc.) so interacting with the rest of the page still works.
+  useEffect(() => {
+    if (!sessionId || status !== "ready") return;
+
+    const handleKey = async (e: KeyboardEvent) => {
+      // If the user is typing into an actual form field on OUR
+      // page (e.g. the cookie-paste tab's textarea), let that go.
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT" ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+      }
+      // Skip modifier-only presses.
+      if (
+        e.key === "Shift" ||
+        e.key === "Control" ||
+        e.key === "Alt" ||
+        e.key === "Meta" ||
+        e.key === "CapsLock"
+      ) {
+        return;
+      }
+
+      const named = [
+        "Enter",
+        "Tab",
+        "Backspace",
+        "Escape",
+        "ArrowLeft",
+        "ArrowRight",
+        "ArrowUp",
+        "ArrowDown",
+        "Delete",
+        "Home",
+        "End",
+      ];
+      e.preventDefault();
+      e.stopPropagation();
+
+      try {
+        if (named.includes(e.key)) {
+          await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "key", key: e.key }),
+          });
+        } else if (e.key.length === 1) {
+          await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "type", text: e.key }),
+          });
+        } else {
+          // Unknown key — ignore.
+          return;
+        }
+      } catch {
+        // Network blip — screenshot poll will recover state.
+      }
+      // Refresh the screenshot quickly so the user sees their
+      // typing land instead of waiting for the 1.5s poll.
+      setTimeout(fetchScreenshot, 250);
+    };
+
+    window.addEventListener("keydown", handleKey);
+    setKeyboardActive(true);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      setKeyboardActive(false);
+    };
+  }, [sessionId, status, supplierId, fetchScreenshot]);
+
   const start = async () => {
     setStatus("starting");
     setErrorMsg(null);
@@ -184,35 +271,6 @@ function RemoteSigninPanel({
       body: JSON.stringify({ kind: "click", x, y }),
     });
     // Snapshot straight away so the user sees their click land.
-    setTimeout(fetchScreenshot, 200);
-  };
-
-  const onKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!sessionId) return;
-    // Let the browser handle plain text input via onChange; forward
-    // only the named keys here so Backspace/Enter/Tab work.
-    const named = ["Enter", "Tab", "Backspace", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
-    if (named.includes(e.key)) {
-      e.preventDefault();
-      await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: "key", key: e.key }),
-      });
-      setTimeout(fetchScreenshot, 200);
-    }
-  };
-
-  const onChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!sessionId) return;
-    const text = e.target.value;
-    e.target.value = ""; // reset so we can catch each batch
-    if (!text) return;
-    await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind: "type", text }),
-    });
     setTimeout(fetchScreenshot, 200);
   };
 
@@ -325,7 +383,8 @@ function RemoteSigninPanel({
               src={screenshot}
               alt={`${supplierName} sign-in`}
               onClick={onImageClick}
-              className="block w-full cursor-pointer"
+              className="block w-full cursor-pointer select-none"
+              draggable={false}
             />
             {status === "saving" ? (
               <div className="absolute inset-0 flex items-center justify-center bg-black/50">
@@ -341,27 +400,21 @@ function RemoteSigninPanel({
           </div>
         )}
 
-        {/* Hidden-ish text input — focus this, type your password into
-            the supplier's form. Each keystroke forwards to the server. */}
-        <div className="rounded-xl border border-border/60 bg-card p-3">
-          <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Type here — keystrokes go to the {supplierName} page above
-          </label>
-          <input
-            type="text"
-            autoFocus
-            placeholder="Click on the email/password field above, then type here"
-            onChange={onChange}
-            onKeyDown={onKeyDown}
-            className="w-full rounded-lg border-none bg-transparent p-2 text-sm outline-none focus-visible:ring-0"
-            // Autocomplete off — this is a passthrough input, not a
-            // real credentials form. Browser autofill would just
-            // confuse the flow.
-            autoComplete="off"
-            spellCheck={false}
-            data-1p-ignore
-            data-lpignore="true"
-          />
+        {/* Keyboard-active indicator. Keystrokes are captured
+            globally on this page (see the useEffect with
+            window.keydown) — no input to focus. The indicator
+            tells the user it's working. */}
+        <div
+          className={`flex items-center gap-2 rounded-xl border p-3 text-sm transition ${
+            keyboardActive
+              ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
+              : "border-border/60 bg-card text-muted-foreground"
+          }`}
+        >
+          <span className="inline-block size-2 rounded-full bg-current" />
+          {keyboardActive
+            ? `Keyboard is live. Click the email field above, type your email, tap the password field, type your password, then hit Enter or the Sign In button on the page.`
+            : "Keyboard not active yet — session still loading."}
         </div>
 
         <div className="flex items-center justify-between gap-2">
