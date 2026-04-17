@@ -219,6 +219,7 @@ async function cleanup(ctx?: { locationId: string; businessId: string; suffix: s
     where: { agentTask: { locationId } },
   });
   await db.agentTask.deleteMany({ where: { locationId } });
+  await db.jobRun.deleteMany({ where: { locationId } });
   await db.supplierItem.deleteMany({
     where: { supplier: { locationId } },
   });
@@ -605,6 +606,256 @@ await scenario("Unlinked sender: bot explains instead of crashing", async () => 
     throw err;
   }
 });
+
+// ── NEW: website-mode approval WITHOUT saved credentials ─────────
+// The simplification from f87a872: no Chrome launch, no agent task,
+// PO flips to SENT, SupplierCommunication SENT record, audit log
+// written, no job enqueued. This is the "just sign in" handoff path.
+await scenario(
+  "Website supplier + NO credentials → no agent task, PO SENT, handoff communication",
+  async () => {
+    const ctx = await buildRestaurant();
+    try {
+      // Make an Amazon-like WEBSITE-mode supplier WITHOUT credentials.
+      const supplier = await db.supplier.create({
+        data: {
+          locationId: ctx.locationId,
+          name: `Amazon ${ctx.suffix}`,
+          orderingMode: "WEBSITE",
+          website: "https://www.amazon.com",
+          leadTimeDays: 2,
+          credentialsConfigured: false,
+          websiteCredentials: null, // THE KEY THING
+        },
+      });
+      const item = await db.inventoryItem.create({
+        data: {
+          locationId: ctx.locationId,
+          name: `Urnex Cafiza ${ctx.suffix}`,
+          sku: `UC-${ctx.suffix}`,
+          category: "CLEANING",
+          baseUnit: "COUNT",
+          countUnit: "COUNT",
+          displayUnit: "COUNT",
+          purchaseUnit: "COUNT",
+          packSizeBase: 1,
+          stockOnHandBase: 0,
+          parLevelBase: 10,
+          lowStockThresholdBase: 3,
+          safetyStockBase: 1,
+          primarySupplierId: supplier.id,
+        },
+      });
+      await db.supplierItem.create({
+        data: {
+          supplierId: supplier.id,
+          inventoryItemId: item.id,
+          packSizeBase: 1,
+          minimumOrderQuantity: 1,
+          preferred: true,
+        },
+      });
+      const po = await db.purchaseOrder.create({
+        data: {
+          locationId: ctx.locationId,
+          supplierId: supplier.id,
+          orderNumber: `PO-NOCRED-${ctx.suffix}`,
+          status: "AWAITING_APPROVAL",
+          totalLines: 1,
+          placedById: ctx.userId,
+        },
+      });
+      await db.purchaseOrderLine.create({
+        data: {
+          purchaseOrderId: po.id,
+          inventoryItemId: item.id,
+          description: item.name,
+          quantityOrdered: 3,
+          expectedQuantityBase: 3,
+          purchaseUnit: "COUNT",
+          packSizeBase: 1,
+          notes: `Product URL: https://www.amazon.com/Urnex-Cafiza/dp/B005YJZE2I`,
+        },
+      });
+
+      const { approveAndDispatchPurchaseOrder } = await import(
+        "../src/modules/operator-bot/service.ts"
+      );
+      const result = await approveAndDispatchPurchaseOrder({
+        purchaseOrderId: po.id,
+        userId: ctx.userId,
+      });
+
+      // Assertions: the new flow's observable effects.
+      assert(result.status === "SENT", `PO goes to SENT (got ${result.status})`);
+
+      const agentTaskCount = await db.agentTask.count({
+        where: { purchaseOrderId: po.id },
+      });
+      assert(
+        agentTaskCount === 0,
+        `NO agent task created without credentials (got ${agentTaskCount})`
+      );
+
+      const jobs = await db.jobRun.count({
+        where: {
+          type: "PREPARE_WEBSITE_ORDER",
+          locationId: ctx.locationId,
+        },
+      });
+      // Since no agent task was created, no PREPARE_WEBSITE_ORDER
+      // job should exist for this location either (location scope
+      // keeps this test isolated from other scenarios).
+      assert(jobs === 0, `no job enqueued for this location (got ${jobs})`);
+
+      const comm = await db.supplierCommunication.findFirst({
+        where: { purchaseOrderId: po.id },
+      });
+      assert(comm !== null, "SupplierCommunication written");
+      assert(comm?.status === "SENT", `Comm marked SENT (got ${comm?.status})`);
+      assert(
+        comm?.subject?.includes("handed off"),
+        `Comm subject explains handoff (got: ${comm?.subject})`
+      );
+
+      const audit = await db.auditLog.findFirst({
+        where: {
+          locationId: ctx.locationId,
+          action: "bot.website_order_handoff_no_credentials",
+          entityId: po.id,
+        },
+      });
+      assert(audit !== null, "audit log records the handoff");
+    } finally {
+      await cleanup(ctx);
+    }
+  }
+);
+
+await scenario(
+  "Website supplier + cookies saved → agent task IS created (existing cookie-path preserved)",
+  async () => {
+    const ctx = await buildRestaurant();
+    try {
+      // Inject real encrypted cookies so supplierHasCredentials returns true.
+      const { encryptSupplierCredentials } = await import(
+        "../src/modules/suppliers/website-credentials.ts"
+      );
+      const encrypted = encryptSupplierCredentials({
+        kind: "cookies",
+        cookies: [
+          {
+            name: "session-token",
+            value: "fake-but-encrypted",
+            domain: ".amazon.com",
+          },
+        ],
+      });
+
+      const supplier = await db.supplier.create({
+        data: {
+          locationId: ctx.locationId,
+          name: `Amazon-creds ${ctx.suffix}`,
+          orderingMode: "WEBSITE",
+          website: "https://www.amazon.com",
+          leadTimeDays: 2,
+          credentialsConfigured: true,
+          websiteCredentials: encrypted,
+        },
+      });
+      const item = await db.inventoryItem.create({
+        data: {
+          locationId: ctx.locationId,
+          name: `Cafiza with creds ${ctx.suffix}`,
+          sku: `UCC-${ctx.suffix}`,
+          category: "CLEANING",
+          baseUnit: "COUNT",
+          countUnit: "COUNT",
+          displayUnit: "COUNT",
+          purchaseUnit: "COUNT",
+          packSizeBase: 1,
+          stockOnHandBase: 0,
+          parLevelBase: 10,
+          lowStockThresholdBase: 3,
+          safetyStockBase: 1,
+          primarySupplierId: supplier.id,
+        },
+      });
+      await db.supplierItem.create({
+        data: {
+          supplierId: supplier.id,
+          inventoryItemId: item.id,
+          packSizeBase: 1,
+          minimumOrderQuantity: 1,
+          preferred: true,
+        },
+      });
+      const po = await db.purchaseOrder.create({
+        data: {
+          locationId: ctx.locationId,
+          supplierId: supplier.id,
+          orderNumber: `PO-WITHCRED-${ctx.suffix}`,
+          status: "AWAITING_APPROVAL",
+          totalLines: 1,
+          placedById: ctx.userId,
+        },
+      });
+      await db.purchaseOrderLine.create({
+        data: {
+          purchaseOrderId: po.id,
+          inventoryItemId: item.id,
+          description: item.name,
+          quantityOrdered: 2,
+          expectedQuantityBase: 2,
+          purchaseUnit: "COUNT",
+          packSizeBase: 1,
+        },
+      });
+
+      const { approveAndDispatchPurchaseOrder } = await import(
+        "../src/modules/operator-bot/service.ts"
+      );
+      const result = await approveAndDispatchPurchaseOrder({
+        purchaseOrderId: po.id,
+        userId: ctx.userId,
+      });
+
+      assert(result.status === "SENT", `PO goes to SENT (got ${result.status})`);
+
+      const agentTask = await db.agentTask.findFirst({
+        where: { purchaseOrderId: po.id },
+      });
+      assert(
+        agentTask !== null,
+        "agent task WAS created because credentials are present"
+      );
+      assert(agentTask?.status === "PENDING", `agent task PENDING (got ${agentTask?.status})`);
+
+      // There should also be a handoff-style audit WITHOUT the
+      // no-credentials marker.
+      const noCredAudit = await db.auditLog.findFirst({
+        where: {
+          locationId: ctx.locationId,
+          action: "bot.website_order_handoff_no_credentials",
+          entityId: po.id,
+        },
+      });
+      assert(
+        noCredAudit === null,
+        "no no-credentials audit when credentials ARE present"
+      );
+      const queuedAudit = await db.auditLog.findFirst({
+        where: {
+          locationId: ctx.locationId,
+          action: "bot.website_order_task_queued",
+        },
+      });
+      assert(queuedAudit !== null, "queued-task audit written");
+    } finally {
+      await cleanup(ctx);
+    }
+  }
+);
 
 // ── Summary ──────────────────────────────────────────────────────
 globalThis.fetch = realFetch;
