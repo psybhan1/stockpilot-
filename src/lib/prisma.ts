@@ -27,6 +27,7 @@ export {
   PosProviderType,
   PosSyncType,
   PurchaseOrderStatus,
+  RecipeComponentType,
   RecipeStatus,
   RecommendationStatus,
   Role,

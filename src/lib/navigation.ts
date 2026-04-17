@@ -9,6 +9,7 @@ import {
   FileSpreadsheet,
   Home,
   PackageOpen,
+  PiggyBank,
   Receipt,
   Rocket,
   ScanBarcode,
@@ -139,6 +140,13 @@ export const secondaryNav: readonly NavItem[] = [
     icon: Store,
     minimumRole: Role.MANAGER,
     description: "Connect menu items to POS products.",
+  },
+  {
+    href: "/margins",
+    label: "Margins",
+    icon: PiggyBank,
+    minimumRole: Role.SUPERVISOR,
+    description: "Per-menu-item COGS and margin — flags the unprofitable ones.",
   },
   {
     href: "/analytics",
