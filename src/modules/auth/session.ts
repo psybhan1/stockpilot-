@@ -73,6 +73,15 @@ export async function destroySession() {
   }
 
   cookieStore.delete(SESSION_COOKIE);
+
+  // Also revoke the browser-extension session when the user signs
+  // out — otherwise the extension cookie would remain valid for
+  // its 30-day TTL, meaning a logout wouldn't actually log the
+  // extension out.
+  const { unlinkExtensionSession } = await import(
+    "@/modules/auth/extension-session"
+  );
+  await unlinkExtensionSession().catch(() => null);
 }
 
 export const getSession = cache(async (): Promise<AuthSession | null> => {

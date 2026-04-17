@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "StockPilot — Sign in helper",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Sign in to Amazon/Costco/etc. on their real website, then push your session to StockPilot with one click.",
   "action": {
     "default_popup": "popup.html",

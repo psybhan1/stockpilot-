@@ -96,13 +96,46 @@ function requestHostPermission(tabUrl) {
 
 // ---------- API calls ----------
 
+/**
+ * Wrap fetch with an AbortController timeout — a slow backend
+ * would otherwise leave the popup stuck on "Pushing cookies…"
+ * forever, and the popup closes on focus-loss (leaking the req).
+ */
+async function fetchWithTimeout(url, init, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function networkErrorMessage(err, timeoutMs) {
+  if (err && err.name === "AbortError") {
+    return `StockPilot didn't respond within ${Math.round(timeoutMs / 1000)}s.`;
+  }
+  if (err && err.message) return err.message;
+  return "Network error";
+}
+
 async function apiListSuppliers(baseUrl) {
-  const res = await fetch(`${baseUrl}/api/suppliers/extension/list`, {
-    method: "GET",
-    credentials: "include",
-    cache: "no-store",
-    headers: { accept: "application/json" },
-  });
+  const timeoutMs = 10_000;
+  let res;
+  try {
+    res = await fetchWithTimeout(
+      `${baseUrl}/api/suppliers/extension/list`,
+      {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        headers: { accept: "application/json" },
+      },
+      timeoutMs
+    );
+  } catch (err) {
+    return { ok: false, status: 0, message: networkErrorMessage(err, timeoutMs) };
+  }
   if (res.status === 401) {
     let body = null;
     try {
@@ -122,25 +155,30 @@ async function apiListSuppliers(baseUrl) {
 async function apiPushCookies(baseUrl, supplierId, cookies) {
   const url = `${baseUrl}/api/suppliers/${encodeURIComponent(supplierId)}/credentials/from-extension`;
   const body = JSON.stringify({ cookies });
+  const timeoutMs = 15_000;
 
-  // Retry once on 5xx with a short delay — covers flaky deploys,
-  // Railway cold-starts, etc.
+  // Retry once on network error or 5xx with a short delay —
+  // covers flaky deploys, Railway cold-starts, etc.
   for (let attempt = 0; attempt < 2; attempt++) {
     let res;
     try {
-      res = await fetch(url, {
-        method: "POST",
-        credentials: "include",
-        cache: "no-store",
-        headers: { "content-type": "application/json", accept: "application/json" },
-        body,
-      });
+      res = await fetchWithTimeout(
+        url,
+        {
+          method: "POST",
+          credentials: "include",
+          cache: "no-store",
+          headers: { "content-type": "application/json", accept: "application/json" },
+          body,
+        },
+        timeoutMs
+      );
     } catch (err) {
       if (attempt === 0) {
         await sleep(500);
         continue;
       }
-      return { ok: false, status: 0, message: err && err.message ? err.message : "Network error" };
+      return { ok: false, status: 0, message: networkErrorMessage(err, timeoutMs) };
     }
     if (res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -354,6 +392,11 @@ document.getElementById("send-cookies").addEventListener("click", async () => {
     return;
   }
 
+  // Disable immediately so a rapid double-click doesn't kick off two
+  // concurrent permission prompts + pushes. Re-enable before early
+  // returns so the user can retry without closing the popup.
+  button.disabled = true;
+
   // If the current tab's host isn't in our static host_permissions,
   // ask the user before we can read its cookies.
   const already = await hasHostPermission(state.activeUrl);
@@ -362,11 +405,11 @@ document.getElementById("send-cookies").addEventListener("click", async () => {
     const granted = await requestHostPermission(state.activeUrl);
     if (!granted) {
       status.textContent = "Permission denied — can't read cookies without it.";
+      button.disabled = false;
       return;
     }
   }
 
-  button.disabled = true;
   status.textContent = "Grabbing cookies…";
 
   const raw = await getAllCookiesForTab(state.activeUrl);

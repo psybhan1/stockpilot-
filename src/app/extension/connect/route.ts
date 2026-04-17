@@ -12,6 +12,8 @@ import { NextResponse } from "next/server";
 
 import { createAuditLogTx } from "@/lib/audit";
 import { db } from "@/lib/db";
+import { Role } from "@/lib/domain-enums";
+import { hasMinimumRole } from "@/lib/permissions";
 import { linkExtensionSession } from "@/modules/auth/extension-session";
 import { getSession } from "@/modules/auth/session";
 
@@ -86,30 +88,27 @@ export async function GET(request: Request) {
       new URL(`/login?redirect=${encodeURIComponent(next)}`, request.url)
     );
   }
+  if (!hasMinimumRole(session.role, Role.MANAGER)) {
+    return htmlResponse(
+      page({
+        title: "StockPilot — manager role required",
+        icon: "!",
+        iconColor: "#d97706",
+        headline: "Manager role required.",
+        body: `<p>Only managers can link a browser to StockPilot. Ask your manager to sign in and visit this page, or ask them to grant you the manager role first.</p>`,
+        tail:
+          "Signed in as " +
+          escape(session.userName) +
+          " (" +
+          escape(session.role) +
+          ").",
+      }),
+      403
+    );
+  }
 
   try {
     await linkExtensionSession();
-    await db.$transaction((tx) =>
-      createAuditLogTx(tx, {
-        locationId: session.locationId,
-        userId: session.userId,
-        action: "extension.session_linked",
-        entityType: "user",
-        entityId: session.userId,
-        details: { source: "connect-page" },
-      })
-    );
-    return htmlResponse(
-      page({
-        title: "StockPilot — browser linked",
-        icon: "✓",
-        iconColor: "#16a34a",
-        headline: "This browser is linked to StockPilot.",
-        body: `<p>Signed in as <strong>${escape(session.userName)}</strong> at <strong>${escape(session.locationName)}</strong>. You can close this tab and use the StockPilot extension now.</p>`,
-        tail:
-          "The link is valid for 30 days on this browser. Revisit this page any time to refresh it.",
-      })
-    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return htmlResponse(
@@ -125,4 +124,31 @@ export async function GET(request: Request) {
       500
     );
   }
+
+  // Best-effort audit — don't fail the user-facing link step if
+  // the audit write blows up (e.g. schema drift in a side table).
+  await db
+    .$transaction((tx) =>
+      createAuditLogTx(tx, {
+        locationId: session.locationId,
+        userId: session.userId,
+        action: "extension.session_linked",
+        entityType: "user",
+        entityId: session.userId,
+        details: { source: "connect-page" },
+      })
+    )
+    .catch(() => null);
+
+  return htmlResponse(
+    page({
+      title: "StockPilot — browser linked",
+      icon: "✓",
+      iconColor: "#16a34a",
+      headline: "This browser is linked to StockPilot.",
+      body: `<p>Signed in as <strong>${escape(session.userName)}</strong> at <strong>${escape(session.locationName)}</strong>. You can close this tab and use the StockPilot extension now.</p>`,
+      tail:
+        "The link is valid for 30 days on this browser. Revisit this page any time to refresh it.",
+    })
+  );
 }

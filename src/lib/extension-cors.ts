@@ -16,12 +16,21 @@ const ALLOWED_SCHEMES = ["chrome-extension://", "moz-extension://"];
 
 export function isExtensionOrigin(origin: string | null | undefined): boolean {
   if (!origin) return false;
-  return ALLOWED_SCHEMES.some((s) => origin.startsWith(s));
+  // Browsers always lowercase the scheme, but be defensive anyway —
+  // a mismatched-case origin should still be recognised instead of
+  // silently refused (which would hand the extension a confusing
+  // CORS failure in the popup).
+  const lower = origin.toLowerCase();
+  return ALLOWED_SCHEMES.some((s) => lower.startsWith(s));
 }
 
 export function extensionCorsHeaders(origin: string | null | undefined): Record<string, string> {
   if (!isExtensionOrigin(origin)) return {};
   return {
+    // Echo the original case-preserved origin back. RFC says the
+    // Allow-Origin value is compared byte-for-byte to the Origin
+    // request header, so don't lowercase here even though our check
+    // did.
     "Access-Control-Allow-Origin": origin as string,
     "Access-Control-Allow-Credentials": "true",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",

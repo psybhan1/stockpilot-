@@ -133,14 +133,24 @@ function ExtensionPanel({
         const res = await fetch("/api/extension/link", {
           method: "POST",
           cache: "no-store",
+          headers: { accept: "application/json" },
         });
         if (cancelled) return;
         if (res.ok) {
           setLinkState("linked");
-        } else {
-          setLinkError(`HTTP ${res.status}`);
-          setLinkState("failed");
+          return;
         }
+        // Parse the server's error message when available —
+        // produces "Manager role required" instead of "HTTP 403".
+        let message = `HTTP ${res.status}`;
+        try {
+          const body = (await res.json()) as { message?: string };
+          if (body && typeof body.message === "string") message = body.message;
+        } catch {
+          /* response wasn't JSON, keep fallback message */
+        }
+        setLinkError(message);
+        setLinkState("failed");
       } catch (err) {
         if (cancelled) return;
         setLinkError(err instanceof Error ? err.message : String(err));
