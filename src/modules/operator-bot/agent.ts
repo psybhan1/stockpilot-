@@ -822,6 +822,29 @@ export async function executeTool(
           },
         });
 
+        // Auto-approve: if location has a threshold + supplier is
+        // EMAIL-mode + total is under threshold → send immediately.
+        // quick_add rarely has latestCostCents stamped (the supplier
+        // is often fresh), so for most cases this falls through and
+        // the manager still sees "tap Approve". When it fires, the
+        // manager gets "✅ Auto-sent, under your $X rule" instead.
+        const { maybeAutoApprovePurchaseOrder, formatMoney } = await import(
+          "@/modules/purchasing/auto-approve"
+        );
+        const auto = await maybeAutoApprovePurchaseOrder({
+          purchaseOrderId: po.id,
+          userId: ctx.userId,
+        });
+        if (auto.autoApproved && auto.status === PurchaseOrderStatus.SENT) {
+          const reply = `✅ Auto-sent *${orderNumber}* — ${quantity} of *${itemName}* from *${supplierName}* (${formatMoney(auto.totalCents)}, under your ${formatMoney(auto.thresholdCents)} rule).`;
+          return {
+            content: reply,
+            finalReply: reply,
+            purchaseOrderId: po.id,
+            orderNumber,
+          };
+        }
+
         const websiteNote = websiteUrl ? " I'll head to their website to add it to the cart once you approve." : "";
         const reply = `✅ Added *${itemName}* to inventory + drafted *${orderNumber}* for ${quantity} from *${supplierName}*.${websiteNote} Tap Approve to send.`;
 

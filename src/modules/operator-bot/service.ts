@@ -1173,7 +1173,36 @@ export async function createRestockOrderFromBotMessage(input: {
     data: { status: PurchaseOrderStatus.AWAITING_APPROVAL },
   });
 
+  // "Order while I sleep" — if the location configured an auto-
+  // approve cap AND this is an EMAIL supplier AND the PO total is
+  // under the cap, send it without waiting for the manager's tap.
+  const { maybeAutoApprovePurchaseOrder, formatMoney } = await import(
+    "@/modules/purchasing/auto-approve"
+  );
+  const autoApproved = await maybeAutoApprovePurchaseOrder({
+    purchaseOrderId: purchaseOrder.id,
+    userId: input.userId,
+  });
+
   const displayQty = `${order.recommendedPackCount} ${refreshedItem.purchaseUnit.toLowerCase()}`;
+  if (autoApproved.autoApproved && autoApproved.status === PurchaseOrderStatus.SENT) {
+    return {
+      ok: true,
+      purchaseOrderId: purchaseOrder.id,
+      orderNumber: purchaseOrder.orderNumber,
+      reply:
+        `✅ Auto-sent *${purchaseOrder.orderNumber}* — ${displayQty} of *${refreshedItem.name}* from *${supplierContext.supplier.name}* (${formatMoney(autoApproved.totalCents)}, under your ${formatMoney(autoApproved.thresholdCents)} rule).`,
+      replyScenario: "order_auto_approved",
+      replyFacts: {
+        inventoryItemName: refreshedItem.name,
+        supplierName: supplierContext.supplier.name,
+        orderNumber: purchaseOrder.orderNumber,
+        orderedPackCount: order.recommendedPackCount,
+        purchaseUnit: refreshedItem.purchaseUnit,
+      },
+    };
+  }
+
   const draftReply =
     `📋 Drafted *${purchaseOrder.orderNumber}* — ${displayQty} of *${refreshedItem.name}* from *${supplierContext.supplier.name}*.\n\n` +
     `Tap *✅ Approve & send* to send it to the supplier, or *✖ Cancel* to scrap it.`;

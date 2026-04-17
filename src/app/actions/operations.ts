@@ -124,6 +124,29 @@ export async function runJobsAction() {
   revalidateOperations();
 }
 
+export async function updateAutoApproveThresholdAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const raw = String(formData.get("thresholdDollars") ?? "").trim();
+  // Empty input = disable auto-approve. Otherwise must parse as a
+  // non-negative dollar amount (cents is the storage unit).
+  let cents: number | null;
+  if (raw === "" || raw === "0") {
+    cents = null;
+  } else {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      // Silently no-op on bad input — the form accepts numeric only.
+      return;
+    }
+    cents = Math.round(parsed * 100);
+  }
+  await db.location.update({
+    where: { id: session.locationId },
+    data: { autoApproveEmailUnderCents: cents },
+  });
+  revalidateOperations();
+}
+
 export async function approveRecipeAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const recipeId = String(formData.get("recipeId") ?? "");

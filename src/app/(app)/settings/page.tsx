@@ -8,6 +8,7 @@ import {
   startTelegramBotConnectAction,
   startWhatsAppBotConnectAction,
   syncSalesAction,
+  updateAutoApproveThresholdAction,
 } from "@/app/actions/operations";
 import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
@@ -40,13 +41,22 @@ export default async function SettingsPage({
   const params = await searchParams;
   const { integration, jobs } = await getSettingsData(session.locationId);
 
-  const [locationChannels, currentManager] = await Promise.all([
+  const [locationChannels, currentManager, locationSettings] = await Promise.all([
     getLocationChannels(session.locationId),
     db.user.findUniqueOrThrow({
       where: { id: session.userId },
       select: { phoneNumber: true, telegramChatId: true, telegramUsername: true },
     }),
+    db.location.findUniqueOrThrow({
+      where: { id: session.locationId },
+      select: { autoApproveEmailUnderCents: true },
+    }),
   ]);
+
+  const autoApproveDollars =
+    locationSettings.autoApproveEmailUnderCents != null
+      ? (locationSettings.autoApproveEmailUnderCents / 100).toString()
+      : "";
 
   const telegramTokenReady = Boolean(env.TELEGRAM_BOT_TOKEN);
   const publicAppUrlReady = isPublicAppUrl(env.APP_URL);
@@ -203,6 +213,56 @@ export default async function SettingsPage({
             </a>
           )}
         </BrandCard>
+      </Section>
+
+      {/* ─── Ordering automation ─── */}
+      <Section
+        title="Ordering"
+        description="Let the bot send small email orders automatically, so you only get pinged for ones that matter."
+      >
+        <form
+          action={updateAutoApproveThresholdAction}
+          className="rounded-xl border border-border/50 bg-card p-5"
+        >
+          <label
+            htmlFor="auto-approve-threshold"
+            className="block text-sm font-semibold"
+          >
+            Auto-approve email orders under
+          </label>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            When a bot-drafted order is to an email supplier (Sysco, local
+            vendors…) and the total is at or under this cap, the bot sends
+            it right away — no Telegram tap required. Leave blank to always
+            require your approval.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">$</span>
+            <input
+              id="auto-approve-threshold"
+              name="thresholdDollars"
+              type="number"
+              min="0"
+              step="1"
+              inputMode="decimal"
+              defaultValue={autoApproveDollars}
+              placeholder="200"
+              className="h-9 w-32 rounded-md border border-border/50 bg-background px-3 text-sm"
+            />
+            <Button type="submit" size="sm" className="h-9 text-xs">
+              Save
+            </Button>
+            {autoApproveDollars && (
+              <span className="text-xs text-muted-foreground">
+                Currently: ${autoApproveDollars} cap
+              </span>
+            )}
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Website orders (Amazon, Costco) always wait for your approval —
+            auto-approve only applies to email suppliers.
+          </p>
+        </form>
       </Section>
 
       {/* ─── System ─── */}
