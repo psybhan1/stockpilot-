@@ -64,8 +64,14 @@ function assert(cond: unknown, label: string, detail?: string) {
 }
 
 let currentScenario = "";
+let isFirstScenario = true;
 async function scenario(name: string, fn: () => Promise<void>) {
   currentScenario = name;
+  if (!isFirstScenario) {
+    // Stay well under Groq's 30k TPM free tier (each turn is ~5k tokens).
+    await new Promise<void>((r) => setTimeout(r, 13_000));
+  }
+  isFirstScenario = false;
   console.log(`\n━━ ${name}`);
   try {
     await fn();
@@ -286,16 +292,46 @@ async function cleanup() {
   });
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// Groq free tier is 30k TPM on Llama-4-Scout. Each bot turn is ~5k
+// tokens (live data block + system prompt + tools). That caps us at
+// ~6 turns/min — we sleep 11s between scenarios to stay safely under.
+// Plus: if the LLM API returns 429, parse "try again in Xs" and retry.
+async function callWithBackoff<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const is429 = /\b429\b|rate.?limit/i.test(msg);
+      if (!is429 || attempt >= 3) throw err;
+      const m = msg.match(/try again in ([\d.]+)s/i);
+      // Wait the reported time + a big buffer so the TPM window fully rolls.
+      // A too-tight wait just hits the same limit on retry.
+      const waitS = m ? Number(m[1]) + 15 : 45;
+      console.log(`    ⏳ ${label}: 429 on attempt ${attempt + 1}, sleeping ${waitS}s`);
+      await sleep(waitS * 1000);
+      attempt += 1;
+    }
+  }
+}
+
 async function askBot(world: World, userMessage: string) {
   const started = Date.now();
-  const result = await runBotAgent({
-    locationId: world.locationId,
-    userId: world.userId,
-    channel: "TELEGRAM",
-    senderId: `live-${world.userId}`,
-    sourceMessageId: `live-${Date.now()}`,
-    conversation: [{ role: "user", content: userMessage }],
-  });
+  const result = await callWithBackoff(
+    () =>
+      runBotAgent({
+        locationId: world.locationId,
+        userId: world.userId,
+        channel: "TELEGRAM",
+        senderId: `live-${world.userId}`,
+        sourceMessageId: `live-${Date.now()}`,
+        conversation: [{ role: "user", content: userMessage }],
+      }),
+    "runBotAgent"
+  );
   const elapsed = Date.now() - started;
 
   // Pull the LLM turn telemetry we just wrote so we can display the

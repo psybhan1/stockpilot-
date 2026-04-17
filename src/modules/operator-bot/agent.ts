@@ -1166,6 +1166,7 @@ const SYSTEM_PROMPT_BASE = `You are StockBuddy — a sharp, concise inventory as
 6. NEVER claim "I can't access websites" or "I can only draft purchase orders" — when an order intent comes in, call quick_add_and_order. The browser ordering agent runs after PO approval and handles the website. Refusing to act is the wrong answer.
 7. NEVER say tool names, empty placeholders, or "How can I help?". Sound like a colleague.
 8. 1-3 sentences max per call. Don't repeat yourself.
+9. NEVER claim an action you didn't take. "Cancelled.", "Sent.", "Approved.", "Done.", "Drafted.", "Added." require you to have ACTUALLY called the matching tool in this turn (cancel_recent_order / approve_recent_order / place_restock_order / quick_add_and_order / update_stock_count). If you didn't call the tool, say what you'll do, not that it's done.
 
 ## AMBIGUITY RESOLUTION — READ CAREFULLY
 
@@ -1179,13 +1180,15 @@ B. NO ITEM MATCH AT ALL. Nothing in LIVE DATA resembles what the user said.
    Example: "order 5 of the new lavender syrup" when no syrup-like item exists.
    Wrong: draft against a guess. Right: "I don't see a lavender syrup yet — want to add it first (name, supplier, par level)?"
 
-C. UNIT MISMATCH. User says a unit that doesn't fit the item.
-   Example: item's baseUnit is "g", user says "order 3 liters of espresso beans".
-   Wrong: silently convert. Right: "Beans are tracked by the kilogram — did you mean 3 kg or 3 bags?"
+C. UNIT MISMATCH. User's unit doesn't fit the item's tracked_in field.
+   Example: item tracked_in=g, user says "order 3 liters of espresso beans".
+   NEVER silently drop the user's unit and draft with a bare number. If the units don't match, ASK.
+   Wrong: quick_add_and_order(quantity="3") with no unit.
+   Right: "Beans are tracked by the gram — did you mean 3 kg or 3 bags?"
 
-D. MISSING SUPPLIER when item has >1. Item has multiple suppliers in LIVE DATA, user gave no hint.
-   Example: user says "order more oat milk" and Oat Milk has both Costco and FreshCo.
-   Wrong: pick one. Right: "From Costco (\$3.80/L last time) or FreshCo (\$3.20/L)?"
+D. MISSING SUPPLIER when item has [MULTI_SUPPLIER]. LIVE DATA flags items with >1 supplier with the literal tag [MULTI_SUPPLIER]. If the user hasn't named a supplier on such an item, ASK.
+   Example: "order more oat milk" and the Oat Milk line shows suppliers=["Costco","FreshCo"] [MULTI_SUPPLIER].
+   Wrong: pick one or call place_restock_order without supplier_id. Right: "From Costco or FreshCo?"
 
 E. MISSING QUANTITY when the intent is an order (not a count/approve/cancel).
    Wrong: default to 1 silently. Right: "How many cases? The last order was 4."
@@ -1355,7 +1358,7 @@ async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
         primarySupplier: { select: { id: true, name: true } },
         supplierItems: {
           select: { supplier: { select: { id: true, name: true } } },
-          take: 1,
+          take: 8,
         },
         snapshot: { select: { urgency: true } },
       },
@@ -1398,17 +1401,29 @@ async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
   const hidden = totalItems - visible.length;
 
   const itemLines = visible.map((i) => {
-    const supplier =
-      i.primarySupplier?.name ??
-      i.supplierItems[0]?.supplier.name ??
-      "NO_SUPPLIER";
+    // Dedupe + list ALL suppliers. Rule D (multi-supplier → ask) only
+    // works if the model can see there IS a second supplier.
+    const supplierNames = Array.from(
+      new Set(
+        [
+          i.primarySupplier?.name,
+          ...i.supplierItems.map((si) => si.supplier.name),
+        ].filter((n): n is string => Boolean(n))
+      )
+    );
+    const suppliersField =
+      supplierNames.length === 0
+        ? 'suppliers=[] [NO_SUPPLIER]'
+        : supplierNames.length === 1
+          ? `suppliers=["${supplierNames[0]}"]`
+          : `suppliers=[${supplierNames.map((n) => `"${n}"`).join(", ")}] [MULTI_SUPPLIER]`;
     const unit = i.baseUnit === "GRAM" ? "g" : i.baseUnit === "MILLILITER" ? "ml" : "count";
     const urg = i.snapshot?.urgency === "CRITICAL"
       ? " [CRITICAL]"
       : i.snapshot?.urgency === "WARNING"
         ? " [LOW]"
         : "";
-    return `- id=${i.id} name="${i.name}" on_hand=${i.stockOnHandBase}${unit} par=${i.parLevelBase}${unit} supplier="${supplier}"${urg}`;
+    return `- id=${i.id} name="${i.name}" tracked_in=${unit} on_hand=${i.stockOnHandBase}${unit} par=${i.parLevelBase}${unit} ${suppliersField}${urg}`;
   });
 
   if (hidden > 0) {
