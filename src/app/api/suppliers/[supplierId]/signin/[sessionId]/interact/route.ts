@@ -16,6 +16,7 @@ import {
   assertOwner,
   forwardClick,
   forwardKey,
+  forwardScroll,
   forwardType,
   getSession,
 } from "@/modules/automation/signin-session";
@@ -26,7 +27,8 @@ export const runtime = "nodejs";
 type InteractBody =
   | { kind: "click"; x: number; y: number }
   | { kind: "type"; text: string }
-  | { kind: "key"; key: string };
+  | { kind: "key"; key: string }
+  | { kind: "scroll"; deltaX: number; deltaY: number };
 
 export async function POST(
   request: Request,
@@ -73,6 +75,11 @@ export async function POST(
         return NextResponse.json({ message: "Invalid key" }, { status: 400 });
       }
       await forwardKey(sessionId, body.key);
+    } else if (body.kind === "scroll") {
+      if (typeof body.deltaX !== "number" || typeof body.deltaY !== "number") {
+        return NextResponse.json({ message: "Invalid scroll deltas" }, { status: 400 });
+      }
+      await forwardScroll(sessionId, body.deltaX, body.deltaY);
     } else {
       return NextResponse.json({ message: "Unknown interaction kind" }, { status: 400 });
     }

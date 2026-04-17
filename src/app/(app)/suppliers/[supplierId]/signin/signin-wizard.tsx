@@ -274,6 +274,56 @@ function RemoteSigninPanel({
     setTimeout(fetchScreenshot, 200);
   };
 
+  // Wheel-scroll forwarding. Wheel events fire ~60×/sec during a
+  // scroll; we coalesce into 50ms windows so the server gets one
+  // batched `page.mouse.wheel({deltaX, deltaY})` per window instead
+  // of 60 HTTP requests that'd overwhelm both Chrome and Neon.
+  const scrollAccumRef = useRef({ x: 0, y: 0 });
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushScroll = useCallback(async () => {
+    if (!sessionId) return;
+    const { x, y } = scrollAccumRef.current;
+    if (x === 0 && y === 0) return;
+    scrollAccumRef.current = { x: 0, y: 0 };
+    try {
+      await fetch(
+        `/api/suppliers/${supplierId}/signin/${sessionId}/interact`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: "scroll", deltaX: x, deltaY: y }),
+        }
+      );
+    } catch {
+      /* screenshot poll will catch up */
+    }
+    setTimeout(fetchScreenshot, 200);
+  }, [sessionId, supplierId, fetchScreenshot]);
+
+  const onImageWheel = (e: React.WheelEvent<HTMLImageElement>) => {
+    if (!sessionId) return;
+    // Stop the page from scrolling — we want the remote Chrome to
+    // scroll instead.
+    e.preventDefault();
+    // deltaMode: 0=pixels, 1=lines, 2=pages. Normalise to pixels
+    // so the same scroll feels the same on any device.
+    const multiplier = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 800 : 1;
+    scrollAccumRef.current.x += e.deltaX * multiplier;
+    scrollAccumRef.current.y += e.deltaY * multiplier;
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(flushScroll, 50);
+  };
+
+  // Flush any pending scroll on unmount so nothing gets dropped.
+  useEffect(() => {
+    return () => {
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+        flushScroll();
+      }
+    };
+  }, [flushScroll]);
+
   const save = async () => {
     if (!sessionId) return;
     setStatus("saving");
@@ -383,6 +433,7 @@ function RemoteSigninPanel({
               src={screenshot}
               alt={`${supplierName} sign-in`}
               onClick={onImageClick}
+              onWheel={onImageWheel}
               className="block w-full cursor-pointer select-none"
               draggable={false}
             />

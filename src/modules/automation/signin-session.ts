@@ -175,6 +175,23 @@ export async function forwardType(
   await session.page.keyboard.type(text, { delay: 10 });
 }
 
+export async function forwardScroll(
+  sessionId: string,
+  deltaX: number,
+  deltaY: number
+): Promise<void> {
+  const session = getSession(sessionId);
+  if (!session) throw new Error("Session not found");
+  session.lastActivityAt = Date.now();
+  // Clamp to reasonable range so a rogue client can't fire an
+  // enormous scroll and stall puppeteer.
+  const clamp = (v: number) => Math.max(-2000, Math.min(2000, Math.round(v)));
+  await session.page.mouse.wheel({
+    deltaX: clamp(deltaX),
+    deltaY: clamp(deltaY),
+  });
+}
+
 export async function forwardKey(sessionId: string, key: string): Promise<void> {
   const session = getSession(sessionId);
   if (!session) throw new Error("Session not found");
