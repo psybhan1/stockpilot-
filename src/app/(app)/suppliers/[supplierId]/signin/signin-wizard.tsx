@@ -1,19 +1,21 @@
 "use client";
 
 /**
- * Interactive sign-in wizard. Two tabs:
+ * Interactive sign-in wizard. Three tabs:
  *
- *   1. Sign in here (default) — server launches Chrome, streams
- *      screenshots back to this component via periodic polling.
- *      User clicks ON the image, which forwards mouse coordinates
- *      to the server. Types into the focused input, which forwards
- *      keystrokes. When the server detects a URL away from the
- *      sign-in page, we offer "Save my login".
+ *   1. Browser extension (default / recommended) — user installs the
+ *      StockPilot extension once, signs in to the supplier on the
+ *      real supplier.com tab they're used to, then clicks the
+ *      extension icon to push their session cookies to StockPilot.
+ *      Zero streaming, zero bot-detection collisions, real browser.
  *
- *   2. Paste cookies — escape hatch for users who can't use the
- *      remote-browser path (some corporate networks block the
- *      egress, or the supplier's login is MFA-heavy). Requires
- *      Cookie-Editor browser extension.
+ *   2. Sign in here — server launches Chrome, streams screenshots
+ *      back to this component via periodic polling. Fallback for
+ *      users who can't install the extension (e.g. locked-down
+ *      corporate devices).
+ *
+ *   3. Paste cookies — escape hatch for power users with Cookie-
+ *      Editor already set up.
  *
  * The remote-browser path uses ~1.5s screenshot polling — not as
  * smooth as real-time VNC but adequate for typing credentials on a
@@ -27,7 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 
-type WizardTab = "remote" | "paste";
+type WizardTab = "extension" | "remote" | "paste";
 
 export function SigninWizard({
   supplierId,
@@ -38,11 +40,22 @@ export function SigninWizard({
   supplierName: string;
   supplierWebsite: string | null;
 }) {
-  const [tab, setTab] = useState<WizardTab>("remote");
+  const [tab, setTab] = useState<WizardTab>("extension");
 
   return (
     <div className="space-y-4">
-      <div className="inline-flex rounded-2xl border border-border/60 bg-card p-1 text-sm">
+      <div className="inline-flex flex-wrap rounded-2xl border border-border/60 bg-card p-1 text-sm">
+        <button
+          type="button"
+          onClick={() => setTab("extension")}
+          className={`rounded-xl px-4 py-2 transition ${
+            tab === "extension"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          🧩 Use browser extension (easiest)
+        </button>
         <button
           type="button"
           onClick={() => setTab("remote")}
@@ -52,7 +65,7 @@ export function SigninWizard({
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          🔐 Sign in here (recommended)
+          🔐 Sign in here
         </button>
         <button
           type="button"
@@ -67,7 +80,12 @@ export function SigninWizard({
         </button>
       </div>
 
-      {tab === "remote" ? (
+      {tab === "extension" ? (
+        <ExtensionPanel
+          supplierName={supplierName}
+          supplierWebsite={supplierWebsite}
+        />
+      ) : tab === "remote" ? (
         <RemoteSigninPanel
           supplierId={supplierId}
           supplierName={supplierName}
@@ -77,6 +95,88 @@ export function SigninWizard({
         <CookiePastePanel supplierId={supplierId} supplierName={supplierName} />
       )}
     </div>
+  );
+}
+
+// ── Browser extension (recommended path) ───────────────────────────
+
+function ExtensionPanel({
+  supplierName,
+  supplierWebsite,
+}: {
+  supplierName: string;
+  supplierWebsite: string | null;
+}) {
+  const supplierHost = supplierWebsite
+    ? supplierWebsite.replace(/^https?:\/\//i, "").replace(/\/.*$/, "")
+    : "the supplier's site";
+  return (
+    <Card>
+      <CardContent className="space-y-5 p-5 text-sm">
+        <div>
+          <h3 className="mb-1 text-base font-semibold">
+            Sign in on {supplierName}'s real website, push to StockPilot in one
+            click.
+          </h3>
+          <p className="text-muted-foreground">
+            This is the simplest path for any site with bot detection (Amazon,
+            Costco, Walmart). You sign in normally on your own browser — no
+            streaming, no typing credentials into StockPilot. The extension
+            captures the session cookies your browser already has.
+          </p>
+        </div>
+
+        <ol className="list-decimal space-y-3 pl-5">
+          <li>
+            <div className="font-medium">Install the StockPilot extension.</div>
+            <div className="text-muted-foreground">
+              Download{" "}
+              <a
+                href="/downloads/stockpilot-extension.zip"
+                className="underline"
+                download
+              >
+                stockpilot-extension.zip
+              </a>
+              , unzip it, then in Chrome go to{" "}
+              <code className="rounded bg-muted px-1">chrome://extensions</code>
+              , turn on <em>Developer mode</em>, click <em>Load unpacked</em>,
+              and pick the unzipped folder.
+            </div>
+          </li>
+          <li>
+            <div className="font-medium">
+              Open <code className="rounded bg-muted px-1">{supplierHost}</code>{" "}
+              in a regular tab and sign in.
+            </div>
+            <div className="text-muted-foreground">
+              Use your real account, including 2FA if the site asks for it.
+              Do this just like any other day.
+            </div>
+          </li>
+          <li>
+            <div className="font-medium">
+              Click the StockPilot extension icon in your toolbar.
+            </div>
+            <div className="text-muted-foreground">
+              On first run it'll ask for this StockPilot URL — paste it from
+              your address bar. Then pick <em>{supplierName}</em> from the
+              dropdown and press <strong>Push cookies to StockPilot</strong>.
+              That's it — come back here and refresh; the supplier will show
+              as connected.
+            </div>
+          </li>
+        </ol>
+
+        <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
+          <strong className="text-foreground">Safety note:</strong> cookies
+          are encrypted (AES-256-GCM) the moment they reach StockPilot and
+          only decrypted in the browser-agent process at order-dispatch time.
+          The extension only talks to the StockPilot URL you give it. Source
+          is in <code>browser-extension/</code> if you want to audit it.
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>StockPilot</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>StockPilot</h1>
+        <p class="subtitle">Sign in to a supplier, push your session with one click.</p>
+      </header>
+
+      <!-- State: first-time setup — ask for StockPilot URL -->
+      <section id="setup-view" hidden>
+        <p>Which StockPilot is this for?</p>
+        <input
+          id="stockpilot-url"
+          type="url"
+          placeholder="https://stockpilot.yourcompany.com"
+        />
+        <button id="save-url" class="primary">Save &amp; continue</button>
+      </section>
+
+      <!-- State: not signed in to StockPilot -->
+      <section id="signin-view" hidden>
+        <p>
+          You need to sign in to StockPilot in this browser first so I know
+          where to send your supplier cookies.
+        </p>
+        <button id="open-stockpilot" class="primary">Open StockPilot &amp; sign in</button>
+        <p class="muted">After you sign in there, come back here and tap the extension icon again.</p>
+      </section>
+
+      <!-- State: happy path — ready to push cookies -->
+      <section id="ready-view" hidden>
+        <div class="tab-info">
+          <p class="label">Current tab:</p>
+          <p id="current-host" class="host"></p>
+        </div>
+
+        <div id="no-match-warning" hidden>
+          <p class="warning">
+            This site isn't a supplier you've set up. Open your Amazon (or
+            other supplier) tab first, then come back here.
+          </p>
+        </div>
+
+        <div id="supplier-picker">
+          <label for="supplier-select">Save cookies for:</label>
+          <select id="supplier-select"></select>
+        </div>
+
+        <button id="send-cookies" class="primary" disabled>
+          💾 Push cookies to StockPilot
+        </button>
+
+        <p id="send-status" class="muted"></p>
+
+        <details>
+          <summary>Not your StockPilot? Change it.</summary>
+          <div class="reset-row">
+            <p id="current-url-display" class="host small"></p>
+            <button id="reset-url" class="link">Reset StockPilot URL</button>
+          </div>
+        </details>
+      </section>
+
+      <!-- State: success -->
+      <section id="success-view" hidden>
+        <div class="success-icon">✓</div>
+        <h2>Session saved</h2>
+        <p id="success-details"></p>
+        <p class="muted">
+          Every future order to this supplier will auto-populate your real
+          cart.
+        </p>
+        <button id="done-button" class="primary">Done</button>
+      </section>
+
+      <!-- State: error -->
+      <section id="error-view" hidden>
+        <div class="error-icon">!</div>
+        <h2>Couldn't save</h2>
+        <p id="error-message"></p>
+        <button id="retry-button" class="primary">Try again</button>
+      </section>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>
