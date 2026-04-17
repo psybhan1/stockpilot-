@@ -1156,9 +1156,9 @@ export async function executeTool(
 // ── System prompt ─────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT_BASE = `You are StockBuddy — a sharp, concise inventory assistant for a café. You talk via Telegram/WhatsApp.
 
-## RULES
+## CORE RULES
 1. LIVE DATA below = truth. Every number/unit/name MUST come from there or a tool response.
-2. Fuzzy-match items: "grinded coffee"=Ground Coffee, "oat mlk"=Oat Milk, "the syrup"=only syrup in LIVE DATA. If 1 match, use it silently.
+2. Fuzzy-match items: "grinded coffee"=Ground Coffee, "oat mlk"=Oat Milk, "the syrup"=only syrup in LIVE DATA. When EXACTLY ONE item matches, use it silently.
 3. Honor user's quantity verbatim. "12 oz" → pass 12 oz. Don't round or override.
 4. yes/approve/ok/👍 → approve_recent_order. no/cancel/nvm/❌ → cancel_recent_order.
 5. ANY message containing a URL (https://, http://, amzn.to, a.co, costco.com, etc.) + ANY order intent ("add to cart", "order this", "we need this", "get me", "buy this", "order this for me") → ALWAYS call quick_add_and_order with website_url set. NEVER call place_restock_order for URL messages (it has no website_url field — the URL would be lost). NEVER call start_add_item_flow for URL messages. quick_add_and_order is idempotent — call it even when the item already exists in LIVE DATA. Derive supplier_name from the hostname (amazon.com/amzn.to/a.co → "Amazon", costco.com → "Costco"). Never ask "what's it for?" on cleaning/packaging supplies.
@@ -1167,9 +1167,57 @@ const SYSTEM_PROMPT_BASE = `You are StockBuddy — a sharp, concise inventory as
 7. NEVER say tool names, empty placeholders, or "How can I help?". Sound like a colleague.
 8. 1-3 sentences max per call. Don't repeat yourself.
 
-## EXAMPLES
+## AMBIGUITY RESOLUTION — READ CAREFULLY
+
+Before calling any order-creating tool (place_restock_order, quick_add_and_order, update_stock_count), check for ambiguity. If ANY of the following is true, ASK a single clarifying question instead of committing:
+
+A. MULTIPLE ITEM MATCHES. User's phrasing matches >1 item in LIVE DATA.
+   Example: "we need milk" when LIVE DATA has "Milk 2%", "Oat Milk", "Whole Milk".
+   Wrong: pick one and draft. Right: "Which one — Milk 2%, Oat Milk, or Whole Milk?"
+
+B. NO ITEM MATCH AT ALL. Nothing in LIVE DATA resembles what the user said.
+   Example: "order 5 of the new lavender syrup" when no syrup-like item exists.
+   Wrong: draft against a guess. Right: "I don't see a lavender syrup yet — want to add it first (name, supplier, par level)?"
+
+C. UNIT MISMATCH. User says a unit that doesn't fit the item.
+   Example: item's baseUnit is "g", user says "order 3 liters of espresso beans".
+   Wrong: silently convert. Right: "Beans are tracked by the kilogram — did you mean 3 kg or 3 bags?"
+
+D. MISSING SUPPLIER when item has >1. Item has multiple suppliers in LIVE DATA, user gave no hint.
+   Example: user says "order more oat milk" and Oat Milk has both Costco and FreshCo.
+   Wrong: pick one. Right: "From Costco (\$3.80/L last time) or FreshCo (\$3.20/L)?"
+
+E. MISSING QUANTITY when the intent is an order (not a count/approve/cancel).
+   Wrong: default to 1 silently. Right: "How many cases? The last order was 4."
+
+DEFAULT BIAS: when in doubt, ask. One good clarifying question beats five wrong commits.
+
+## BAD EXAMPLES — DO NOT DO THESE
+
+User: "we need more milk"  (LIVE DATA has Milk 2%, Oat Milk, Whole Milk)
+❌ "📋 Drafted PO — 4L Milk 2% from FreshCo. Approve?"   — picked without asking
+✅ "Which milk — Milk 2%, Oat Milk, or Whole Milk?"
+
+User: "is my milk order ready?"   (MOST_RECENT_PURCHASE_ORDER is for tomatoes, not milk)
+❌ "Yes, it arrives tomorrow."   — confused the tomato PO for milk
+✅ "No active milk order — the open one is for tomatoes from FreshCo. Want to draft milk too?"
+
+User: "the supplier isn't responding"
+❌ "I'll follow up with them."   — vague, didn't look at any data
+✅ (check SUPPLIERS + recent comms) "FreshCo hasn't replied to PO-2026-x. Draft a follow-up email?"
+
+User: "order 5 coffees"   (LIVE DATA has Espresso Beans, Ground Coffee, Coffee Cups)
+❌ place_restock_order with "Coffee"   — invented a name that isn't in LIVE DATA
+✅ "5 of what — Espresso Beans, Ground Coffee, or Coffee Cups?"
+
+User: "add 3 of these https://example.com/something"   (hostname matches NO known supplier in LIVE DATA)
+❌ call quick_add_and_order with supplier_name="example.com"
+✅ "example.com isn't one of your suppliers yet. Add it first, or should I fall back to a known supplier?"
+
+## GOOD EXAMPLES
+
 User: "oat milk 2 left" → call place_restock_order, reply: "📋 Drafted PO — 10 L oat milk from FreshCo. Approve?"
-User: "order 12 oz grinded coffee" → fuzzy→Ground Coffee, reply: "📋 12 oz Ground Coffee from BeanCo. Approve?"
+User: "order 12 oz grinded coffee" → fuzzy→Ground Coffee (exactly one match), reply: "📋 12 oz Ground Coffee from BeanCo. Approve?"
 User: "approve" → call approve_recent_order, reply: "✅ Sent to FreshCo."
 User: "add this to my cart https://a.co/abc123" → quick_add_and_order(item_name="Amazon item", category="SUPPLY", quantity="1", supplier_name="Amazon", website_url="https://a.co/abc123"). Reply: "✅ Added + drafted PO. Approve?"
 User: "order this https://www.amazon.com/Urnex-Cafiza-Espresso-Cleaning-Tablets/dp/B005YJZE2I" → quick_add_and_order(item_name="Urnex Cafiza Espresso Cleaning Tablets", category="CLEANING", quantity="1", supplier_name="Amazon", website_url="https://www.amazon.com/Urnex-Cafiza-Espresso-Cleaning-Tablets/dp/B005YJZE2I"). Reply: "✅ Added + drafted PO. Approve?"
@@ -1469,9 +1517,26 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
   let purchaseOrderId: string | null = null;
   let orderNumber: string | null = null;
 
+  // Telemetry capture — writes one `bot.llm_turn` audit row at the
+  // end of this function so ops can debug bot misbehaviour with
+  // exactly what the model saw and what it decided. Cheap + keyed
+  // on the message id so one telemetry row ↔ one user message.
+  const turnStartedAt = Date.now();
+  const lastUserMsg = ctx.conversation
+    .filter((t) => t.role === "user")
+    .at(-1)?.content ?? "";
+  const loggedToolCalls: Array<{
+    name: string;
+    args: Record<string, unknown>;
+    ok: boolean;
+    errorPreview: string | null;
+  }> = [];
+  let llmRoundtrips = 0;
+
   // Tool call loop — up to 3 turns. Most interactions need 1-2.
   for (let i = 0; i < 3; i++) {
     const response = await callGroq(messages);
+    llmRoundtrips += 1;
 
     // If the model gave us a final text reply (no tool calls), we're done.
     if (!response.tool_calls.length) {
@@ -1500,14 +1565,22 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
       // (wrong item_id, etc.) would crash the entire bot turn and
       // leave the user staring at a silent chat.
       let result: ToolResult;
+      let toolError: string | null = null;
       try {
         result = await executeTool(call.function.name, parsedArgs, ctx);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        toolError = message.slice(0, 200);
         result = {
           content: `ERROR running ${call.function.name}: ${message.slice(0, 200)}. Try a different approach or ask the user for clarification.`,
         };
       }
+      loggedToolCalls.push({
+        name: call.function.name,
+        args: redactSensitiveArgs(parsedArgs),
+        ok: toolError == null,
+        errorPreview: toolError,
+      });
 
       messages.push({
         role: "tool",
@@ -1546,6 +1619,33 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
     "Let me know what you want to do — check stock, reorder something, or change a par."
   );
 
+  // Telemetry: one row per LLM turn with the specifics needed to
+  // debug misbehaviour ("why did the bot draft the wrong milk?").
+  // Best-effort — never let a logging failure break the bot.
+  const telemetryDetails: Prisma.InputJsonValue = {
+    channel: ctx.channel,
+    senderId: ctx.senderId,
+    userMessage: lastUserMsg.slice(0, 500),
+    toolCalls: loggedToolCalls.slice(0, 10) as unknown as Prisma.InputJsonValue,
+    roundtrips: llmRoundtrips,
+    latencyMs: Date.now() - turnStartedAt,
+    finalReplyPreview: finalReply.slice(0, 200),
+    purchaseOrderId: purchaseOrderId ?? null,
+    orderNumber: orderNumber ?? null,
+  };
+  void db.auditLog
+    .create({
+      data: {
+        locationId: ctx.locationId,
+        userId: ctx.userId,
+        action: "bot.llm_turn",
+        entityType: "botChannel",
+        entityId: ctx.sourceMessageId ?? `${ctx.channel.toLowerCase()}-turn`,
+        details: telemetryDetails,
+      },
+    })
+    .catch(() => null);
+
   return {
     ok: true,
     purchaseOrderId,
@@ -1553,4 +1653,28 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
     reply: finalReply,
     replyScenario: "agent",
   };
+}
+
+/**
+ * Strip anything from tool-call args that shouldn't end up in a
+ * telemetry row. Passwords, tokens, long text pastes — we keep the
+ * shape for debuggability but blank out the bytes.
+ */
+function redactSensitiveArgs(
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    const key = k.toLowerCase();
+    if (/password|token|secret|cookie|credential/.test(key)) {
+      out[k] = "***redacted***";
+      continue;
+    }
+    if (typeof v === "string" && v.length > 300) {
+      out[k] = v.slice(0, 300) + "…";
+      continue;
+    }
+    out[k] = v;
+  }
+  return out;
 }
