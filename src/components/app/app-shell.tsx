@@ -11,6 +11,7 @@ import { AppLiveRefresh } from "@/components/app/app-live-refresh";
 import { LocationSwitcher, type LocationSwitcherItem } from "@/components/app/location-switcher";
 import { CommandPalette } from "@/components/app/command-palette";
 import { GlassFilter } from "@/components/app/glass-filter";
+import { KeyboardShortcuts } from "@/components/app/keyboard-shortcuts";
 import { InkCanvas } from "@/components/app/ink-canvas";
 import { PointerGloss } from "@/components/app/pointer-gloss";
 import {
@@ -103,6 +104,8 @@ export function AppShell({ session, locations, autoRefreshMs, children }: AppShe
 
       {/* Global cmd/ctrl+K command palette. */}
       <CommandPalette />
+      {/* Global keyboard shortcuts (g d / g m / ? etc.) */}
+      <KeyboardShortcuts />
       {/* Global pointer tracker — feeds specular highlight on hovered cards. */}
       <PointerGloss />
       {/* Global scroll-reveal — cards animate in as they cross the viewport. */}

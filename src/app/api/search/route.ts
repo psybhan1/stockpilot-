@@ -1,7 +1,13 @@
 /**
  * Global search endpoint for the command palette. Returns up to N
- * results across inventory items, suppliers, and purchase orders,
- * scoped to the signed-in location.
+ * results across inventory items, suppliers, purchase orders, and
+ * menu variants — scoped to the signed-in location.
+ *
+ * Sort priority is "exact prefix match > contains > recent" within
+ * each kind, then the UI groups by kind. We keep per-kind `take`
+ * small (6-8) so a broad query like "milk" returns a manageable
+ * number of results across multiple categories instead of flooding
+ * one section.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -19,7 +25,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, results: [] });
   }
 
-  const [items, suppliers, purchaseOrders] = await Promise.all([
+  const [items, suppliers, purchaseOrders, menuVariants] = await Promise.all([
     db.inventoryItem.findMany({
       where: {
         locationId: session.locationId,
@@ -28,8 +34,9 @@ export async function GET(req: NextRequest) {
           { sku: { contains: q, mode: "insensitive" } },
         ],
       },
-      select: { id: true, name: true, sku: true },
+      select: { id: true, name: true, sku: true, category: true },
       take: 8,
+      orderBy: { name: "asc" },
     }),
     db.supplier.findMany({
       where: {
@@ -41,11 +48,15 @@ export async function GET(req: NextRequest) {
       },
       select: { id: true, name: true, email: true },
       take: 6,
+      orderBy: { name: "asc" },
     }),
     db.purchaseOrder.findMany({
       where: {
         locationId: session.locationId,
-        orderNumber: { contains: q, mode: "insensitive" },
+        OR: [
+          { orderNumber: { contains: q, mode: "insensitive" } },
+          { supplier: { name: { contains: q, mode: "insensitive" } } },
+        ],
       },
       select: {
         id: true,
@@ -56,6 +67,22 @@ export async function GET(req: NextRequest) {
       take: 6,
       orderBy: { createdAt: "desc" },
     }),
+    db.menuItemVariant.findMany({
+      where: {
+        menuItem: { locationId: session.locationId },
+        active: true,
+        OR: [
+          { name: { contains: q, mode: "insensitive" } },
+          { menuItem: { name: { contains: q, mode: "insensitive" } } },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        menuItem: { select: { id: true, name: true } },
+      },
+      take: 6,
+    }),
   ]);
 
   return NextResponse.json({
@@ -65,7 +92,7 @@ export async function GET(req: NextRequest) {
         kind: "item" as const,
         id: i.id,
         label: i.name,
-        detail: i.sku,
+        detail: i.sku ?? i.category.replaceAll("_", " ").toLowerCase(),
         href: `/inventory/${i.id}`,
       })),
       ...suppliers.map((s) => ({
@@ -81,6 +108,13 @@ export async function GET(req: NextRequest) {
         label: p.orderNumber,
         detail: `${p.supplier.name} · ${p.status.toLowerCase()}`,
         href: `/purchase-orders/${p.id}`,
+      })),
+      ...menuVariants.map((v) => ({
+        kind: "menu_variant" as const,
+        id: v.id,
+        label: v.menuItem.name + (v.name ? ` · ${v.name}` : ""),
+        detail: "menu item · recipe",
+        href: `/recipes?menuItem=${encodeURIComponent(v.menuItem.id)}`,
       })),
     ],
   });
