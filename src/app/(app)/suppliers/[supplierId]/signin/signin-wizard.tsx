@@ -108,8 +108,49 @@ function ExtensionPanel({
   supplierWebsite: string | null;
 }) {
   const supplierHost = supplierWebsite
-    ? supplierWebsite.replace(/^https?:\/\//i, "").replace(/\/.*$/, "")
+    ? (() => {
+        const raw = supplierWebsite.trim();
+        try {
+          const u = new URL(
+            /^https?:\/\//i.test(raw) ? raw : `https://${raw}`
+          );
+          return u.host.replace(/^www\./, "");
+        } catch {
+          return raw.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+        }
+      })()
     : "the supplier's site";
+  // Auto-link the extension session cookie on mount. Idempotent —
+  // calling again just refreshes the cookie's 30-day expiry.
+  const [linkState, setLinkState] = useState<"pending" | "linked" | "failed">(
+    "pending"
+  );
+  const [linkError, setLinkError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/extension/link", {
+          method: "POST",
+          cache: "no-store",
+        });
+        if (cancelled) return;
+        if (res.ok) {
+          setLinkState("linked");
+        } else {
+          setLinkError(`HTTP ${res.status}`);
+          setLinkState("failed");
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setLinkError(err instanceof Error ? err.message : String(err));
+        setLinkState("failed");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   return (
     <Card>
       <CardContent className="space-y-5 p-5 text-sm">
@@ -125,6 +166,26 @@ function ExtensionPanel({
             captures the session cookies your browser already has.
           </p>
         </div>
+
+        {linkState === "linked" ? (
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-600/30 bg-emerald-600/5 p-3 text-xs text-emerald-800 dark:text-emerald-200">
+            <Check className="h-4 w-4 shrink-0" />
+            <span>
+              This browser is linked to StockPilot. The extension can now
+              push cookies for any supplier on this account.
+            </span>
+          </div>
+        ) : linkState === "failed" ? (
+          <div className="rounded-lg border border-amber-600/30 bg-amber-600/5 p-3 text-xs text-amber-900 dark:text-amber-200">
+            Couldn't link this browser automatically ({linkError}). Reload
+            this page — if it keeps failing, the extension will still work
+            but you'll see a 401 error on first use.
+          </div>
+        ) : (
+          <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
+            Linking this browser to StockPilot…
+          </div>
+        )}
 
         <ol className="list-decimal space-y-3 pl-5">
           <li>

@@ -33,6 +33,7 @@ const INCLUDE = [
   "popup.html",
   "popup.css",
   "popup.js",
+  "popup-helpers.js",
   "README.md",
   "icons/icon16.png",
   "icons/icon48.png",

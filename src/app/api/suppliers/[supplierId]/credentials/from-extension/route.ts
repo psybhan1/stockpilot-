@@ -24,7 +24,7 @@ import {
   extensionOptionsResponse,
   withExtensionCors,
 } from "@/lib/extension-cors";
-import { getSession } from "@/modules/auth/session";
+import { getExtensionSession } from "@/modules/auth/extension-session";
 import { hasMinimumRole } from "@/lib/permissions";
 import {
   MAX_COOKIES,
@@ -45,12 +45,16 @@ export async function POST(
 ) {
   const { supplierId } = await params;
 
-  const session = await getSession();
+  const session = await getExtensionSession();
   if (!session) {
     return withExtensionCors(
       request,
       NextResponse.json(
-        { message: "Sign in to StockPilot in this browser first." },
+        {
+          message:
+            "This browser isn't linked to StockPilot yet. Open the Extension tab in the signin wizard once to link it.",
+          needsLink: true,
+        },
         { status: 401 }
       )
     );

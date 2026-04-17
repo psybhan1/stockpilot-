@@ -28,8 +28,10 @@ friction way to produce that jar.
 
 1. Click the StockPilot icon. The popup asks for your StockPilot URL
    (e.g. `https://stockpilot.yourcompany.com`). Paste it in.
-2. If you aren't already signed in to StockPilot in this browser, the
-   popup tells you to open StockPilot and sign in once. Come back.
+2. The popup will prompt you to **link this browser to StockPilot** —
+   click the button, it opens StockPilot. Sign in if you aren't
+   already, then open any supplier's sign-in page (the "Use browser
+   extension" tab auto-links on mount). Close the tab. Done once.
 3. Open, say, `www.amazon.com` in a normal tab. Sign in. Complete any
    2FA. Browse normally — nothing special to do.
 4. Click the StockPilot icon again. The popup auto-matches your current
@@ -39,19 +41,32 @@ friction way to produce that jar.
    and can add items to the cart on your behalf when the Telegram bot
    asks it to.
 
+### Why the "link this browser" step?
+
+StockPilot's session cookie is `SameSite=Lax` so it won't ride along
+on the extension's cross-origin API calls. The link step mints a
+separate `SameSite=None` extension cookie that's only valid for the
+three extension-specific endpoints. If that cookie is ever stolen,
+the thief still can't use it to log into the StockPilot web app.
+
 ## What the extension can read
 
 - **Cookies for the supplier's domain only**, and only the moment you
   press "Push cookies". We call `chrome.cookies.getAll({ domain })`
-  scoped to the active tab's domain — we don't poll, we don't read
+  scoped to the active tab's eTLD+1 — we don't poll, we don't read
   cookies from other sites, and we don't have a background script at
   all.
 - **The StockPilot URL you entered**, stored in `chrome.storage.local`.
 - **The active tab's URL**, to auto-select the matching supplier.
 
+Host permissions are narrowed to a hard-coded list of known suppliers
+(Amazon, Costco, Walmart, LCBO, Sysco, etc.). Anything outside that
+list requires a one-click permission prompt the first time you push
+cookies for it — the extension can't silently read cookies from, say,
+your bank's tab.
+
 That's it. No browsing history, no page content, no password access,
-no remote syncing. The source is in this folder (~300 lines of JS), go
-read it.
+no remote syncing. The source is in this folder, go read it.
 
 ## What the extension sends
 

@@ -17,7 +17,7 @@ import {
   extensionOptionsResponse,
   withExtensionCors,
 } from "@/lib/extension-cors";
-import { getSession } from "@/modules/auth/session";
+import { getExtensionSession } from "@/modules/auth/extension-session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,12 +27,16 @@ export async function OPTIONS(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const session = await getSession();
+  const session = await getExtensionSession();
   if (!session) {
     return withExtensionCors(
       request,
       NextResponse.json(
-        { message: "Sign in to StockPilot in this browser first." },
+        {
+          message:
+            "This browser isn't linked to StockPilot yet. Open the Extension tab on any supplier's sign-in page in StockPilot — it auto-links once you're signed in.",
+          needsLink: true,
+        },
         { status: 401 }
       )
     );
@@ -40,7 +44,12 @@ export async function GET(request: Request) {
 
   const suppliers = await db.supplier.findMany({
     where: { locationId: session.locationId },
-    select: { id: true, name: true, website: true },
+    select: {
+      id: true,
+      name: true,
+      website: true,
+      credentialsConfigured: true,
+    },
     orderBy: { name: "asc" },
   });
 
@@ -52,6 +61,7 @@ export async function GET(request: Request) {
         id: s.id,
         name: s.name,
         website: s.website,
+        connected: s.credentialsConfigured,
       })),
     })
   );

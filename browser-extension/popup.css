@@ -60,6 +60,18 @@ p {
   font-size: 12px;
 }
 
+.muted.tiny {
+  font-size: 11px;
+  line-height: 1.35;
+  margin-top: 6px;
+}
+
+.error-text {
+  color: #b42318;
+  font-size: 12px;
+  margin: 4px 0 0 0;
+}
+
 .label {
   font-size: 11px;
   text-transform: uppercase;
