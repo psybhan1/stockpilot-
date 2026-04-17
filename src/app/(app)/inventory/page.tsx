@@ -23,24 +23,38 @@ export default async function InventoryPage() {
     orderBy: { name: "asc" },
   });
 
-  // Fast path — compute image URLs in memory so the page renders instantly.
-  // The DB write is fire-and-forget: we don't block the user on N round-trips,
-  // and the next render already has the URL set here.
+  // Compute missing image URLs synchronously from whatever we
+  // already have on the row (supplier website for Clearbit logo,
+  // productUrl pasted into notes for direct image URLs, otherwise
+  // letter avatar). Page renders instantly.
+  //
+  // Why no AI generation anymore: the old Pollinations.ai pipeline
+  // produced "very random" product shots (user feedback) — Coke
+  // can for oat milk, random branded packaging for generic names.
+  // Honest letter avatars beat hallucinated products every time.
   const missing = items.filter((item) => !item.imageUrl);
   if (missing.length > 0) {
     for (const item of missing) {
       const brandMatch = item.notes?.match(/brand:\s*([^|]+)/i);
       const brand = brandMatch?.[1]?.trim() ?? null;
+      const urlMatch = item.notes?.match(/(?:Product URL|URL):\s*(https?:\/\/\S+)/i);
+      const productUrl = urlMatch?.[1] ?? null;
       const url = buildInventoryImageUrl({
         name: item.name,
         brand,
         category: item.category,
+        productUrl,
+        supplierWebsite: item.primarySupplier?.website ?? null,
       });
       item.imageUrl = url;
-      // Background-persist; don't block the page.
-      void db.inventoryItem
-        .update({ where: { id: item.id }, data: { imageUrl: url } })
-        .catch(() => {});
+      // Persist only NON-data-URL results — letter avatars are cheap
+      // to regenerate and we don't want to bloat the DB with ~600-
+      // byte SVGs per item. Real og:images / logos stick.
+      if (!url.startsWith("data:")) {
+        void db.inventoryItem
+          .update({ where: { id: item.id }, data: { imageUrl: url } })
+          .catch(() => {});
+      }
     }
   }
 
@@ -165,6 +179,18 @@ export default async function InventoryPage() {
               className="h-9 text-sm"
             />
           </div>
+
+          {/* Product URL — the one field that unlocks a real
+              branded product photo. Paste an Amazon / Costco / LCBO
+              / manufacturer page URL and we fetch the product's own
+              image. Skip → letter avatar with category color. */}
+          <Input
+            name="productUrl"
+            type="url"
+            placeholder="Product URL (optional — paste for a real product photo)"
+            className="h-9 text-sm"
+            pattern="https?://.+"
+          />
           <Button type="submit" size="sm" className="h-9 text-xs">
             Add item
           </Button>

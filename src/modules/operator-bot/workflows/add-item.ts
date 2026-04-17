@@ -331,9 +331,12 @@ export async function executeAddItem(
   if (data.usage) noteParts.push(`Used for: ${data.usage}`);
   const notes = noteParts.length > 0 ? noteParts.join(" | ") : null;
 
-  // Resolve a product image — branded items get a brand-specific prompt so
-  // the generated shot looks like that brand's packaging. No network hit here;
-  // the URL is deterministic and the image is generated on first browser fetch.
+  // Synchronous image fallback — letter avatar or Clearbit logo if
+  // the supplier's website is known. The bot's quick-add path sends
+  // a real og:image separately when a URL was pasted (see
+  // operator-bot/agent.ts quick_add_and_order), so this path is
+  // mostly the no-URL case where the best we can do is a branded
+  // placeholder.
   const imageUrl = buildInventoryImageUrl({
     name,
     brand: data.brand,

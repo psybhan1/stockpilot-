@@ -691,6 +691,10 @@ export async function executeTool(
         });
         if (!newItem) {
           const sku = `QA-${Date.now().toString(36).toUpperCase()}`;
+          // Attach the pasted URL to notes so the /inventory page's
+          // image resolver can extract og:image from it on first
+          // render. Keeps bot path fast (no synchronous HTTP fetch).
+          const seedNotes = websiteUrl ? `Product URL: ${websiteUrl}` : null;
           newItem = await db.inventoryItem.create({
             data: {
               locationId: ctx.locationId,
@@ -706,6 +710,7 @@ export async function executeTool(
               parLevelBase: Math.max(1, quantity * 2),
               safetyStockBase: quantity,
               lowStockThresholdBase: quantity,
+              notes: seedNotes,
             },
           });
         }

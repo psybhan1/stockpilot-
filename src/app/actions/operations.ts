@@ -797,13 +797,9 @@ export async function addInventoryItemAction(formData: FormData) {
   // can set up inventory without a manager in the loop.
   const session = await requireSession(Role.SUPERVISOR);
   const name = readStringValue(formData, "name");
-  if (!name) {
-    // We could return an error via useActionState, but the form has
-    // required inputs; this is a defensive guard.
-    return;
-  }
-  const category =
-    readStringValue(formData, "category") ?? "SUPPLY";
+  if (!name) return; // form has required inputs; defensive guard
+
+  const category = readStringValue(formData, "category") ?? "SUPPLY";
   const baseUnit = readStringValue(formData, "baseUnit") ?? "COUNT";
   const parLevelBase = Math.max(
     1,
@@ -814,6 +810,7 @@ export async function addInventoryItemAction(formData: FormData) {
     readIntegerValue(formData, "stockOnHandBase", 0)
   );
   const supplierId = readNullableStringValue(formData, "supplierId");
+  const productUrl = readNullableStringValue(formData, "productUrl");
   const priceDollarsRaw = formData.get("unitPriceDollars");
   const priceDollars =
     typeof priceDollarsRaw === "string" && priceDollarsRaw.trim()
@@ -832,13 +829,45 @@ export async function addInventoryItemAction(formData: FormData) {
   // Tenant guard: if a supplierId was supplied, it MUST belong to
   // this location before we accept it.
   let primarySupplierId: string | null = null;
+  let supplierWebsite: string | null = null;
   if (supplierId) {
     const owned = await db.supplier.findFirst({
       where: { id: supplierId, locationId: session.locationId },
-      select: { id: true },
+      select: { id: true, website: true },
     });
-    if (owned) primarySupplierId = owned.id;
+    if (owned) {
+      primarySupplierId = owned.id;
+      supplierWebsite = owned.website;
+    }
   }
+
+  // Resolve the best-available image SYNCHRONOUSLY (no network) —
+  // either direct image URL, supplier Clearbit logo, or letter
+  // avatar. For pasted product pages we try og:image async below.
+  const { buildInventoryImageUrl, resolveProductImage } = await import(
+    "@/modules/inventory/image-resolver"
+  );
+  let imageUrl: string = buildInventoryImageUrl({
+    name,
+    category,
+    productUrl,
+    supplierWebsite,
+  });
+
+  // If the productUrl looks like a product page (not a direct image)
+  // try to fetch og:image. Cap at 4s so the form submit doesn't hang.
+  if (productUrl && !/\.(?:jpe?g|png|webp|gif|avif|svg)(?:\?|#|$)/i.test(productUrl)) {
+    try {
+      imageUrl = await resolveProductImage(
+        { name, category, productUrl, supplierWebsite },
+        { timeoutMs: 4000 }
+      );
+    } catch {
+      /* stick with synchronous result */
+    }
+  }
+
+  const notesSuffix = productUrl ? `Product URL: ${productUrl}` : null;
 
   await db.$transaction(async (tx) => {
     const item = await tx.inventoryItem.create({
@@ -857,6 +886,11 @@ export async function addInventoryItemAction(formData: FormData) {
         safetyStockBase: Math.max(1, Math.round(parLevelBase * 0.2)),
         lowStockThresholdBase: Math.max(1, Math.round(parLevelBase * 0.4)),
         primarySupplierId,
+        // Only persist the image if it's a real URL — letter-avatar
+        // data URLs regenerate for free on page render, no need to
+        // bloat the row.
+        imageUrl: imageUrl.startsWith("data:") ? null : imageUrl,
+        notes: notesSuffix,
       },
     });
 
@@ -894,6 +928,7 @@ export async function addInventoryItemAction(formData: FormData) {
         parLevelBase,
         primarySupplierId,
         unitCostCents,
+        hasProductUrl: !!productUrl,
       },
     });
   });
