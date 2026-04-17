@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { deliverPurchaseOrderAction } from "@/app/actions/operations";
+import { toast } from "@/components/app/toaster";
 
 export type ReceiveLine = {
   id: string;
@@ -173,6 +174,15 @@ export function ReceivePanel({
       setParseResult(data.parsed);
       if (data.parsed.ok) {
         applyParsedToForm(data.parsed);
+        toast.success(
+          `Scanned invoice — ${data.parsed.lines.length} line${
+            data.parsed.lines.length === 1 ? "" : "s"
+          } filled in. Review before saving.`
+        );
+      } else {
+        toast.info(
+          "Scan ran but couldn't read the invoice. Try a clearer photo or fill in by hand."
+        );
       }
     } catch (err) {
       setUploadError(
@@ -239,6 +249,7 @@ export function ReceivePanel({
           ])
         )
       );
+      toast.info("Invoice scan removed. You can upload a new photo.");
     } catch (err) {
       setUploadError(
         err instanceof Error

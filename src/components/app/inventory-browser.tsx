@@ -8,6 +8,7 @@ import { Download, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { downloadCsv, isoDateForFilename, toCsv } from "@/lib/csv";
+import { toast } from "@/components/app/toaster";
 
 type InventoryBrowserItem = {
   id: string;
@@ -97,9 +98,10 @@ export function InventoryBrowser({ items }: InventoryBrowserProps) {
           </div>
           <button
             type="button"
-            onClick={() =>
+            onClick={() => {
+              const filename = `stockpilot-inventory-${isoDateForFilename()}.csv`;
               downloadCsv(
-                `stockpilot-inventory-${isoDateForFilename()}.csv`,
+                filename,
                 toCsv(visibleItems, [
                   { header: "Item", value: (i) => i.name },
                   { header: "Category", value: (i) => i.categoryLabel },
@@ -109,8 +111,11 @@ export function InventoryBrowser({ items }: InventoryBrowserProps) {
                   { header: "Supplier", value: (i) => i.supplierName },
                   { header: "Urgency", value: (i) => i.urgency },
                 ])
-              )
-            }
+              );
+              toast.success(
+                `Exported ${visibleItems.length} item${visibleItems.length === 1 ? "" : "s"} — ${filename}`
+              );
+            }}
             disabled={visibleItems.length === 0}
             className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
             title="Download the filtered list as CSV"

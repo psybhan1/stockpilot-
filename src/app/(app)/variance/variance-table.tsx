@@ -11,6 +11,7 @@ import { ChevronDown, ChevronRight, Download } from "lucide-react";
 
 import type { VarianceRow } from "@/modules/variance/report";
 import { downloadCsv, isoDateForFilename, toCsv } from "@/lib/csv";
+import { toast } from "@/components/app/toaster";
 
 type Filter = "all" | "review" | "watch" | "shrinkage-only";
 
@@ -61,9 +62,10 @@ export function VarianceTable({
         </select>
         <button
           type="button"
-          onClick={() =>
+          onClick={() => {
+            const filename = `stockpilot-variance-${days}d-${isoDateForFilename()}.csv`;
             downloadCsv(
-              `stockpilot-variance-${days}d-${isoDateForFilename()}.csv`,
+              filename,
               toCsv(filtered, [
                 { header: "Item", value: (r) => r.itemName },
                 { header: "Category", value: (r) => r.category ?? "" },
@@ -77,8 +79,11 @@ export function VarianceTable({
                 { header: "Shrinkage %", value: (r) => r.shrinkagePct != null ? (r.shrinkagePct * 100).toFixed(2) : "" },
                 { header: "Severity", value: (r) => r.severity },
               ])
-            )
-          }
+            );
+            toast.success(
+              `Exported ${filtered.length} row${filtered.length === 1 ? "" : "s"} — ${filename}`
+            );
+          }}
           disabled={filtered.length === 0}
           className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/60 bg-background px-3 text-sm transition hover:bg-muted disabled:opacity-50"
           title={`Download the current ${days}-day view as CSV`}

@@ -10,7 +10,7 @@
  * ship a huge initial payload for restaurants with 200+ variants.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Download } from "lucide-react";
 
 import type {
@@ -18,15 +18,32 @@ import type {
   MarginBreakdown,
 } from "@/modules/recipes/margin-dashboard";
 import { downloadCsv, isoDateForFilename, toCsv } from "@/lib/csv";
+import { toast } from "@/components/app/toaster";
 
 type SortKey = "margin-asc" | "margin-desc" | "cogs-desc" | "name-asc";
 type Filter = "all" | "review" | "watch" | "unpriced" | "missing-data";
+
+/**
+ * Per-variant breakdown state, held by the parent table so an
+ * expand-collapse-expand cycle doesn't refetch, and so the first
+ * expand can trigger a batched fetch that also warms nearby rows.
+ */
+type BreakdownState =
+  | { status: "loading" }
+  | { status: "ready"; data: MarginBreakdown }
+  | { status: "error"; message: string };
+
+const PREFETCH_LOOKAHEAD = 10;
 
 export function MarginTable({ rows }: { rows: MarginRow[] }) {
   const [sortKey, setSortKey] = useState<SortKey>("margin-asc");
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [cache, setCache] = useState<Record<string, BreakdownState>>({});
+  // Track in-flight fetches by id so a rapid expand-collapse-expand
+  // doesn't fire duplicate requests.
+  const inflight = useRef(new Set<string>());
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -61,6 +78,76 @@ export function MarginTable({ rows }: { rows: MarginRow[] }) {
     });
     return arr;
   }, [filtered, sortKey]);
+
+  // Batch-fetch the target variant + the next N after it in the
+  // current sorted order. Subsequent expands within that window hit
+  // the cache instantly. Variants already cached or in-flight skip.
+  const ensureBreakdown = useCallback(
+    async (variantId: string) => {
+      if (cache[variantId]?.status === "ready") return;
+      // Find the variant in the sorted list so we can batch its
+      // neighbours. If not visible (shouldn't happen on expand),
+      // fetch alone.
+      const idx = sorted.findIndex((r) => r.variantId === variantId);
+      const startIdx = idx >= 0 ? idx : 0;
+      const neighbourIds = (idx >= 0 ? sorted.slice(startIdx, startIdx + PREFETCH_LOOKAHEAD) : [])
+        .map((r) => r.variantId);
+      const toFetch = Array.from(
+        new Set([variantId, ...neighbourIds])
+      ).filter(
+        (id) => cache[id]?.status !== "ready" && !inflight.current.has(id)
+      );
+      if (toFetch.length === 0) return;
+
+      // Mark all as in-flight + loading in one state update.
+      setCache((prev) => {
+        const next = { ...prev };
+        for (const id of toFetch) {
+          next[id] = { status: "loading" };
+          inflight.current.add(id);
+        }
+        return next;
+      });
+
+      try {
+        const res = await fetch("/api/menu-items/margins", {
+          method: "POST",
+          cache: "no-store",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ variantIds: toFetch }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { message?: string };
+          throw new Error(body.message || `HTTP ${res.status}`);
+        }
+        const data = (await res.json()) as {
+          breakdowns: Record<string, MarginBreakdown>;
+        };
+        setCache((prev) => {
+          const next = { ...prev };
+          for (const id of toFetch) {
+            const bd = data.breakdowns[id];
+            next[id] = bd
+              ? { status: "ready", data: bd }
+              : { status: "error", message: "No breakdown returned." };
+          }
+          return next;
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setCache((prev) => {
+          const next = { ...prev };
+          for (const id of toFetch) {
+            next[id] = { status: "error", message };
+          }
+          return next;
+        });
+      } finally {
+        for (const id of toFetch) inflight.current.delete(id);
+      }
+    },
+    [cache, sorted]
+  );
 
   return (
     <div>
@@ -97,9 +184,10 @@ export function MarginTable({ rows }: { rows: MarginRow[] }) {
         </select>
         <button
           type="button"
-          onClick={() =>
+          onClick={() => {
+            const filename = `stockpilot-margins-${isoDateForFilename()}.csv`;
             downloadCsv(
-              `stockpilot-margins-${isoDateForFilename()}.csv`,
+              filename,
               toCsv(sorted, [
                 { header: "Menu item", value: (r) => r.menuItemName },
                 { header: "Variant", value: (r) => r.variantName ?? "" },
@@ -114,8 +202,11 @@ export function MarginTable({ rows }: { rows: MarginRow[] }) {
                 { header: "Components costed", value: (r) => r.componentsCosted },
                 { header: "Components missing", value: (r) => r.componentsMissing },
               ])
-            )
-          }
+            );
+            toast.success(
+              `Exported ${sorted.length} row${sorted.length === 1 ? "" : "s"} — ${filename}`
+            );
+          }}
           disabled={sorted.length === 0}
           className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/60 bg-background px-3 text-sm transition hover:bg-muted disabled:opacity-50"
           title="Download the current filtered view as CSV"
@@ -150,9 +241,15 @@ export function MarginTable({ rows }: { rows: MarginRow[] }) {
                 key={r.variantId}
                 row={r}
                 expanded={expanded === r.variantId}
-                onToggle={() =>
-                  setExpanded((cur) => (cur === r.variantId ? null : r.variantId))
-                }
+                breakdown={cache[r.variantId]}
+                onToggle={() => {
+                  const nextExpanded =
+                    expanded === r.variantId ? null : r.variantId;
+                  setExpanded(nextExpanded);
+                  if (nextExpanded) {
+                    void ensureBreakdown(nextExpanded);
+                  }
+                }}
               />
             ))}
           </tbody>
@@ -165,10 +262,12 @@ export function MarginTable({ rows }: { rows: MarginRow[] }) {
 function Row({
   row,
   expanded,
+  breakdown,
   onToggle,
 }: {
   row: MarginRow;
   expanded: boolean;
+  breakdown: BreakdownState | undefined;
   onToggle: () => void;
 }) {
   return (
@@ -220,7 +319,7 @@ function Row({
           <SeverityPill row={row} />
         </td>
       </tr>
-      {expanded ? <BreakdownRow variantId={row.variantId} /> : null}
+      {expanded ? <BreakdownRow state={breakdown} /> : null}
     </>
   );
 }
@@ -259,47 +358,16 @@ function SeverityPill({ row }: { row: MarginRow }) {
  * Fetch per-variant breakdown on expand. Cached by variantId in
  * component state so expand/collapse is free after the first fetch.
  */
-function BreakdownRow({ variantId }: { variantId: string }) {
-  const [state, setState] = useState<
-    | { status: "loading" }
-    | { status: "ready"; data: MarginBreakdown }
-    | { status: "error"; message: string }
-  >({ status: "loading" });
-
-  useMemo(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(
-          `/api/menu-items/${encodeURIComponent(variantId)}/margin`,
-          { cache: "no-store" }
-        );
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as { message?: string };
-          throw new Error(body.message || `HTTP ${res.status}`);
-        }
-        const data = (await res.json()) as { breakdown: MarginBreakdown };
-        if (!cancelled) setState({ status: "ready", data: data.breakdown });
-      } catch (err) {
-        if (!cancelled) {
-          setState({
-            status: "error",
-            message: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // variantId is the only input
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variantId]);
-
+/**
+ * Pure renderer — data comes from the parent table's cache so
+ * expand-collapse-expand is instant, and the first expand on a row
+ * triggers a batched fetch that also warms the next 9 rows.
+ */
+function BreakdownRow({ state }: { state: BreakdownState | undefined }) {
   return (
     <tr className="bg-muted/20">
       <td colSpan={6} className="px-4 py-4">
-        {state.status === "loading" ? (
+        {!state || state.status === "loading" ? (
           <BreakdownSkeleton />
         ) : state.status === "error" ? (
           <div className="text-xs text-red-700 dark:text-red-300">

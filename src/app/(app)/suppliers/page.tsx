@@ -70,6 +70,16 @@ export default async function SuppliersPage() {
       </section>
 
       {/* Supplier list */}
+      {suppliers.length === 0 ? (
+        <section className="brutal-card p-8 text-center">
+          <p className="text-base font-medium">No suppliers yet.</p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+            Add your first above. You can start with just a name and an
+            ordering mode — fill in lead times, delivery days, and items
+            later as you use them.
+          </p>
+        </section>
+      ) : null}
       <section className="grid gap-3 lg:grid-cols-2">
         {suppliers.map((supplier, i) => (
           <Link

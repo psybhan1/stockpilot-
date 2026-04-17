@@ -155,7 +155,10 @@ export default async function PurchaseOrdersPage() {
             ))}
           </div>
         ) : (
-          <EmptyState text="No approvals waiting" />
+          <EmptyState
+            title="No approvals waiting"
+            hint="When the reorder engine suggests a PO or a manager approves one from the bot, it'll land here."
+          />
         )}
       </section>
 
@@ -191,7 +194,12 @@ export default async function PurchaseOrdersPage() {
             ))}
           </div>
         ) : (
-          <EmptyState text="No purchase orders yet" />
+          <EmptyState
+            title="No purchase orders yet"
+            hint="Orders show up here once the reorder engine flags something low, or when a manager approves an item from the Telegram bot. To seed your first, head to inventory and mark an item as low on stock."
+            ctaHref="/inventory"
+            ctaLabel="Open inventory"
+          />
         )}
       </section>
     </div>
@@ -207,10 +215,34 @@ function MetricCard({ label, value }: { label: string; value: number }) {
   );
 }
 
-function EmptyState({ text }: { text: string }) {
+function EmptyState({
+  title,
+  hint,
+  ctaHref,
+  ctaLabel,
+}: {
+  title: string;
+  hint?: string;
+  ctaHref?: string;
+  ctaLabel?: string;
+}) {
   return (
-    <div className="empty-state">
-      <span className="empty-state-hint">{text}</span>
+    <div className="empty-state flex flex-col items-center gap-2 text-center">
+      <span className="empty-state-title text-base font-medium">{title}</span>
+      {hint ? (
+        <span className="empty-state-hint max-w-md text-sm text-muted-foreground">
+          {hint}
+        </span>
+      ) : null}
+      {ctaHref && ctaLabel ? (
+        <a
+          href={ctaHref}
+          className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-4 py-2 text-sm font-medium transition hover:bg-muted"
+        >
+          {ctaLabel}
+          <ArrowRight className="size-3.5" />
+        </a>
+      ) : null}
     </div>
   );
 }

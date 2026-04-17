@@ -621,6 +621,37 @@ function RemoteSigninPanel({
   const imgRef = useRef<HTMLImageElement | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Persistence of the sign-in session across accidental page
+  // reloads. We stash the sessionId in sessionStorage keyed by
+  // supplier. On mount we try to resume by hitting the screenshot
+  // endpoint — if the server still has the session alive, we pick
+  // up where the user left off. If it 404s (session aged out), we
+  // clear the stale key and drop back to idle. sessionStorage (not
+  // localStorage) so closing the tab cleans everything up without
+  // leaving a dormant remote Chrome around.
+  const storageKey = `stockpilot.signin.${supplierId}`;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.sessionStorage.getItem(storageKey);
+    if (!stored || sessionId) return;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/suppliers/${supplierId}/signin/${stored}/screenshot`,
+          { cache: "no-store" }
+        );
+        if (!res.ok) {
+          window.sessionStorage.removeItem(storageKey);
+          return;
+        }
+        setSessionId(stored);
+        setStatus("ready");
+      } catch {
+        window.sessionStorage.removeItem(storageKey);
+      }
+    })();
+  }, [supplierId, storageKey, sessionId]);
+
   const fetchScreenshot = useCallback(async () => {
     if (!sessionId) return;
     const res = await fetch(
@@ -843,6 +874,11 @@ function RemoteSigninPanel({
       setSessionId(id);
       setScreenshot(`data:image/jpeg;base64,${initial}`);
       setStatus("ready");
+      // Persist so an accidental page reload resumes this session
+      // instead of spinning up a fresh Chrome from scratch.
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(storageKey, id);
+      }
     } catch (err) {
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -931,6 +967,12 @@ function RemoteSigninPanel({
         throw new Error(body.message || `HTTP ${res.status}`);
       }
       setStatus("saved");
+      // Session is captured + closed server-side; drop the resume
+      // key so an accidental reload doesn't try to rehydrate a
+      // finished session.
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(storageKey);
+      }
     } catch (err) {
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -1092,6 +1134,9 @@ function RemoteSigninPanel({
                     `/api/suppliers/${supplierId}/signin/${sessionId}/abort`,
                     { method: "POST" }
                   ).catch(() => null);
+                }
+                if (typeof window !== "undefined") {
+                  window.sessionStorage.removeItem(storageKey);
                 }
                 setSessionId(null);
                 setScreenshot(null);

@@ -29,6 +29,19 @@ export default async function RecipesPage() {
       />
 
       {/* Recipe list */}
+      {recipes.length === 0 ? (
+        <section className="brutal-card p-8 text-center">
+          <p className="text-base font-medium">No recipes yet.</p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+            Recipes appear here once you sync a POS catalog or import menu
+            items. Connect Square from the{" "}
+            <Link href="/pos-mapping" className="underline">
+              Sales link
+            </Link>{" "}
+            page to bootstrap recipes for every item you sell.
+          </p>
+        </section>
+      ) : null}
       <section className="grid gap-3 lg:grid-cols-2">
         {recipes.map((recipe) => (
           <Link
