@@ -24,12 +24,22 @@ export type SniffedOrder = {
 
 export type SniffResult = { orders: SniffedOrder[] } | null;
 
-// Words that indicate "the manager wants to order something".
+// Optional politeness/softener words a real manager might start a
+// message with. Stripped before the order verb so "please order 3"
+// matches the same way "order 3" does. "can you" / "can u" are
+// common in Telegram shortcuts.
+const POLITENESS_PREFIX =
+  "(?:please|pls|plz|can\\s+(?:you|u)|could\\s+(?:you|u)|hey\\s*[,]?)";
+// Words that indicate "the manager wants to order something". Added
+// bare "need" (users frequently drop the "we"), "grab" (common
+// casual phrasing for picking up stock), "pick up", and "restock".
 const ORDER_VERBS =
-  "(?:add(?:\\s+\\w+)?|order|buy|get\\s+me|we\\s+need|put)";
+  "(?:add(?:\\s+\\w+)?|order|buy|get\\s+me|we\\s+need|need|grab|pick\\s+up|restock|put)";
 // Unit nouns we accept between quantity and item name (optional).
+// Expanded with common abbreviations (cs, ea, gal), pounds, tablets,
+// bars, packets — anything a supplier's packing slip might say.
 const UNITS =
-  "(?:bottles?|cans?|boxes?|bags?|cases?|packs?|lbs?|kg|oz|ml|l|liters?|litres?|gallons?|pieces?|units?|items?|cups?|sheets?|rolls?|pairs?)";
+  "(?:bottles?|cans?|boxes?|bags?|cases?|cs|packs?|packets?|lbs?|pounds?|kg|kilos?|oz|ounces?|ml|l|liters?|litres?|gallons?|gal|pieces?|units?|items?|cups?|sheets?|rolls?|pairs?|tablets?|bars?|each|ea)";
 // Supplier/site prepositions ("from LCBO", "at Costco", "in my Walmart cart").
 // "in"/"to" can optionally be followed by "my"/"the"; all alternatives
 // are match-as-atom so they work at end-of-string (no trailing \s+
@@ -164,13 +174,25 @@ async function matchSingleOrder(
   // Try to extract quantity + item + supplier from text. Item-name
   // character class includes Unicode letters via \p{L} so "café",
   // "résumé", "日本茶" survive without falling through to the LLM.
+  //
+  // The end anchor used to be `\s*[.!?]?\s*$` — zero-or-one punct
+  // char. Real messages have "!!!" and trailing emoji ("🙏 😭 ✨").
+  // New end accepts any run of non-alphanumeric-non-currency trail
+  // chars (punctuation + emoji + spaces) so the match doesn't fail
+  // on shouting or hearts.
   const pattern = new RegExp(
-    `^\\s*(?:${ORDER_VERBS}\\s+(?:some\\s+|a\\s+few\\s+)?)?` + // optional verb
+    `^\\s*(?:${POLITENESS_PREFIX}\\s+)?` + // optional "please"/"can u" prefix
+      `(?:${ORDER_VERBS}\\s+(?:some\\s+|a\\s+few\\s+)?)?` + // optional verb
       `(\\d+)\\s+` + // quantity
       `(?:${UNITS}\\s+(?:of\\s+)?)?` + // optional unit + optional "of"
       `([\\p{L}\\p{N}][\\p{L}\\p{N}'\\s&-]+?)` + // item name (Unicode-aware)
       `(?:\\s+${SUPPLIER_PREP}\\s+([\\p{L}\\p{N}'\\s-]+?)(?:\\s+(?:cart|website|shop|store))?)?` + // optional "from <supplier>"
-      `\\s*[.!?]?\\s*$`,
+      // Trailing whitespace + punctuation + symbols + marks. `\p{M}`
+      // catches combining characters like the variation selector in
+      // ❤️ (U+2764 + U+FE0F). Without it, heart-emoji-ending
+      // messages fail to match because U+FE0F is "Mark,Nonspacing"
+      // which isn't in P or S.
+      `[\\s\\p{P}\\p{S}\\p{M}]*$`,
     "iu"
   );
   const m = fullText.match(pattern);
