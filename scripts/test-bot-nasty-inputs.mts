@@ -545,6 +545,71 @@ await scenario("multi-emoji + punct: 'ORDER 5 BAGS OAT MILK FROM COSTCO!!!🙏�
   else assert(false, "multi-emoji trailing failed", `got ${o.length}`);
 });
 
+// ── 15. sniffApproveOrCancel: deterministic yes/no routing ────────
+
+const { sniffApproveOrCancel } = await import(
+  "../src/modules/operator-bot/order-sniffer.ts"
+);
+
+function acSniff(
+  label: string,
+  text: string,
+  expected: "approve" | "cancel" | null
+) {
+  const got = sniffApproveOrCancel(text);
+  assert(got === expected, `approve/cancel: ${label} → ${expected ?? "null"} (got ${got ?? "null"}) [${text}]`);
+}
+
+// approve variants
+acSniff("plain yes", "yes", "approve");
+acSniff("caps yes", "YES", "approve");
+acSniff("yes with !", "yes!", "approve");
+acSniff("yep", "yep", "approve");
+acSniff("yup", "yup", "approve");
+acSniff("yeah", "yeah", "approve");
+acSniff("ok", "ok", "approve");
+acSniff("okay", "okay", "approve");
+acSniff("sure", "sure", "approve");
+acSniff("approve", "approve", "approve");
+acSniff("approve it", "approve it", "approve");
+acSniff("approve and send", "approve and send", "approve");
+acSniff("send it", "send it", "approve");
+acSniff("go ahead", "go ahead", "approve");
+acSniff("do it", "do it", "approve");
+acSniff("looks good", "looks good", "approve");
+acSniff("lgtm", "lgtm", "approve");
+acSniff("thumbs up emoji", "👍", "approve");
+acSniff("check emoji", "✅", "approve");
+
+// cancel variants — this is the bug we're fixing
+acSniff("plain no", "no", "cancel");
+acSniff("nope", "nope", "cancel");
+acSniff("nah", "nah", "cancel");
+acSniff("nvm", "nvm", "cancel");
+acSniff("nevermind", "nevermind", "cancel");
+acSniff("never mind", "never mind", "cancel");
+acSniff("cancel", "cancel", "cancel");
+acSniff("cancel that", "cancel that", "cancel");
+acSniff("nvm cancel that", "nvm cancel that", "cancel"); // the failing case
+acSniff("scrap", "scrap", "cancel");
+acSniff("scrap that", "scrap that", "cancel");
+acSniff("don't send", "don't send", "cancel");
+acSniff("dont send it", "dont send it", "cancel");
+acSniff("stop", "stop", "cancel");
+acSniff("abort", "abort", "cancel");
+acSniff("x emoji", "❌", "cancel");
+
+// NOT approve/cancel — must fall through to LLM
+acSniff("empty", "", null);
+acSniff("blank with spaces", "   ", null);
+acSniff("long sentence", "yes i think we should probably order more coffee tomorrow if that's okay", null);
+acSniff("has digits", "order 5 more", null);
+acSniff("has digits — yes 5", "yes 5", null);
+// "no wait, yes" — negation wins (safer: cancel + user can retype).
+acSniff("mixed signal (negation wins)", "no wait, yes", "cancel");
+acSniff("neutral question", "how many left?", null);
+acSniff("random word", "hello", null);
+
 // ── Report ─────────────────────────────────────────────────────────
 
 console.log(

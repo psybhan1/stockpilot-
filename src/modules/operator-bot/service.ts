@@ -230,6 +230,92 @@ export async function handleInboundManagerBotMessage(
 
     const pendingContext = extractPendingContext(recentReceipts[0]?.metadata);
 
+    // ── Pre-LLM deterministic approve/cancel sniffer ───────────────────────
+    // "nvm", "yes", "cancel that", "looks good" etc. must ACTUALLY fire
+    // the cancel/approve tool — Llama-4-Scout sometimes replies
+    // "Cancelled." without calling the tool, leaving the PO alive in the
+    // DB. Route these around the LLM entirely when there's a pending PO.
+    {
+      const { sniffApproveOrCancel } = await import(
+        "@/modules/operator-bot/order-sniffer"
+      );
+      const decision = sniffApproveOrCancel(input.text);
+      if (decision) {
+        const pendingPo = await db.purchaseOrder.findFirst({
+          where: {
+            locationId: managerContext.locationId,
+            status: {
+              in: [
+                PurchaseOrderStatus.AWAITING_APPROVAL,
+                PurchaseOrderStatus.DRAFT,
+                ...(decision === "cancel" ? [PurchaseOrderStatus.APPROVED] : []),
+              ],
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, orderNumber: true, supplier: { select: { name: true } } },
+        });
+        if (pendingPo) {
+          const { executeTool } = await import("@/modules/operator-bot/agent");
+          const toolName =
+            decision === "approve" ? "approve_recent_order" : "cancel_recent_order";
+          const result = await executeTool(
+            toolName,
+            {},
+            {
+              locationId: managerContext.locationId,
+              userId: managerContext.userId,
+              channel: input.channel,
+              senderId: input.senderId,
+              sourceMessageId: input.sourceMessageId ?? null,
+              conversation: [],
+            }
+          );
+          const reply = result.finalReply || result.content;
+          await db.auditLog.create({
+            data: {
+              locationId: managerContext.locationId,
+              userId: managerContext.userId,
+              action: `bot.sniffer_${decision}`,
+              entityType: "botChannel",
+              entityId:
+                input.sourceMessageId ?? `${input.channel.toLowerCase()}-message`,
+              details: {
+                channel: input.channel,
+                purchaseOrderId: pendingPo.id,
+                orderNumber: pendingPo.orderNumber,
+                userText: input.text.slice(0, 200),
+              },
+            },
+          });
+          await completeBotMessageReceipt({
+            receiptId,
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            reply,
+            purchaseOrderId: result.purchaseOrderId ?? pendingPo.id,
+            orderNumber: pendingPo.orderNumber,
+            metadata: toInputJsonValue({
+              channel: input.channel,
+              replyScenario: `sniffer_${decision}`,
+              sourceMessageId: input.sourceMessageId ?? null,
+              senderId: input.senderId,
+              replyProvider: "deterministic-sniffer",
+            }),
+          });
+          return {
+            ok: true,
+            reply,
+            replyScenario: `sniffer_${decision}`,
+            purchaseOrderId: pendingPo.id,
+            orderNumber: pendingPo.orderNumber,
+          };
+        }
+        // No pending PO → let the LLM explain (or the user's saying
+        // "yes" about something else entirely).
+      }
+    }
+
     // ── Pre-LLM deterministic sniffer ─────────────────────────────────────────
     // Unambiguous order intents ("add 5 jp wisers from lcbo", "order this
     // https://...") bypass the model entirely. The model sometimes refuses

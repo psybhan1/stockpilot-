@@ -406,3 +406,61 @@ export async function sniffOrderIntent(text: string): Promise<SniffResult> {
 function looksLikeOrderIntent(text: string): boolean {
   return /\b(add|order|buy|get|we\s+need|put|please\s+order)\b/i.test(text);
 }
+
+/**
+ * Deterministic approve/cancel sniffer. Llama-4-Scout sometimes replies
+ * "Cancelled." or "Approved." without actually calling the cancel/
+ * approve tool — a classic small-model failure mode. So when the
+ * user's whole message is clearly a yes-or-no to a pending PO, we
+ * route around the LLM entirely and call the tool ourselves.
+ *
+ * Returns null when the message isn't a clean approve/cancel signal
+ * (too long, mentions digits, or doesn't contain one of the trigger
+ * words) — those cases fall through to the LLM as normal.
+ */
+export function sniffApproveOrCancel(text: string): "approve" | "cancel" | null {
+  const raw = (text ?? "").trim().toLowerCase();
+  if (raw.length === 0 || raw.length > 40) return null;
+  // If the message has digits it's probably a new order ("order 5…"),
+  // not a yes/no to an existing one.
+  if (/\d/.test(raw)) return null;
+
+  // Emoji signals first — they don't live inside \b word boundaries
+  // and trying to regex them is messier than a direct contains check.
+  const hasApproveEmoji = /[👍✅✔✓🆗]/u.test(raw);
+  const hasCancelEmoji = /[❌✖✗🚫🛑]/u.test(raw);
+
+  // Normalise text for word-boundary regex: strip punctuation (incl.
+  // apostrophe → collapse so "don't" becomes "dont"), collapse spaces.
+  const stripped = raw
+    .replace(/['`]/g, "") // apostrophe → nothing (keeps "dont" one token)
+    .replace(/[.,!?;:"—–-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Cancel patterns.
+  const CANCEL_WORDS =
+    /\b(cancel|nvm|never\s*mind|scrap(?:\s*that)?|dont\s*send(?:\s*it)?|stop|abort|nope|nah|no(?:pe)?)\b/i;
+  const APPROVE_WORDS =
+    /\b(approve(?:\s*(?:it|and\s*send))?|send\s*it|go\s*ahead|do\s*it|looks\s*good|lgtm|sure|yes|yep|yup|yeah|ok(?:ay)?)\b/i;
+
+  // Negation markers — if any appear, the whole message is a
+  // cancel regardless of what "approve" words sit inside it.
+  // "dont send it" contains "send it" (approve-ish), but the "dont"
+  // flips it; same for "no go ahead" → still a no.
+  const NEGATION = /\b(dont|do\s*not|no|not|nope|nah|nvm|never\s*mind|cancel|scrap|stop|abort)\b/i;
+  const hasNegation = NEGATION.test(stripped);
+
+  const hasCancel = hasCancelEmoji || CANCEL_WORDS.test(stripped) || hasNegation;
+  const hasApprove = hasApproveEmoji || APPROVE_WORDS.test(stripped);
+
+  // Negation wins over any approve hit inside the same short message.
+  // Genuine ambiguity ("no wait yes") is handled below: hasNegation
+  // is true AND the approve word is after a clause break. We keep
+  // the simpler rule here — "no wait, yes" in practice is rare and
+  // the user can just retype.
+  if (hasNegation) return "cancel";
+  if (hasCancel) return "cancel";
+  if (hasApprove) return "approve";
+  return null;
+}
