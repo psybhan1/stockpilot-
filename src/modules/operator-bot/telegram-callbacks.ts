@@ -28,6 +28,111 @@ export type CallbackResult = {
   ok: boolean;
 };
 
+/**
+ * Authorization for Telegram callbacks. The Telegram `chat_id`
+ * (senderId) must be paired to a User that has a role at the
+ * location owning this PO. Otherwise: reject.
+ *
+ * Without this check, any paired Telegram account could approve /
+ * cancel / mark-delivered any PO in the whole system by guessing
+ * or learning a PO id — callback payloads are public strings.
+ *
+ * Returns { ok: true, locationId, userId } on success, or a
+ * CallbackResult to return directly on failure.
+ */
+async function authorizeCallback(
+  purchaseOrderId: string,
+  ctx: { chatId: string; senderId?: string; userId?: string | null }
+): Promise<
+  | { ok: true; locationId: string; userId: string | null; orderNumber: string }
+  | { ok: false; result: CallbackResult }
+> {
+  if (!purchaseOrderId) {
+    return {
+      ok: false,
+      result: { ok: false, toast: "Missing order id", editText: "" },
+    };
+  }
+
+  const po = await db.purchaseOrder.findUnique({
+    where: { id: purchaseOrderId },
+    select: { id: true, locationId: true, orderNumber: true },
+  });
+
+  if (!po) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        toast: "Order not found",
+        editText: "❌ That order is no longer available.",
+        editKeyboard: null,
+      },
+    };
+  }
+
+  // Sender must be (a) a User with telegramChatId matching, AND
+  // (b) have a role at the PO's location. Either-or isn't enough:
+  // a user paired at location A must not be able to act on location B.
+  const chatIdCandidate = ctx.chatId || ctx.senderId || "";
+  if (!chatIdCandidate) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        toast: "Not authorized",
+        editText: "🔒 This chat isn't linked to StockPilot.",
+        editKeyboard: null,
+      },
+    };
+  }
+
+  const authorizedUser = await db.user.findFirst({
+    where: {
+      telegramChatId: chatIdCandidate,
+      roles: { some: { locationId: po.locationId } },
+    },
+    select: { id: true },
+  });
+
+  if (!authorizedUser) {
+    // Audit the attempt so operators can see if this is abuse.
+    await db.auditLog
+      .create({
+        data: {
+          locationId: po.locationId,
+          action: "bot.callback_unauthorized",
+          entityType: "purchaseOrder",
+          entityId: po.id,
+          details: {
+            chatId: chatIdCandidate,
+            senderId: ctx.senderId ?? null,
+            orderNumber: po.orderNumber,
+          },
+        },
+      })
+      .catch(() => null);
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        toast: "Not your order",
+        editText:
+          "🔒 This Telegram account isn't linked to the location that owns this order. " +
+          "Ask the location's manager to link you first.",
+        editKeyboard: null,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    locationId: po.locationId,
+    userId: ctx.userId ?? authorizedUser.id,
+    orderNumber: po.orderNumber,
+  };
+}
+
 export async function handleTelegramCallback(
   data: string,
   ctx: { chatId: string; senderId: string; userId?: string | null }
@@ -90,15 +195,14 @@ export async function handleTelegramCallback(
 
 async function approvePurchaseOrderFromBot(
   purchaseOrderId: string,
-  ctx: { chatId: string; userId?: string | null }
+  ctx: { chatId: string; senderId?: string; userId?: string | null }
 ): Promise<CallbackResult> {
-  if (!purchaseOrderId) {
-    return { ok: false, toast: "Missing order id", editText: "" };
-  }
+  const auth = await authorizeCallback(purchaseOrderId, ctx);
+  if (!auth.ok) return auth.result;
 
   const result = await approveAndDispatchPurchaseOrder({
     purchaseOrderId,
-    userId: ctx.userId ?? null,
+    userId: auth.userId,
   });
 
   if (result.status === PurchaseOrderStatus.SENT) {
@@ -204,11 +308,10 @@ async function retryPurchaseOrderFromBot(
 
 async function cancelPurchaseOrderFromBot(
   purchaseOrderId: string,
-  ctx: { chatId: string; userId?: string | null }
+  ctx: { chatId: string; senderId?: string; userId?: string | null }
 ): Promise<CallbackResult> {
-  if (!purchaseOrderId) {
-    return { ok: false, toast: "Missing order id", editText: "" };
-  }
+  const auth = await authorizeCallback(purchaseOrderId, ctx);
+  if (!auth.ok) return auth.result;
 
   const po = await db.purchaseOrder.findUnique({
     where: { id: purchaseOrderId },
@@ -255,7 +358,7 @@ async function cancelPurchaseOrderFromBot(
     });
     await createAuditLogTx(tx, {
       locationId: po.locationId,
-      userId: ctx.userId ?? null,
+      userId: auth.userId,
       action: "purchase_order.cancelled_via_bot",
       entityType: "purchaseOrder",
       entityId: po.id,
@@ -278,18 +381,17 @@ async function cancelPurchaseOrderFromBot(
 
 async function rescuePurchaseOrderFromBot(
   failedPurchaseOrderId: string,
-  ctx: { chatId: string; userId?: string | null }
+  ctx: { chatId: string; senderId?: string; userId?: string | null }
 ): Promise<CallbackResult> {
-  if (!failedPurchaseOrderId) {
-    return { ok: false, toast: "Missing order id", editText: "" };
-  }
+  const auth = await authorizeCallback(failedPurchaseOrderId, ctx);
+  if (!auth.ok) return auth.result;
 
   const { createRescuePurchaseOrder } = await import(
     "@/modules/purchasing/rescue"
   );
   const result = await createRescuePurchaseOrder(
     failedPurchaseOrderId,
-    ctx.userId ?? null
+    auth.userId
   );
 
   if (!result.ok) {
@@ -344,9 +446,10 @@ async function rescuePurchaseOrderFromBot(
 
 async function markDeliveredFromBot(
   poId: string,
-  _ctx: { chatId: string; userId?: string | null }
+  ctx: { chatId: string; senderId?: string; userId?: string | null }
 ): Promise<CallbackResult> {
-  if (!poId) return { ok: false, toast: "Missing order id", editText: "" };
+  const auth = await authorizeCallback(poId, ctx);
+  if (!auth.ok) return auth.result;
   const po = await db.purchaseOrder.findUnique({
     where: { id: poId },
     select: { id: true, orderNumber: true, status: true, supplier: { select: { name: true } } },
@@ -371,9 +474,10 @@ async function markDeliveredFromBot(
 
 async function snoozeDeliveryFromBot(
   poId: string,
-  _ctx: { chatId: string; userId?: string | null }
+  ctx: { chatId: string; senderId?: string; userId?: string | null }
 ): Promise<CallbackResult> {
-  if (!poId) return { ok: false, toast: "Missing order id", editText: "" };
+  const auth = await authorizeCallback(poId, ctx);
+  if (!auth.ok) return auth.result;
   const po = await db.purchaseOrder.findUnique({
     where: { id: poId },
     select: { id: true, orderNumber: true, metadata: true },
@@ -399,9 +503,19 @@ async function snoozeDeliveryFromBot(
 
 async function websiteCartApproveFromBot(
   agentTaskId: string,
-  _ctx: { chatId: string; userId?: string | null }
+  ctx: { chatId: string; senderId?: string; userId?: string | null }
 ): Promise<CallbackResult> {
   if (!agentTaskId) return { ok: false, toast: "Missing task", editText: "" };
+  // Resolve the PO through the task so we can authorize by location.
+  const taskPo = await db.agentTask.findUnique({
+    where: { id: agentTaskId },
+    select: { purchaseOrderId: true },
+  });
+  if (!taskPo?.purchaseOrderId) {
+    return { ok: false, toast: "Not found", editText: "Task not found." };
+  }
+  const auth = await authorizeCallback(taskPo.purchaseOrderId, ctx);
+  if (!auth.ok) return auth.result;
   const task = await db.agentTask.findUnique({
     where: { id: agentTaskId },
     // Pull the line items so we can rebuild the cart links — without
@@ -498,9 +612,18 @@ async function websiteCartApproveFromBot(
 
 async function websiteCartCancelFromBot(
   agentTaskId: string,
-  _ctx: { chatId: string; userId?: string | null }
+  ctx: { chatId: string; senderId?: string; userId?: string | null }
 ): Promise<CallbackResult> {
   if (!agentTaskId) return { ok: false, toast: "Missing task", editText: "" };
+  const taskPo = await db.agentTask.findUnique({
+    where: { id: agentTaskId },
+    select: { purchaseOrderId: true },
+  });
+  if (!taskPo?.purchaseOrderId) {
+    return { ok: false, toast: "Not found", editText: "Task not found." };
+  }
+  const auth = await authorizeCallback(taskPo.purchaseOrderId, ctx);
+  if (!auth.ok) return auth.result;
   const task = await db.agentTask.findUnique({
     where: { id: agentTaskId },
     select: {

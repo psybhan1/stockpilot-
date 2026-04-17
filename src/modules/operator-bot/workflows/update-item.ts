@@ -112,6 +112,33 @@ async function applyUpdate(
   const itemId = data.inventoryItemId!;
   const itemName = data.inventoryItemName!;
 
+  // Tenant guard: the itemId came out of the workflow state. If that
+  // state (or a malicious replayed message) referenced an item from a
+  // DIFFERENT location, we must not mutate it. Prisma's `update`
+  // takes a unique `where` so we can't include locationId there — so
+  // we pre-check ownership and bail if it fails.
+  const ownedItem = await db.inventoryItem.findFirst({
+    where: { id: itemId, locationId: context.locationId },
+    select: { id: true },
+  });
+  if (!ownedItem) {
+    await db.auditLog
+      .create({
+        data: {
+          locationId: context.locationId,
+          userId: context.userId,
+          action: "bot.update_item_unauthorized",
+          entityType: "inventoryItem",
+          entityId: itemId,
+          details: { attemptedField: field, itemName },
+        },
+      })
+      .catch(() => null);
+    return {
+      reply: `I couldn't find *${itemName}* at this location. Nothing was changed.`,
+    };
+  }
+
   switch (field) {
     case "par level": {
       const val = parseNumber(userMessage);
