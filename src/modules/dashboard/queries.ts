@@ -245,7 +245,7 @@ export async function getPosMappingDetail(locationId: string, mappingId: string)
 }
 
 export async function getSuppliersPageData(locationId: string) {
-  return db.supplier.findMany({
+  const suppliers = await db.supplier.findMany({
     where: { locationId },
     include: {
       supplierItems: { include: { inventoryItem: true } },
@@ -256,6 +256,16 @@ export async function getSuppliersPageData(locationId: string) {
     },
     orderBy: { name: "asc" },
   });
+  // Annotate with credential status — computed server-side so the
+  // list page can render a "Connected" / "Not connected" chip without
+  // each Link re-running the decrypt.
+  const { summariseStoredCredentials } = await import(
+    "@/modules/suppliers/website-credentials"
+  );
+  return suppliers.map((s) => ({
+    ...s,
+    credentialsState: summariseStoredCredentials(s.websiteCredentials),
+  }));
 }
 
 export async function getSupplierDetail(locationId: string, supplierId: string) {

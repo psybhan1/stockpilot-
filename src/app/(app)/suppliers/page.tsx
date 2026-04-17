@@ -100,6 +100,21 @@ export default async function SuppliersPage() {
                       ? "Email"
                       : "Manual"}
                   </span>
+                  {supplier.orderingMode === "WEBSITE" ? (
+                    supplier.credentialsState.kind === "cookies" ? (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                        ✓ Connected
+                      </span>
+                    ) : supplier.credentialsState.kind === "password" ? (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                        ✓ Login saved
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                        ⚠ Connect to auto-order
+                      </span>
+                    )
+                  ) : null}
                 </div>
                 <p className="mt-2 text-base font-bold uppercase tracking-[-0.02em]">
                   {supplier.name}

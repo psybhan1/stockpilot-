@@ -113,6 +113,26 @@ export async function runWebsiteOrderAgent(
     // Sink for live-view step events. Every adapter screenshot
     // fires this, writing an AgentTaskStep row so /agent-tasks/[id]
     // can render the timeline in real time.
+    //
+    // It ALSO sends throttled progress pings to Telegram at key
+    // milestones — the user was staring at 30-60s of silence between
+    // "Opening X" and "Cart ready." Now they see "✓ Signed in",
+    // "➕ Added 1/3: Oat Milk", "➕ Added 2/3: Paper Cups" as they
+    // happen. One ping per ~10s max so we don't spam.
+    let lastTelegramPingAt = 0;
+    const TELEGRAM_PING_MIN_GAP_MS = 8_000;
+    const pingTelegram = async (text: string) => {
+      const now = Date.now();
+      if (now - lastTelegramPingAt < TELEGRAM_PING_MIN_GAP_MS) return;
+      lastTelegramPingAt = now;
+      for (const m of managers) {
+        if (!m.telegramChatId) continue;
+        await sendTelegramMessage(m.telegramChatId, text, {
+          parseMode: "Markdown",
+        }).catch(() => {});
+      }
+    };
+
     const onStep = async (event: {
       name: string;
       status: "ok" | "failed";
@@ -120,6 +140,22 @@ export async function runWebsiteOrderAgent(
       notes?: string;
     }) => {
       await recordAgentStep(agentTaskId, event);
+
+      // Turn specific step names into user-friendly progress messages.
+      // We don't want to ping for every internal step (that would be
+      // 20+ messages) — just the milestones a manager cares about.
+      if (event.status !== "ok") return;
+      let msg: string | null = null;
+      if (/^(login|signed_in|cookies_applied)/i.test(event.name)) {
+        msg = `🔐 Signed in to *${po.supplier.name}*`;
+      } else if (/^added_to_cart/i.test(event.name) || /added/i.test(event.notes ?? "")) {
+        msg = event.notes
+          ? `➕ ${event.notes}`
+          : `➕ Added an item to cart`;
+      } else if (/^cart_review|^cart_ready/i.test(event.name)) {
+        msg = `🛒 Cart assembled — finalizing…`;
+      }
+      if (msg) await pingTelegram(msg);
     };
 
     // Build a manager-visible live-view URL that we include in the

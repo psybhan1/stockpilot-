@@ -1084,19 +1084,47 @@ function RemoteSigninPanel({
   return (
     <Card>
       <CardContent className="space-y-3 p-4">
-        {/* Honest upsell. The remote-browser path works but it's
-            finicky — keystrokes sometimes don't reach the iframe,
-            captchas block us, some sites refuse headless. The
-            extension tab is usually one click total. */}
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200">
-          <div className="font-semibold">Tip: the Extension tab is simpler.</div>
-          <div className="mt-1 leading-relaxed">
-            You sign in to {supplierName} in your own browser (where
-            you're probably already logged in) and tap the extension
-            once — done, no typing here. This tab is a fallback when
-            the extension isn't an option.
+        {/* Inline error banner — shows up when /interact fails mid-
+            session (server restarted, 404, network, etc.). Gives the
+            user ONE clear action instead of the old silent drop. */}
+        {errorMsg ? (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-50 p-3 text-sm dark:border-rose-700/50 dark:bg-rose-950/30">
+            <p className="font-medium text-rose-700 dark:text-rose-300">
+              {errorMsg}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  setErrorMsg(null);
+                  if (typeof window !== "undefined") {
+                    window.sessionStorage.removeItem(storageKey);
+                  }
+                  setSessionId(null);
+                  setStatus("idle");
+                }}
+                className="h-8 rounded-lg text-xs"
+              >
+                Start over
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setErrorMsg(null)}
+                className="h-8 rounded-lg text-xs"
+              >
+                Dismiss
+              </Button>
+            </div>
           </div>
-        </div>
+        ) : null}
+
+        {/* Extension-tip banner — desktop only. On phones the extension
+            isn't installable anyway; telling mobile users to "use the
+            extension" is worse than saying nothing. */}
+        <DesktopOnlyExtensionTip supplierName={supplierName} />
 
         {screenshot ? (
           <div className="relative overflow-hidden rounded-xl border border-border/60 bg-black">
@@ -1534,6 +1562,32 @@ const BOT_BLOCKED_HOSTS = [
   /instacart\./i,
 ];
 
+function DesktopOnlyExtensionTip({
+  supplierName,
+}: {
+  supplierName: string;
+}) {
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    if (typeof navigator !== "undefined") {
+      const mobile = /android|iphone|ipad|ipod|mobile/i.test(
+        navigator.userAgent
+      );
+      setIsDesktop(!mobile);
+    }
+  }, []);
+  if (!isDesktop) return null;
+  return (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200">
+      <div className="font-semibold">Tip: the Extension tab is faster on desktop.</div>
+      <div className="mt-1 leading-relaxed">
+        Sign in to {supplierName} in your own Chrome, tap the
+        StockPilot extension — done, no typing here.
+      </div>
+    </div>
+  );
+}
+
 function BotBlockedWarning({
   supplierName,
   supplierWebsite,
@@ -1541,20 +1595,44 @@ function BotBlockedWarning({
   supplierName: string;
   supplierWebsite: string | null;
 }) {
+  // Device-aware copy lives in state so SSR and the first client
+  // render agree (no hydration mismatch). `isPhone` starts false
+  // and flips true on mount if the UA looks mobile.
+  const [isPhone, setIsPhone] = useState(false);
+  useEffect(() => {
+    if (typeof navigator !== "undefined") {
+      setIsPhone(/android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent));
+    }
+  }, []);
+
   if (!supplierWebsite) return null;
   const blocked = BOT_BLOCKED_HOSTS.some((re) => re.test(supplierWebsite));
   if (!blocked) return null;
+
   return (
     <div className="rounded-xl border border-amber-400/40 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-100">
       <p className="font-medium">
-        {supplierName} uses captchas that block automated browsers.
+        Heads up: {supplierName} sometimes uses captchas.
       </p>
-      <p className="mt-1 text-xs">
-        You might still succeed here if the captcha happens to skip —
-        but the reliable path is the{" "}
-        <strong>Use browser extension</strong> tab at the top. It ships
-        the cookies from <em>your</em> real browser, so the captcha is
-        already solved before StockPilot ever touches the cart.
+      <p className="mt-1 text-xs leading-relaxed">
+        {isPhone ? (
+          <>
+            If a captcha shows up here, solve it normally — it lands in
+            the preview image, tap it, and type in the boxes below. If
+            the page looks stuck after solving, tap <strong>Start
+            over</strong> at the bottom and try again. Sometimes the
+            captcha skips on the second attempt.
+          </>
+        ) : (
+          <>
+            You might still succeed here if the captcha skips. If it
+            doesn&apos;t, the{" "}
+            <strong>Use browser extension</strong> tab (top of the
+            page) is more reliable on desktop — it ships cookies
+            straight from your own Chrome session so the captcha is
+            already solved.
+          </>
+        )}
       </p>
     </div>
   );
