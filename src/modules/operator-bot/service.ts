@@ -1859,7 +1859,9 @@ async function handleWebsiteOrderWithoutCredentials(input: {
     if (managers.length === 0) return;
 
     const appUrl = env.APP_URL?.replace(/\/$/, "") ?? "";
-    const settingsUrl = appUrl ? `${appUrl}/suppliers/${input.supplier.id}` : null;
+    // Deep-link straight to the sign-in wizard, not the supplier
+    // settings page — the wizard is a single-purpose flow.
+    const settingsUrl = appUrl ? `${appUrl}/suppliers/${input.supplier.id}/signin` : null;
     const keyboard: Array<
       Array<{ text: string; url: string } | { text: string; callback_data: string }>
     > = [];
