@@ -1881,11 +1881,28 @@ async function handleWebsiteOrderWithoutCredentials(input: {
   const { extractLineProductUrl } = await import(
     "@/modules/automation/browser-agent"
   );
-  const poLine = await db.purchaseOrderLine.findFirst({
+  const { buildDeepCartAddUrl } = await import(
+    "@/modules/automation/cart-links"
+  );
+
+  // Load ALL PO lines so the deep-link covers a multi-item cart, not
+  // just the first item.
+  const poLines = await db.purchaseOrderLine.findMany({
     where: { purchaseOrderId: input.purchaseOrderId },
-    select: { notes: true },
+    select: { description: true, quantityOrdered: true, notes: true },
   });
-  const productUrl = extractLineProductUrl(poLine?.notes) ?? input.supplier.website;
+
+  const deepLinkLines = poLines.map((l) => ({
+    description: l.description,
+    quantityOrdered: l.quantityOrdered,
+    productUrl: extractLineProductUrl(l.notes),
+  }));
+
+  const deepLink = buildDeepCartAddUrl({
+    supplierWebsite: input.supplier.website,
+    supplierName: input.supplier.name,
+    lines: deepLinkLines,
+  });
 
   await db.$transaction(async (tx) => {
     await tx.purchaseOrder.update({
@@ -1898,8 +1915,10 @@ async function handleWebsiteOrderWithoutCredentials(input: {
         purchaseOrderId: input.purchaseOrderId,
         channel: SupplierOrderingMode.WEBSITE,
         direction: CommunicationDirection.OUTBOUND,
-        subject: `PO ${input.orderNumber} handed off (no saved login)`,
-        body: "Sent the manager a direct product link + instructions to complete in their own browser.",
+        subject: `PO ${input.orderNumber} — deep-link handoff`,
+        body: deepLink
+          ? `One-tap cart URL sent: ${deepLink.url}`
+          : "Handed off to manager — no public cart-add URL for this supplier.",
         status: CommunicationStatus.SENT,
         sentAt: new Date(),
       },
@@ -1910,7 +1929,12 @@ async function handleWebsiteOrderWithoutCredentials(input: {
       action: "bot.website_order_handoff_no_credentials",
       entityType: "purchaseOrder",
       entityId: input.purchaseOrderId,
-      details: { supplierId: input.supplier.id, productUrl },
+      details: {
+        supplierId: input.supplier.id,
+        deepLinkUrl: deepLink?.url ?? null,
+        deepLinkKind: deepLink?.kind ?? null,
+        lineCount: poLines.length,
+      },
     });
   });
 
@@ -1929,41 +1953,58 @@ async function handleWebsiteOrderWithoutCredentials(input: {
     if (managers.length === 0) return;
 
     const appUrl = env.APP_URL?.replace(/\/$/, "") ?? "";
-    // Deep-link straight to the sign-in wizard, not the supplier
-    // settings page — the wizard is a single-purpose flow.
     const settingsUrl = appUrl ? `${appUrl}/suppliers/${input.supplier.id}/signin` : null;
     const keyboard: Array<
       Array<{ text: string; url: string } | { text: string; callback_data: string }>
     > = [];
 
-    // PRIMARY CTA: sign in once → bot does it for you forever.
-    // Top of the keyboard where taps land first.
+    // PRIMARY tap: the deep cart-add link. When `populates` the cart
+    // fills in their real session on tap; when `product_page` they at
+    // least land on the right page in one tap.
+    if (deepLink) {
+      keyboard.push([{ text: deepLink.label, url: deepLink.url }]);
+    }
+
+    // Secondary tap: sign in once → overnight orders go fully auto
+    // next time. Framed as an upgrade, not a blocker.
     if (settingsUrl) {
       keyboard.push([
         {
-          text: `🚀 Sign in to ${input.supplier.name} — next time it's one tap`,
+          text: `⚡ Sign in to ${input.supplier.name} (next time: auto)`,
           url: settingsUrl,
         },
       ]);
     }
-    // Secondary: complete manually THIS time. Product URL if we have
-    // it, else home page.
-    if (productUrl) {
-      keyboard.push([
-        {
-          text: `🛒 Or just open ${input.supplier.name} for this order`,
-          url: productUrl,
-        },
-      ]);
+
+    // Build a compact item summary: "3× Oat Milk · 2× Paper Cups".
+    const itemsSummary = poLines
+      .slice(0, 4)
+      .map((l) => `${l.quantityOrdered}× ${l.description}`)
+      .join(" · ");
+    const moreSuffix = poLines.length > 4 ? ` + ${poLines.length - 4} more` : "";
+
+    const bodyLines: string[] = [];
+    bodyLines.push(
+      `✅ *${input.orderNumber}* approved — ${itemsSummary}${moreSuffix} from *${input.supplier.name}*.`
+    );
+    if (deepLink?.kind === "populates") {
+      bodyLines.push("");
+      bodyLines.push(
+        `Tap *${deepLink.label}* below — it opens in the browser you're already signed into and fills the cart. Hit checkout and you're done.`
+      );
+    } else if (deepLink?.kind === "product_page") {
+      bodyLines.push("");
+      bodyLines.push(
+        `Tap below to open the item on *${input.supplier.name}* — add to cart + checkout in your browser.`
+      );
+    } else {
+      bodyLines.push("");
+      bodyLines.push(
+        `I don't have a product URL, so just open ${input.supplier.name} and add the items above.`
+      );
     }
 
-    const body =
-      `✅ *${input.orderNumber}* approved — ${input.quantity}× ${input.lineDescription} from *${input.supplier.name}*.\n\n` +
-      `Right now I can't put items directly in your cart because you haven't signed in to ${input.supplier.name} yet.\n\n` +
-      `*Do this once* → tap *Sign in* below, paste your login (takes 30 seconds, encrypted at rest) → every future ${input.supplier.name} order auto-populates YOUR real cart. No more clicking around.\n\n` +
-      (productUrl
-        ? `For this order: tap *Open ${input.supplier.name}* below → Add to Cart → checkout.`
-        : `For this order: open ${input.supplier.name} and add ${input.quantity}× ${input.lineDescription}.`);
+    const body = bodyLines.join("\n");
 
     for (const m of managers) {
       if (!m.telegramChatId) continue;

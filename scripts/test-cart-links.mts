@@ -505,6 +505,132 @@ await runScenario("lookupKnownSupplierWebsite handles common brands", async () =
   assert(lookupKnownSupplierWebsite("") === null, "empty → null");
 });
 
+// ── buildDeepCartAddUrl — one-tap multi-item cart fill ────────────
+const { buildDeepCartAddUrl } = await import(
+  "../src/modules/automation/cart-links.ts"
+);
+
+await runScenario("buildDeepCartAddUrl: Amazon single ASIN → populates URL", async () => {
+  const link = buildDeepCartAddUrl({
+    supplierWebsite: "https://www.amazon.com",
+    supplierName: "Amazon",
+    lines: [
+      {
+        description: "Urnex Cafiza Espresso Cleaning Tablets",
+        quantityOrdered: 3,
+        productUrl: "https://www.amazon.com/dp/B005YJZE2I",
+      },
+    ],
+  });
+  assert(link != null, "returns a link");
+  assert(link?.kind === "populates", "kind is 'populates'");
+  assert(/ASIN\.1=B005YJZE2I/.test(link?.url ?? ""), "ASIN in URL");
+  assert(/Quantity\.1=3/.test(link?.url ?? ""), "quantity in URL");
+  assert(/gp\/aws\/cart\/add\.html/.test(link?.url ?? ""), "add.html endpoint");
+  assert(/Add 3 to Amazon cart/i.test(link?.label ?? ""), "label includes qty");
+});
+
+await runScenario("buildDeepCartAddUrl: Amazon multi-item → merged URL", async () => {
+  const link = buildDeepCartAddUrl({
+    supplierWebsite: null,
+    supplierName: "Amazon",
+    lines: [
+      { description: "Tablets", quantityOrdered: 2, productUrl: "https://www.amazon.com/dp/B005YJZE2I" },
+      { description: "Cups", quantityOrdered: 5, productUrl: "https://www.amazon.com/gp/product/B08TESTAAA" },
+      { description: "Lids", quantityOrdered: 5, productUrl: "https://www.amazon.com/dp/B09TESTBBB" },
+    ],
+  });
+  assert(link != null, "returns a link");
+  assert(/ASIN\.1=B005YJZE2I&Quantity\.1=2/.test(link?.url ?? ""), "line 1 merged");
+  assert(/ASIN\.2=B08TESTAAA&Quantity\.2=5/.test(link?.url ?? ""), "line 2 merged");
+  assert(/ASIN\.3=B09TESTBBB&Quantity\.3=5/.test(link?.url ?? ""), "line 3 merged");
+  assert(/Add 3 items to Amazon cart/i.test(link?.label ?? ""), "label shows count");
+});
+
+await runScenario("buildDeepCartAddUrl: Amazon locale (amazon.ca) preserved", async () => {
+  const link = buildDeepCartAddUrl({
+    supplierWebsite: "https://www.amazon.ca",
+    supplierName: "Amazon",
+    lines: [
+      { description: "Item", quantityOrdered: 1, productUrl: "https://www.amazon.ca/dp/B0CATESTXY" },
+    ],
+  });
+  assert(link != null, "returns link");
+  assert(/amazon\.ca\/gp\/aws/.test(link?.url ?? ""), "stays on .ca");
+});
+
+await runScenario("buildDeepCartAddUrl: Amazon with no ASINs → storefront", async () => {
+  const link = buildDeepCartAddUrl({
+    supplierWebsite: "https://www.amazon.com",
+    supplierName: "Amazon",
+    lines: [
+      { description: "Mystery item", quantityOrdered: 1, productUrl: null },
+    ],
+  });
+  assert(link != null, "returns link");
+  assert(link?.kind === "product_page", "falls back to product_page");
+  assert(/amazon\.com/.test(link?.url ?? ""), "points at storefront");
+});
+
+await runScenario("buildDeepCartAddUrl: Walmart item-id extraction", async () => {
+  const link = buildDeepCartAddUrl({
+    supplierWebsite: "https://www.walmart.com",
+    supplierName: "Walmart",
+    lines: [
+      { description: "Oat Milk", quantityOrdered: 3, productUrl: "https://www.walmart.com/ip/Oat-Milk/5265" },
+      { description: "Coffee", quantityOrdered: 1, productUrl: "https://www.walmart.com/ip/Coffee-Whatever/4728" },
+    ],
+  });
+  assert(link != null, "returns link");
+  assert(link?.kind === "populates", "populates");
+  assert(/affil\.walmart\.com\/cart\/addToCart/.test(link?.url ?? ""), "affil URL");
+  assert(/items=5265_3,4728_1/.test(link?.url ?? ""), "items joined with qty");
+});
+
+await runScenario("buildDeepCartAddUrl: generic supplier with product URL → product_page", async () => {
+  const link = buildDeepCartAddUrl({
+    supplierWebsite: "https://www.lcbo.com",
+    supplierName: "LCBO",
+    lines: [
+      { description: "Wine", quantityOrdered: 6, productUrl: "https://www.lcbo.com/en/product/123" },
+    ],
+  });
+  assert(link != null, "returns link");
+  assert(link?.kind === "product_page", "product_page kind");
+  assert(/lcbo\.com/.test(link?.url ?? ""), "LCBO URL");
+});
+
+await runScenario("buildDeepCartAddUrl: generic supplier no URL → home", async () => {
+  const link = buildDeepCartAddUrl({
+    supplierWebsite: "https://example.com",
+    supplierName: "Example",
+    lines: [
+      { description: "Something", quantityOrdered: 1, productUrl: null },
+    ],
+  });
+  assert(link != null, "returns link");
+  assert(link?.url === "https://example.com", "opens home");
+  assert(link?.kind === "product_page", "product_page");
+});
+
+await runScenario("buildDeepCartAddUrl: empty lines → null", async () => {
+  const link = buildDeepCartAddUrl({
+    supplierWebsite: "https://www.amazon.com",
+    supplierName: "Amazon",
+    lines: [],
+  });
+  assert(link === null, "null for empty lines");
+});
+
+await runScenario("buildDeepCartAddUrl: no website + no URL on lines → null", async () => {
+  const link = buildDeepCartAddUrl({
+    supplierWebsite: null,
+    supplierName: "Mystery Supplier",
+    lines: [{ description: "Thing", quantityOrdered: 1, productUrl: null }],
+  });
+  assert(link === null, "null when nothing to link to");
+});
+
 // ── Summary ────────────────────────────────────────────────────────
 console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 console.log(`Passed: ${passed}`);

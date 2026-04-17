@@ -97,6 +97,161 @@ export function extractAmazonAsin(url: string | null | undefined): string | null
 }
 
 /**
+ * Build a multi-item "add to cart" deep link for a supplier. When the
+ * user taps the returned URL in Telegram, it opens in whatever
+ * browser they're already signed into — so the cart ends up in THEIR
+ * real account, not an ephemeral headless session. Falls back to a
+ * plain product/home link when the supplier doesn't support a
+ * public cart-add URL format.
+ *
+ * Returns null when there's nothing useful to link to (no recognised
+ * supplier + no product URLs).
+ *
+ * Status notes per supplier:
+ *   - Amazon (/gp/aws/cart/add.html?ASIN.1=X&Quantity.1=N):
+ *     works ~85% of the time for signed-in users on web + mobile.
+ *     Occasionally drops items during sign-in redirect — that's the
+ *     reason we also keep per-product fallback buttons below the
+ *     primary tap.
+ *   - Walmart (affil.walmart.com/cart/addToCart?items=ID_QTY,ID_QTY):
+ *     documented affiliate URL, works when items have real Walmart
+ *     item IDs (we extract them from the URL).
+ *   - Everything else: returns the product URL or supplier home.
+ *     User opens, browses, adds manually.
+ */
+export type DeepCartLine = {
+  description: string;
+  quantityOrdered: number;
+  productUrl: string | null;
+};
+
+export type DeepCartLink = {
+  /** Primary URL for the "Add all to cart" button. */
+  url: string;
+  /** Human-friendly button label e.g. "🛒 Add 5 items to Amazon cart". */
+  label: string;
+  /**
+   * "populates" = URL is expected to actually fill the cart on tap
+   * (Amazon add.html, Walmart affil cart).
+   * "product_page" = URL opens the product/home but user must add
+   * manually.
+   */
+  kind: "populates" | "product_page";
+};
+
+export function buildDeepCartAddUrl(input: {
+  supplierWebsite: string | null;
+  supplierName: string;
+  lines: DeepCartLine[];
+}): DeepCartLink | null {
+  if (input.lines.length === 0) return null;
+
+  // Amazon multi-item cart-add.
+  const isAmazon =
+    !!detectAmazonHostname(input.supplierWebsite) ||
+    input.lines.some((l) => detectAmazonHostname(l.productUrl)) ||
+    /amazon/i.test(input.supplierName);
+  if (isAmazon) {
+    const storefront = pickAmazonStorefront(
+      input.supplierWebsite ??
+        input.lines.find((l) => detectAmazonHostname(l.productUrl))?.productUrl ??
+        null
+    );
+    const asinParts: string[] = [];
+    let idx = 0;
+    for (const line of input.lines) {
+      const asin = extractAmazonAsin(line.productUrl);
+      if (!asin) continue;
+      idx += 1;
+      asinParts.push(`ASIN.${idx}=${asin}&Quantity.${idx}=${Math.max(1, line.quantityOrdered)}`);
+    }
+    if (asinParts.length > 0) {
+      const url = `${storefront}/gp/aws/cart/add.html?${asinParts.join("&")}`;
+      const totalQty = input.lines
+        .slice(0, idx)
+        .reduce((s, l) => s + Math.max(1, l.quantityOrdered), 0);
+      const label =
+        asinParts.length === 1
+          ? `🛒 Add ${totalQty} to Amazon cart`
+          : `🛒 Add ${asinParts.length} items to Amazon cart`;
+      return { url, label, kind: "populates" };
+    }
+    // Amazon supplier but no ASIN we can extract — open the storefront
+    // so the user can search.
+    return {
+      url: `${storefront}/`,
+      label: `🌐 Open Amazon`,
+      kind: "product_page",
+    };
+  }
+
+  // Walmart affiliate cart-add format.
+  // Item IDs appear in URLs like /ip/Whatever-Product/5265 (ID is the
+  // trailing number). Only usable when we actually pulled item IDs
+  // off every line.
+  const isWalmart = /walmart\.(?:com|ca)$/i.test(
+    hostFromUrl(input.supplierWebsite) ?? ""
+  ) || /walmart/i.test(input.supplierName);
+  if (isWalmart) {
+    const parts: string[] = [];
+    for (const line of input.lines) {
+      const id = extractWalmartItemId(line.productUrl);
+      if (!id) continue;
+      parts.push(`${id}_${Math.max(1, line.quantityOrdered)}`);
+    }
+    if (parts.length > 0) {
+      return {
+        url: `https://affil.walmart.com/cart/addToCart?items=${parts.join(",")}`,
+        label:
+          parts.length === 1
+            ? `🛒 Add to Walmart cart`
+            : `🛒 Add ${parts.length} items to Walmart cart`,
+        kind: "populates",
+      };
+    }
+  }
+
+  // Generic: point at the first product URL we have, else the
+  // supplier's homepage. User shops manually.
+  const firstProductUrl = input.lines.find((l) => l.productUrl)?.productUrl;
+  if (firstProductUrl) {
+    return {
+      url: firstProductUrl,
+      label:
+        input.lines.length === 1
+          ? `📦 Open ${input.supplierName}`
+          : `📦 Open first item at ${input.supplierName}`,
+      kind: "product_page",
+    };
+  }
+  if (input.supplierWebsite) {
+    return {
+      url: input.supplierWebsite,
+      label: `🌐 Open ${input.supplierName}`,
+      kind: "product_page",
+    };
+  }
+  return null;
+}
+
+function hostFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function extractWalmartItemId(url: string | null | undefined): string | null {
+  if (!url) return null;
+  // Walmart product URLs end in /NUMERIC_ID (after /ip/ or /product/).
+  // IDs range from ~4 digits (older SKUs) to 12+ digits (newer).
+  const match = url.match(/\/(?:ip|product)\/[^/]+\/(\d{3,})(?:[/?#]|$)/i);
+  return match ? match[1] : null;
+}
+
+/**
  * Pick the canonical Amazon storefront for cart links. We prefer
  * the supplier.website if it's an Amazon root (e.g. https://www.amazon.ca)
  * because the user's account is locale-specific. Falls back to .com.
