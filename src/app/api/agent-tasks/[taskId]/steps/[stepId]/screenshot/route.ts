@@ -27,6 +27,7 @@ export async function GET(
   const { taskId, stepId } = await params;
   const session = await requireSession(Role.STAFF);
 
+  // First find the step scoped to caller's location.
   const step = await db.agentTaskStep.findFirst({
     where: {
       id: stepId,
@@ -36,11 +37,37 @@ export async function GET(
     select: { screenshot: true },
   });
 
-  if (!step?.screenshot) {
-    return NextResponse.json(
-      { message: "Screenshot not found" },
-      { status: 404 }
-    );
+  if (!step) {
+    // Distinguish "doesn't exist at all" from "exists but wrong
+    // location" so we can audit cross-tenant enumeration attempts.
+    // Bulk-guessing task/step IDs to peek at other tenants' data
+    // would show up as a burst of audit rows from one userId.
+    const foreign = await db.agentTaskStep.findFirst({
+      where: { id: stepId, agentTaskId: taskId },
+      select: { agentTask: { select: { locationId: true } } },
+    });
+    if (foreign && foreign.agentTask.locationId !== session.locationId) {
+      await db.auditLog
+        .create({
+          data: {
+            locationId: session.locationId,
+            userId: session.userId,
+            action: "security.cross_tenant_screenshot_access_denied",
+            entityType: "agentTaskStep",
+            entityId: stepId,
+            details: {
+              attemptedTaskId: taskId,
+              targetLocationId: foreign.agentTask.locationId,
+            },
+          },
+        })
+        .catch(() => null);
+    }
+    return NextResponse.json({ message: "Screenshot not found" }, { status: 404 });
+  }
+
+  if (!step.screenshot) {
+    return NextResponse.json({ message: "Screenshot not found" }, { status: 404 });
   }
 
   // step.screenshot is Uint8Array from Prisma; Next supports Buffer

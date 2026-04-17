@@ -50,6 +50,25 @@ export function findUrl(text: string): string | null {
 }
 
 /**
+ * Find EVERY URL in a message. Deduplicates and normalises. Used for
+ * the bulk-paste case: "add these to my cart: <url1> <url2> <url3>".
+ */
+export function findAllUrls(text: string): string[] {
+  const regex = /\b(?:https?:\/\/|(?:www\.)|(?:amzn\.to|a\.co)\/)\S+/gi;
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const normalised = normalizeProductUrl(match[0]);
+    if (normalised && !seen.has(normalised)) {
+      urls.push(normalised);
+      seen.add(normalised);
+    }
+  }
+  return urls;
+}
+
+/**
  * Try to split a user message into separate order chunks sharing a
  * supplier clause. Real-world bug case:
  *
@@ -142,21 +161,24 @@ async function matchSingleOrder(
   // imperative text ("add three in the cart https://..."). Then
   // try to enrich the item name from the page's og:title.
   const url = findUrl(fullText);
-  // Try to extract quantity + item + supplier from text.
+  // Try to extract quantity + item + supplier from text. Item-name
+  // character class includes Unicode letters via \p{L} so "café",
+  // "résumé", "日本茶" survive without falling through to the LLM.
   const pattern = new RegExp(
     `^\\s*(?:${ORDER_VERBS}\\s+(?:some\\s+|a\\s+few\\s+)?)?` + // optional verb
       `(\\d+)\\s+` + // quantity
       `(?:${UNITS}\\s+(?:of\\s+)?)?` + // optional unit + optional "of"
-      `([A-Za-z0-9][\\w'\\s&-]+?)` + // item name
-      `(?:\\s+${SUPPLIER_PREP}\\s+([\\w'\\s-]+?)(?:\\s+(?:cart|website|shop|store))?)?` + // optional "from <supplier>"
+      `([\\p{L}\\p{N}][\\p{L}\\p{N}'\\s&-]+?)` + // item name (Unicode-aware)
+      `(?:\\s+${SUPPLIER_PREP}\\s+([\\p{L}\\p{N}'\\s-]+?)(?:\\s+(?:cart|website|shop|store))?)?` + // optional "from <supplier>"
       `\\s*[.!?]?\\s*$`,
-    "i"
+    "iu"
   );
   const m = fullText.match(pattern);
   if (!m) {
-    // If it's ONLY a URL + short imperative ("add this https://..."),
-    // treat as an order and derive the supplier from the URL.
-    if (url) {
+    // URL fallback: only fire when the message ALSO looks like an
+    // order. Without that gate, "check out this link https://..."
+    // would create a PO, which is terrible UX.
+    if (url && looksLikeOrderIntent(fullText)) {
       const supplier = hostnameToSupplierLabel(url);
       if (supplier) {
         // Quantity from free-text imperative: "add three in the cart",
@@ -248,18 +270,37 @@ function itemNameFromUrl(url: string): string | null {
  * Pull a quantity out of free-text imperatives like "add three in
  * the cart", "get me 5", "order 2 of these". Returns 1 if nothing
  * parseable — that's the sensible default for "add this".
+ *
+ * Carefully avoids false positives:
+ *   - Rejects digits glued to letters by hyphens or letters
+ *     ("7-Eleven", "B000FDL68W" ASIN, "M-2")
+ *   - Rejects digits inside URLs (skips the URL substring first)
+ *   - Accepts "a dozen" / "a couple of"
  */
 const WORD_DIGITS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
-  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, a: 1, an: 1,
+  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, dozen: 12,
+  thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+  eighteen: 18, nineteen: 19, twenty: 20, a: 1, an: 1,
 };
 function parseQuantityFromText(text: string): number {
-  const digit = text.match(/\b(\d{1,4})\b/);
+  // Strip URLs first — ASINs like B000FDL68W contain digits we
+  // don't want captured. Also strip anything URL-ish that dangled
+  // without http:// prefix.
+  const withoutUrls = text
+    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, " ")
+    .replace(/\S+\.(?:com|ca|net|org|io)\/\S*/gi, " ");
+
+  // Digit must be surrounded by whitespace/start/end — NOT by a
+  // letter or hyphen. Rejects "7-Eleven", "M-2", "Route66".
+  const digit = withoutUrls.match(/(?:^|[\s,.!?])(\d{1,4})(?=\s|$|[.,!?])/);
   if (digit) {
     const n = Number(digit[1]);
     if (n > 0 && n < 1000) return n;
   }
-  const word = text.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an)\b/i);
+  const word = withoutUrls.match(
+    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|dozen|a|an)\b/i
+  );
   if (word) {
     const n = WORD_DIGITS[word[1].toLowerCase()];
     if (n) return n;
@@ -293,7 +334,30 @@ export async function sniffOrderIntent(text: string): Promise<SniffResult> {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
-  // Multi-item case first: "add 5 X and 3 Y from LCBO"
+  // Bulk-URL case: "add these to my cart: <url1> <url2> <url3>".
+  // Each URL becomes its own order, each enriched independently.
+  const allUrls = findAllUrls(trimmed);
+  if (allUrls.length >= 2 && looksLikeOrderIntent(trimmed)) {
+    const orders: SniffedOrder[] = [];
+    for (const url of allUrls) {
+      const supplier = hostnameToSupplierLabel(url);
+      if (!supplier) continue;
+      let name = itemNameFromUrl(url);
+      if (!name || name.length < 4) {
+        const meta = await fetchProductMetadata(url, { timeoutMs: 5000 });
+        if (meta?.title && meta.title.length >= 3) name = meta.title;
+      }
+      orders.push({
+        itemName: name || `Item from ${supplier}`,
+        quantity: 1, // bulk paste: can't assign qty per URL, default 1
+        supplierName: supplier,
+        websiteUrl: url,
+      });
+    }
+    if (orders.length > 0) return { orders };
+  }
+
+  // Multi-item case: "add 5 X and 3 Y from LCBO"
   const split = splitMultipart(trimmed);
   if (split) {
     const orders: SniffedOrder[] = [];
@@ -310,4 +374,13 @@ export async function sniffOrderIntent(text: string): Promise<SniffResult> {
   if (single) return { orders: [single] };
 
   return null;
+}
+
+/**
+ * Is this message phrased like an order? Used as the gate for the
+ * bulk-URL case — we only want to fire it when the user clearly
+ * meant "add these items", not when they're just sharing links.
+ */
+function looksLikeOrderIntent(text: string): boolean {
+  return /\b(add|order|buy|get|we\s+need|put|please\s+order)\b/i.test(text);
 }

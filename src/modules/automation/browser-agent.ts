@@ -356,6 +356,52 @@ export async function runWebsiteOrderAgent(
         output: { error: errMsg } satisfies Prisma.InputJsonValue,
       },
     }).catch(() => {});
+
+    // Notify the manager on Telegram. Previously these errors went
+    // only to logs, so a Chrome-not-installed (or similar) failure
+    // left the user staring at "Hang tight, I'll send a screenshot"
+    // forever. Match a few common error shapes to give them actionable
+    // guidance instead of the raw exception.
+    try {
+      const task = await db.agentTask.findUnique({
+        where: { id: agentTaskId },
+        select: {
+          purchaseOrder: {
+            select: {
+              orderNumber: true,
+              supplier: { select: { name: true } },
+            },
+          },
+          location: { select: { id: true } },
+        },
+      });
+      const managers = await db.user.findMany({
+        where: {
+          telegramChatId: { not: null },
+          roles: task?.location
+            ? { some: { locationId: task.location.id } }
+            : undefined,
+        },
+        select: { telegramChatId: true },
+        take: 3,
+      });
+      const orderNum = task?.purchaseOrder?.orderNumber ?? "(unknown)";
+      const supplierName = task?.purchaseOrder?.supplier?.name ?? "the supplier";
+      const friendly = friendlyBrowserAgentError(errMsg);
+      const body =
+        `⚠️ *${orderNum}* — couldn't finish adding to *${supplierName}*'s cart.\n\n` +
+        `${friendly}\n\n` +
+        `The order is still marked as approved so you can retry, or open ${supplierName} and add it yourself.`;
+      for (const m of managers) {
+        if (!m.telegramChatId) continue;
+        await sendTelegramMessage(m.telegramChatId, body, { parseMode: "Markdown" }).catch(
+          () => null
+        );
+      }
+    } catch {
+      /* notification is best-effort */
+    }
+
     stop({ error: errMsg });
     return {
       ok: false,
@@ -387,6 +433,42 @@ function allResultsSuccessful(
   results: Array<{ added: boolean }>
 ): boolean {
   return results.length > 0 && results.every((r) => r.added);
+}
+
+/**
+ * Translate a browser-agent exception into a manager-facing message.
+ * Keeps common, known failure modes concise and actionable; unknown
+ * errors get truncated so we don't leak a full stack trace into
+ * Telegram. Exported for testing.
+ */
+export function friendlyBrowserAgentError(raw: string): string {
+  const msg = raw.slice(0, 300);
+  if (/chrome/i.test(msg) && /(not found|download|cache)/i.test(msg)) {
+    return (
+      "I couldn't launch Chrome to do the shopping. This is usually a Railway " +
+      "deploy issue — the next deploy will re-download Chrome. Hit /api/health/chrome " +
+      "to check."
+    );
+  }
+  if (/timed out|timeout/i.test(msg)) {
+    return "The supplier's site took too long to respond. Try again in a minute, or order manually this time.";
+  }
+  if (/net::ERR_|getaddrinfo|ENOTFOUND/i.test(msg)) {
+    return "I couldn't reach the supplier's site (network/DNS). The site might be down — try again shortly.";
+  }
+  if (/captcha|robot|bot/i.test(msg)) {
+    return (
+      "The supplier flagged the session as automated. Connect your login cookies at " +
+      "Settings → Suppliers → Website login and the agent will shop signed-in as you."
+    );
+  }
+  if (/Supplier has no website/i.test(msg)) {
+    return "This supplier isn't set up with a website URL. Add one in Settings → Suppliers.";
+  }
+  if (/No purchase order/i.test(msg)) {
+    return "I couldn't find the order linked to this task. It may have been cancelled.";
+  }
+  return `Technical error: ${msg}`;
 }
 
 /**

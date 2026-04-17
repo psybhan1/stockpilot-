@@ -170,12 +170,27 @@ export async function POST(request: Request) {
   if (!text && payload.message?.voice?.file_id) {
     const transcription = await transcribeVoiceMessage(payload.message.voice.file_id);
     if (transcription) {
-      text = transcription;
+      text = transcription.trim();
       isVoice = true;
     }
   }
 
-  if (!text || !chatId || !senderId) {
+  // Normalise: strip whitespace-only messages. Previously a voice
+  // message that transcribed to "   " slipped through and the user
+  // got no feedback at all. Now we tell them we couldn't hear.
+  if (text && text.length === 0) text = null;
+
+  if (!chatId || !senderId) {
+    return NextResponse.json({ ok: true, ignored: true });
+  }
+
+  if (!text) {
+    if (isVoice) {
+      await sendTelegramMessage(
+        String(chatId),
+        "I couldn't make out your voice message — try again, maybe a bit louder or closer to the mic."
+      );
+    }
     return NextResponse.json({ ok: true, ignored: true });
   }
 
