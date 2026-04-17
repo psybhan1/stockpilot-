@@ -504,30 +504,40 @@ model SupplierItem {
 }
 
 model PurchaseOrder {
-  id               String                @id @default(cuid())
-  locationId       String
-  supplierId       String
-  recommendationId String?               @unique
-  orderNumber      String                @unique
-  status           PurchaseOrderStatus
-  totalLines       Int                   @default(0)
-  notes            String?
-  approvalNotes    String?
-  placedById       String?
-  approvedById     String?
-  metadata         Json?
-  createdAt        DateTime              @default(now())
-  approvedAt       DateTime?
-  sentAt           DateTime?
-  deliveredAt      DateTime?
-  location         Location              @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  supplier         Supplier              @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  placedBy         User?                 @relation("PurchaseOrderPlacedBy", fields: [placedById], references: [id], onDelete: SetNull)
-  approvedBy       User?                 @relation("PurchaseOrderApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
-  recommendation   ReorderRecommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
-  lines            PurchaseOrderLine[]
-  communications   SupplierCommunication[]
-  agentTasks       AgentTask[]
+  id                   String                @id @default(cuid())
+  locationId           String
+  supplierId           String
+  recommendationId     String?               @unique
+  orderNumber          String                @unique
+  status               PurchaseOrderStatus
+  totalLines           Int                   @default(0)
+  notes                String?
+  approvalNotes        String?
+  placedById           String?
+  approvedById         String?
+  metadata             Json?
+  createdAt            DateTime              @default(now())
+  approvedAt           DateTime?
+  sentAt               DateTime?
+  deliveredAt          DateTime?
+  /// Scanned delivery-invoice image (stored as bytes so we don't need S3
+  /// for MVP; still encrypted-at-rest by Postgres). Deleted when the PO
+  /// is deleted. Kept small (<5MB) by the upload endpoint.
+  invoiceImage         Bytes?
+  invoiceContentType   String?
+  /// JSON payload from the invoice-OCR call: array of { lineId, quantity,
+  /// unitCostCents, rawText, confidence }. The user confirms/adjusts
+  /// these before they're written onto PurchaseOrderLine on delivery.
+  invoiceParsed        Json?
+  invoiceParsedAt      DateTime?
+  location             Location              @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  supplier             Supplier              @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  placedBy             User?                 @relation("PurchaseOrderPlacedBy", fields: [placedById], references: [id], onDelete: SetNull)
+  approvedBy           User?                 @relation("PurchaseOrderApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  recommendation       ReorderRecommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  lines                PurchaseOrderLine[]
+  communications       SupplierCommunication[]
+  agentTasks           AgentTask[]
 }
 
 model PurchaseOrderLine {
@@ -541,6 +551,11 @@ model PurchaseOrderLine {
   packSizeBase         Int
   notes                String?
   latestCostCents      Int?
+  /// What was actually received + paid, captured at delivery time from
+  /// the invoice (manually or via OCR). These feed the real COGS + the
+  /// price-history update on SupplierItem. Null before delivery.
+  actualQuantityBase   Int?
+  actualUnitCostCents  Int?
   purchaseOrder        PurchaseOrder   @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   inventoryItem        InventoryItem   @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
 }

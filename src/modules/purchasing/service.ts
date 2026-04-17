@@ -580,6 +580,15 @@ export async function deliverPurchaseOrder(input: {
   userId: string;
   notes?: string;
   lineReceipts?: Record<string, number>;
+  /**
+   * Per-line actual unit cost in cents, captured from the delivery
+   * invoice. When present, we (a) store it on the PurchaseOrderLine,
+   * (b) update SupplierItem.lastUnitCostCents so future reorder
+   * suggestions use the real recent price, (c) emit an audit entry
+   * if the price variance vs the PO estimate is significant. Lines
+   * not in this map keep their estimate.
+   */
+  actualUnitCostsCents?: Record<string, number>;
 }) {
   const purchaseOrder = await db.purchaseOrder.findUniqueOrThrow({
     where: { id: input.purchaseOrderId },
@@ -595,6 +604,14 @@ export async function deliverPurchaseOrder(input: {
   }
 
   const touchedInventoryItemIds = new Set<string>();
+  const varianceFindings: Array<{
+    lineId: string;
+    description: string;
+    expectedCents: number | null;
+    actualCents: number;
+    deltaPct: number;
+    severity: "watch" | "review";
+  }> = [];
 
   const updatedOrder = await db.$transaction(async (tx) => {
     for (const line of purchaseOrder.lines) {
@@ -607,38 +624,88 @@ export async function deliverPurchaseOrder(input: {
         line.packSizeBase
       );
 
-      if (receivedQuantityBase <= 0) {
+      const rawActualCost = input.actualUnitCostsCents?.[line.id];
+      const actualUnitCostCents =
+        typeof rawActualCost === "number" &&
+        Number.isFinite(rawActualCost) &&
+        rawActualCost >= 0
+          ? Math.round(rawActualCost)
+          : null;
+
+      if (receivedQuantityBase <= 0 && actualUnitCostCents == null) {
         continue;
       }
 
-      touchedInventoryItemIds.add(line.inventoryItemId);
+      if (receivedQuantityBase > 0) {
+        touchedInventoryItemIds.add(line.inventoryItemId);
 
-      await postStockMovementTx(tx, {
-        locationId: purchaseOrder.locationId,
-        inventoryItemId: line.inventoryItemId,
-        quantityDeltaBase: receivedQuantityBase,
-        movementType: "RECEIVING",
-        sourceType: "purchase_order",
-        sourceId: purchaseOrder.id,
-        notes: input.notes,
-        metadata: {
-          purchaseOrderLineId: line.id,
-          orderNumber: purchaseOrder.orderNumber,
-          quantityReceived: receivedPackCount,
-          purchaseUnit: line.purchaseUnit,
-        },
-        userId: input.userId,
-      });
+        await postStockMovementTx(tx, {
+          locationId: purchaseOrder.locationId,
+          inventoryItemId: line.inventoryItemId,
+          quantityDeltaBase: receivedQuantityBase,
+          movementType: "RECEIVING",
+          sourceType: "purchase_order",
+          sourceId: purchaseOrder.id,
+          notes: input.notes,
+          metadata: {
+            purchaseOrderLineId: line.id,
+            orderNumber: purchaseOrder.orderNumber,
+            quantityReceived: receivedPackCount,
+            purchaseUnit: line.purchaseUnit,
+            actualUnitCostCents,
+          },
+          userId: input.userId,
+        });
+      }
 
       await tx.purchaseOrderLine.update({
         where: { id: line.id },
         data: {
+          actualQuantityBase: receivedQuantityBase,
+          ...(actualUnitCostCents != null ? { actualUnitCostCents } : {}),
           notes: appendOperationalNote(
             line.notes,
-            `Received ${receivedPackCount} ${line.purchaseUnit.toLowerCase()} from ${purchaseOrder.orderNumber}.`
+            `Received ${receivedPackCount} ${line.purchaseUnit.toLowerCase()} from ${purchaseOrder.orderNumber}${
+              actualUnitCostCents != null
+                ? ` @ $${(actualUnitCostCents / 100).toFixed(2)}/${line.purchaseUnit.toLowerCase()}`
+                : ""
+            }.`
           ),
         },
       });
+
+      // Price history: when an actual cost landed, write it to the
+      // SupplierItem row so the reorder engine + cart builder use
+      // recent real pricing instead of whatever was on the last PO
+      // at creation time.
+      if (actualUnitCostCents != null) {
+        await tx.supplierItem
+          .updateMany({
+            where: {
+              supplierId: purchaseOrder.supplierId,
+              inventoryItemId: line.inventoryItemId,
+            },
+            data: { lastUnitCostCents: actualUnitCostCents },
+          })
+          .catch(() => null);
+      }
+
+      // Variance classification — capture for the audit log below.
+      if (actualUnitCostCents != null && line.latestCostCents != null && line.latestCostCents > 0) {
+        const deltaCents = actualUnitCostCents - line.latestCostCents;
+        const deltaPct = deltaCents / line.latestCostCents;
+        const absPct = Math.abs(deltaPct);
+        if (absPct >= 0.05) {
+          varianceFindings.push({
+            lineId: line.id,
+            description: line.description,
+            expectedCents: line.latestCostCents,
+            actualCents: actualUnitCostCents,
+            deltaPct,
+            severity: absPct >= 0.15 ? "review" : "watch",
+          });
+        }
+      }
     }
 
     await tx.agentTask.updateMany({
@@ -676,17 +743,42 @@ export async function deliverPurchaseOrder(input: {
       action: "purchaseOrder.delivered",
       entityType: "purchaseOrder",
       entityId: purchaseOrder.id,
+      details: {
+        orderNumber: purchaseOrder.orderNumber,
+        lineReceipts: purchaseOrder.lines.map((line) => ({
+          purchaseOrderLineId: line.id,
+          quantityReceived: normalizeReceivedPackCount(
+            input.lineReceipts?.[line.id],
+            line.quantityOrdered
+          ),
+          actualUnitCostCents:
+            input.actualUnitCostsCents?.[line.id] ?? null,
+        })),
+      },
+    });
+
+    // Surface price-variance findings as their own audit rows so
+    // dashboards / alerts can pick them up without parsing the
+    // delivery entry's details blob.
+    for (const finding of varianceFindings) {
+      await createAuditLogTx(tx, {
+        locationId: purchaseOrder.locationId,
+        userId: input.userId,
+        action:
+          finding.severity === "review"
+            ? "purchaseOrder.priceVariance.review"
+            : "purchaseOrder.priceVariance.watch",
+        entityType: "purchaseOrderLine",
+        entityId: finding.lineId,
         details: {
           orderNumber: purchaseOrder.orderNumber,
-          lineReceipts: purchaseOrder.lines.map((line) => ({
-            purchaseOrderLineId: line.id,
-            quantityReceived: normalizeReceivedPackCount(
-              input.lineReceipts?.[line.id],
-              line.quantityOrdered
-            ),
-          })),
+          description: finding.description,
+          expectedCents: finding.expectedCents,
+          actualCents: finding.actualCents,
+          deltaPct: Math.round(finding.deltaPct * 10000) / 10000,
         },
       });
+    }
 
     return nextOrder;
   });

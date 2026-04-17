@@ -6,9 +6,9 @@ import {
   acknowledgePurchaseOrderAction,
   cancelPurchaseOrderAction,
   dispatchAgentTaskAction,
-  deliverPurchaseOrderAction,
   markPurchaseOrderSentAction,
 } from "@/app/actions/operations";
+import { ReceivePanel } from "./receive-panel";
 import { StatusBadge } from "@/components/app/status-badge";
 import { SupplierConversation } from "@/components/app/supplier-conversation";
 import { Button } from "@/components/ui/button";
@@ -166,46 +166,20 @@ export default async function PurchaseOrderDetailPage({
           {canDeliver ? (
             <Panel
               title="Receive delivery"
-              description="Adjust received pack counts if the shipment differs from the order."
+              description="Scan the invoice or adjust received pack counts / actual costs by hand. Variance against the PO is flagged per line."
             >
-              <form action={deliverPurchaseOrderAction} className="space-y-4">
-                <input type="hidden" name="purchaseOrderId" value={purchaseOrder.id} />
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  {purchaseOrder.lines.map((line) => (
-                    <label
-                      key={line.id}
-                      className="notif-card p-4"
-                    >
-                      <span className="font-medium">{line.description}</span>
-                      <span className="mt-1 block text-sm text-muted-foreground">
-                        Ordered {line.quantityOrdered} {line.purchaseUnit.toLowerCase()}
-                      </span>
-                      <Input
-                        name={`received-${line.id}`}
-                        type="number"
-                        min={0}
-                        defaultValue={line.quantityOrdered}
-                        className="mt-3 h-11 rounded-2xl"
-                      />
-                    </label>
-                  ))}
-                </div>
-
-                <div>
-                  <p className="mb-2 text-sm font-medium">Receiving note</p>
-                  <Textarea
-                    name="notes"
-                    rows={3}
-                    placeholder="Optional receiving note for the audit trail"
-                    className="rounded-2xl"
-                  />
-                </div>
-
-                <Button type="submit" className="rounded-2xl">
-                  Mark delivered and receive stock
-                </Button>
-              </form>
+              <ReceivePanel
+                purchaseOrderId={purchaseOrder.id}
+                lines={purchaseOrder.lines.map((line) => ({
+                  id: line.id,
+                  description: line.description,
+                  quantityOrdered: line.quantityOrdered,
+                  purchaseUnit: line.purchaseUnit,
+                  packSizeBase: line.packSizeBase,
+                  expectedUnitCostCents: line.latestCostCents ?? null,
+                  itemName: line.inventoryItem.name,
+                }))}
+              />
             </Panel>
           ) : null}
 

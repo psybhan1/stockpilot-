@@ -672,11 +672,27 @@ export async function deliverPurchaseOrderAction(formData: FormData) {
     ])
   );
 
+  // Actual costs come from the `actualCost-<lineId>` fields on the
+  // ReceivePanel — they're dollar-denominated (so "12.45" → 1245
+  // cents). Absent / blank / non-numeric values are dropped so the
+  // PO line keeps its estimate.
+  const actualUnitCostsCents: Record<string, number> = {};
+  for (const line of purchaseOrder.lines) {
+    const raw = formData.get(`actualCost-${line.id}`);
+    if (typeof raw !== "string" || raw.trim() === "") continue;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) continue;
+    actualUnitCostsCents[line.id] = Math.round(parsed * 100);
+  }
+
   const deliveredOrder = await deliverPurchaseOrder({
     purchaseOrderId: purchaseOrder.id,
     userId: session.userId,
     notes,
     lineReceipts,
+    actualUnitCostsCents: Object.keys(actualUnitCostsCents).length > 0
+      ? actualUnitCostsCents
+      : undefined,
   });
 
   revalidatePurchaseOrderPaths(deliveredOrder.id, deliveredOrder.supplierId);
