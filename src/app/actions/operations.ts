@@ -102,7 +102,20 @@ export async function connectSquareAction() {
   if (result.requiresRedirect && result.authUrl) {
     redirect(result.authUrl);
   }
-  await runPendingJobs(10);
+  // Fire-and-forget the job drain. ensureSquareIntegration enqueues
+  // a SYNC_CATALOG job, and we want the click to return fast — a real
+  // café menu can take 30s+ to sync (each item hits the AI provider),
+  // which blows past Railway's HTTP timeout and returns 503 even
+  // though the job itself completes in the background. Decoupling
+  // the HTTP response from the sync makes "Reconnect Square" feel
+  // instant; the Jobs panel and the Square CONNECTED badge already
+  // show progress.
+  void runPendingJobs(10).catch((err) => {
+    console.error(
+      "[connectSquareAction] background job drain failed:",
+      err
+    );
+  });
   revalidateOperations();
 }
 
@@ -120,7 +133,13 @@ export async function syncSalesAction() {
 
 export async function runJobsAction() {
   await requireSession(Role.SUPERVISOR);
-  await runPendingJobs(25);
+  // Same reason as connectSquareAction: awaiting the full batch blows
+  // past Railway's HTTP timeout on any non-trivial queue. Drain in
+  // the background; the Jobs list re-renders and the user can see
+  // RUNNING → COMPLETED transitions.
+  void runPendingJobs(25).catch((err) => {
+    console.error("[runJobsAction] background job drain failed:", err);
+  });
   revalidateOperations();
 }
 
