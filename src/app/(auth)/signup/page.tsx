@@ -1,4 +1,4 @@
-import { BellRing, ClipboardCheck, ShoppingBasket } from "lucide-react";
+import { MessageCircle, Moon, DollarSign } from "lucide-react";
 
 import { GlassFilter } from "@/components/app/glass-filter";
 import { InkCanvas } from "@/components/app/ink-canvas";
@@ -7,21 +7,21 @@ import { PointerGloss } from "@/components/app/pointer-gloss";
 
 export const dynamic = "force-dynamic";
 
-const features = [
+const promises = [
   {
-    icon: ShoppingBasket,
-    label: "Auto-order",
-    note: "Bot drafts restocks, auto-sends email orders under your $ cap.",
+    icon: MessageCircle,
+    label: "Text the bot",
+    note: "\"we need milk\" → draft order in 2 seconds. On your phone.",
   },
   {
-    icon: ClipboardCheck,
-    label: "One-tap count",
-    note: "Swipe through uncertain items in under a minute a day.",
+    icon: Moon,
+    label: "Orders while you sleep",
+    note: "Set a $ cap — small email orders auto-send overnight.",
   },
   {
-    icon: BellRing,
-    label: "Supplier replies",
-    note: "Auto-classified, auto-rescued when out-of-stock.",
+    icon: DollarSign,
+    label: "Keep your profit",
+    note: "Catch shrinkage + price jumps before they eat your margin.",
   },
 ];
 
@@ -38,26 +38,26 @@ export default function SignupPage() {
         <section className="flex flex-col gap-8">
           <p className="font-mono text-[10px] font-medium uppercase tracking-[0.28em] text-muted-foreground">
             <span className="mr-2 inline-block h-px w-6 align-middle bg-current opacity-60" />
-            Get started
+            Free founder tier · no credit card
           </p>
 
           <h1 className="font-extrabold uppercase leading-[0.95] tracking-[-0.035em] text-[clamp(2.75rem,8vw,6rem)]">
-            Set up
+            Live in
             <br />
-            your café.
+            10 minutes.
           </h1>
 
           <p className="max-w-lg text-sm leading-relaxed text-muted-foreground sm:text-base">
-            Free while we&apos;re in founder preview — no credit card. You&apos;ll
-            have the bot drafting your first restock in under 10 minutes.
+            Competitors take 3–6 months and $200+/month. You&apos;ll have
+            the bot drafting your first order before lunch.
           </p>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            {features.map((f) => (
-              <div key={f.label} className="notif-card p-4">
-                <f.icon className="size-5" />
-                <p className="mt-3 text-sm font-semibold">{f.label}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{f.note}</p>
+            {promises.map((p) => (
+              <div key={p.label} className="notif-card p-4">
+                <p.icon className="size-5" />
+                <p className="mt-3 text-sm font-semibold">{p.label}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{p.note}</p>
               </div>
             ))}
           </div>

@@ -5,8 +5,6 @@ import {
   ClipboardCheck,
   MessageSquare,
   Package,
-  PackageOpen,
-  Receipt,
   ShoppingCart,
   TrendingDown,
   Zap,
@@ -190,140 +188,78 @@ export default async function TodayPage() {
         </h1>
       </section>
 
-      {/* ── What needs doing ──────────────────────────────────────── */}
+      {/* ── Today's ONE thing ─────────────────────────────────────── */}
       {allClear ? (
         <AllClearState firstItems={itemsTotal === 0} />
       ) : (
-        <section className="space-y-3">
-          <SectionLabel>What needs your attention</SectionLabel>
-          <div className="space-y-3">
-            {tasks.map((task) => (
-              <Link
-                key={task.kind}
-                href={task.href}
-                className={cn(
-                  "notif-card group flex items-start gap-4 p-5",
-                  task.tone === "urgent" && "notif-card-urgent"
-                )}
-              >
-                <div
-                  className={cn(
-                    "flex size-11 shrink-0 items-center justify-center rounded-2xl",
-                    task.tone === "urgent"
-                      ? "bg-[var(--destructive)]/10 text-[var(--destructive)]"
-                      : task.tone === "warn"
-                      ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                      : "bg-foreground/[0.06] text-foreground/80"
-                  )}
+        <section className="space-y-4">
+          {/* Hero card for the single highest-priority task. Big,
+              obvious, one tap away. Research directly driving this:
+              managers don't want a dashboard, they want to know
+              "what's the one thing I should do right now?" */}
+          <Link
+            href={tasks[0].href}
+            className={cn(
+              "notif-card group relative flex items-start gap-5 overflow-hidden p-6 sm:p-8",
+              tasks[0].tone === "urgent" && "notif-card-urgent"
+            )}
+          >
+            <div
+              className={cn(
+                "flex size-14 shrink-0 items-center justify-center rounded-2xl",
+                tasks[0].tone === "urgent"
+                  ? "bg-[var(--destructive)]/10 text-[var(--destructive)]"
+                  : tasks[0].tone === "warn"
+                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                    : "bg-foreground/[0.06] text-foreground/80"
+              )}
+            >
+              {(() => {
+                const Icon = tasks[0].icon;
+                return <Icon className="size-7" />;
+              })()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-mono font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                One thing today
+              </p>
+              <p className="mt-1 text-xl font-semibold leading-tight sm:text-2xl">
+                {tasks[0].title}
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">{tasks[0].hint}</p>
+            </div>
+            <div className="hidden shrink-0 items-center gap-1 rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-xs font-semibold text-foreground/80 group-hover:text-foreground sm:flex">
+              {tasks[0].cta}
+              <ArrowRight className="size-3.5" />
+            </div>
+          </Link>
+
+          {/* Remaining tasks compact — "also today" but visually
+              subordinated so nothing screams for attention at once. */}
+          {tasks.length > 1 && (
+            <div className="space-y-2">
+              <SectionLabel>Also today</SectionLabel>
+              {tasks.slice(1).map((task) => (
+                <Link
+                  key={task.kind}
+                  href={task.href}
+                  className="notif-card group flex items-center gap-3 px-4 py-3"
                 >
-                  <task.icon className="size-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-base font-semibold leading-tight">{task.title}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{task.hint}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-1 text-sm font-medium text-foreground/80 group-hover:text-foreground">
-                  {task.cta}
-                  <ArrowRight className="size-4" />
-                </div>
-              </Link>
-            ))}
-          </div>
+                  <task.icon className="size-4 shrink-0 text-muted-foreground" />
+                  <p className="min-w-0 flex-1 truncate text-sm">{task.title}</p>
+                  <ArrowRight className="size-3.5 shrink-0 text-muted-foreground group-hover:text-foreground" />
+                </Link>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
-      {/* ── Quick access ──────────────────────────────────────────── */}
-      <section className="space-y-3">
-        <SectionLabel>Jump to</SectionLabel>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Link href="/stock-count" className="notif-card group flex items-center gap-3 p-4">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-foreground/[0.06]">
-              <ClipboardCheck className="size-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">Count stock</p>
-              <p className="truncate text-xs text-muted-foreground">
-                Confirm what's actually on the shelf
-              </p>
-            </div>
-          </Link>
-          <Link href="/inventory" className="notif-card group flex items-center gap-3 p-4">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-foreground/[0.06]">
-              <PackageOpen className="size-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">Stock</p>
-              <p className="truncate text-xs text-muted-foreground">
-                {itemsTotal} item{itemsTotal === 1 ? "" : "s"} tracked
-              </p>
-            </div>
-          </Link>
-          <Link href="/purchase-orders" className="notif-card group flex items-center gap-3 p-4">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-foreground/[0.06]">
-              <Receipt className="size-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">Orders</p>
-              <p className="truncate text-xs text-muted-foreground">
-                {pendingCount > 0 ? `${pendingCount} waiting approval` : "All caught up"}
-              </p>
-            </div>
-          </Link>
-        </div>
-      </section>
-
-      {/* ── Supplier pulse (only when there's 30d activity) ──────── */}
-      {topSuppliers.length > 0 ? (
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <SectionLabel>Supplier pulse · last 30 days</SectionLabel>
-            <Link
-              href="/analytics"
-              className="text-xs font-medium text-muted-foreground hover:text-foreground"
-            >
-              See full analytics →
-            </Link>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {topSuppliers.map((s) => {
-              const pct = Math.round(s.confirmRate * 100);
-              const toneClass =
-                s.confirmRate >= 0.8
-                  ? "bg-emerald-500"
-                  : s.confirmRate >= 0.5
-                  ? "bg-amber-500"
-                  : "bg-red-500";
-              const replyLabel =
-                s.avgReplyHours == null
-                  ? "—"
-                  : s.avgReplyHours < 1
-                  ? `${Math.round(s.avgReplyHours * 60)}m reply`
-                  : `${s.avgReplyHours.toFixed(1)}h reply`;
-              return (
-                <div key={s.supplierId} className="notif-card p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{s.name}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {s.totalOrders} order{s.totalOrders === 1 ? "" : "s"} · {replyLabel}
-                      </p>
-                    </div>
-                    <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                      {pct}%
-                    </span>
-                  </div>
-                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
-                    <div className={"h-full rounded-full " + toneClass} style={{ width: `${pct}%` }} />
-                  </div>
-                  <p className="mt-2 text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
-                    {s.confirmed} confirmed · {s.declined} declined · {s.pending} pending
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
+      {/* Jump-to cards and Supplier-pulse section used to live here.
+          Both removed for the "one page, one question" rewrite — the
+          top nav already exposes Stock/Orders/Count, and supplier
+          pulse is analytics (lives at /analytics). Keeps the
+          dashboard honest: today's actions first, nothing else. */}
 
       {/* ── Watch list snapshot (only when you have data + things to watch) ── */}
       {data.inventory.length > 0 && criticalCount + lowCount > 0 && (
