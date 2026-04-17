@@ -26,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Save, X, Clipboard, Check } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -120,8 +121,9 @@ function ExtensionPanel({
         }
       })()
     : "the supplier's site";
+
   // Auto-link the extension session cookie on mount. Idempotent —
-  // calling again just refreshes the cookie's 30-day expiry.
+  // visiting this tab just refreshes the cookie's 30-day expiry.
   const [linkState, setLinkState] = useState<"pending" | "linked" | "failed">(
     "pending"
   );
@@ -140,14 +142,12 @@ function ExtensionPanel({
           setLinkState("linked");
           return;
         }
-        // Parse the server's error message when available —
-        // produces "Manager role required" instead of "HTTP 403".
         let message = `HTTP ${res.status}`;
         try {
           const body = (await res.json()) as { message?: string };
           if (body && typeof body.message === "string") message = body.message;
         } catch {
-          /* response wasn't JSON, keep fallback message */
+          /* not JSON */
         }
         setLinkError(message);
         setLinkState("failed");
@@ -161,19 +161,22 @@ function ExtensionPanel({
       cancelled = true;
     };
   }, []);
+
+  const browserKind = detectBrowser();
+  const extensionsUrl = browserKind === "edge" ? "edge://extensions" : "chrome://extensions";
+  const downloadHref = "/downloads/stockpilot-extension.zip";
+
   return (
     <Card>
       <CardContent className="space-y-5 p-5 text-sm">
         <div>
           <h3 className="mb-1 text-base font-semibold">
-            Sign in on {supplierName}'s real website, push to StockPilot in one
-            click.
+            Install once. Sign in on any supplier. One click to save.
           </h3>
           <p className="text-muted-foreground">
-            This is the simplest path for any site with bot detection (Amazon,
-            Costco, Walmart). You sign in normally on your own browser — no
-            streaming, no typing credentials into StockPilot. The extension
-            captures the session cookies your browser already has.
+            The fastest, most reliable way for sites with captchas (Amazon,
+            Costco, LCBO). You sign in on your normal browser tab — no
+            StockPilot form, no streamed browser, no password typing.
           </p>
         </div>
 
@@ -181,15 +184,15 @@ function ExtensionPanel({
           <div className="flex items-center gap-2 rounded-lg border border-emerald-600/30 bg-emerald-600/5 p-3 text-xs text-emerald-800 dark:text-emerald-200">
             <Check className="h-4 w-4 shrink-0" />
             <span>
-              This browser is linked to StockPilot. The extension can now
-              push cookies for any supplier on this account.
+              This browser is linked to StockPilot — every supplier on this
+              account can push cookies from the extension.
             </span>
           </div>
         ) : linkState === "failed" ? (
           <div className="rounded-lg border border-amber-600/30 bg-amber-600/5 p-3 text-xs text-amber-900 dark:text-amber-200">
-            Couldn't link this browser automatically ({linkError}). Reload
-            this page — if it keeps failing, the extension will still work
-            but you'll see a 401 error on first use.
+            Couldn't link this browser ({linkError}). Reload the page — if it
+            keeps failing, the extension will show "connect this browser" on
+            first use and guide you through it.
           </div>
         ) : (
           <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
@@ -197,58 +200,149 @@ function ExtensionPanel({
           </div>
         )}
 
-        <ol className="list-decimal space-y-3 pl-5">
-          <li>
-            <div className="font-medium">Install the StockPilot extension.</div>
-            <div className="text-muted-foreground">
-              Download{" "}
-              <a
-                href="/downloads/stockpilot-extension.zip"
-                className="underline"
-                download
-              >
-                stockpilot-extension.zip
-              </a>
-              , unzip it, then in Chrome go to{" "}
-              <code className="rounded bg-muted px-1">chrome://extensions</code>
-              , turn on <em>Developer mode</em>, click <em>Load unpacked</em>,
-              and pick the unzipped folder.
+        {/* Headline CTA — make download the most obvious next action. */}
+        <a href={downloadHref} download className="block">
+          <div className="flex items-center justify-between rounded-2xl border-2 border-primary/50 bg-primary/5 p-5 transition hover:border-primary hover:bg-primary/10">
+            <div>
+              <div className="text-base font-semibold text-foreground">
+                ⬇ Download the StockPilot extension
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                About 12 KB. Works on {browserKind === "edge" ? "Microsoft Edge" : browserKind === "firefox" ? "Firefox (developer mode)" : "Chrome, Brave, Arc, and other Chromium browsers"}.
+              </div>
             </div>
-          </li>
-          <li>
-            <div className="font-medium">
-              Open <code className="rounded bg-muted px-1">{supplierHost}</code>{" "}
-              in a regular tab and sign in.
-            </div>
-            <div className="text-muted-foreground">
-              Use your real account, including 2FA if the site asks for it.
-              Do this just like any other day.
-            </div>
-          </li>
-          <li>
-            <div className="font-medium">
-              Click the StockPilot extension icon in your toolbar.
-            </div>
-            <div className="text-muted-foreground">
-              On first run it'll ask for this StockPilot URL — paste it from
-              your address bar. Then pick <em>{supplierName}</em> from the
-              dropdown and press <strong>Push cookies to StockPilot</strong>.
-              That's it — come back here and refresh; the supplier will show
-              as connected.
-            </div>
-          </li>
-        </ol>
+            <span aria-hidden="true" className="text-2xl">→</span>
+          </div>
+        </a>
 
-        <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
-          <strong className="text-foreground">Safety note:</strong> cookies
-          are encrypted (AES-256-GCM) the moment they reach StockPilot and
-          only decrypted in the browser-agent process at order-dispatch time.
-          The extension only talks to the StockPilot URL you give it. Source
-          is in <code>browser-extension/</code> if you want to audit it.
+        {/* Numbered steps — visually distinct, not a wall of text. */}
+        <div className="grid gap-3 md:grid-cols-3">
+          <InstallStep
+            n={1}
+            title="Unzip"
+            body={
+              <>
+                Unzip <code className="rounded bg-muted px-1">stockpilot-extension.zip</code> anywhere (Desktop is fine). Keep the folder where it is — the extension reads from it.
+              </>
+            }
+          />
+          <InstallStep
+            n={2}
+            title="Load unpacked"
+            body={
+              <>
+                Open{" "}
+                <a
+                  href={extensionsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline"
+                >
+                  {extensionsUrl}
+                </a>{" "}
+                → toggle <em>Developer mode</em> (top right) → click{" "}
+                <em>Load unpacked</em> → pick the unzipped folder.
+                <CopyableCode value={extensionsUrl} />
+              </>
+            }
+          />
+          <InstallStep
+            n={3}
+            title="Use it"
+            body={
+              <>
+                Go to <code className="rounded bg-muted px-1">{supplierHost}</code>, sign in, click the StockPilot icon in your toolbar, pick <em>{supplierName}</em>, press <strong>Push cookies</strong>. Done.
+              </>
+            }
+          />
         </div>
+
+        {browserKind === "firefox" ? (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-900 dark:text-amber-200">
+            Firefox only runs unsigned extensions in Developer Edition /
+            Nightly. On regular Firefox you'll need to wait until we publish
+            to AMO (coming soon) or use Chrome / Edge / Brave instead.
+          </div>
+        ) : browserKind === "safari" ? (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-900 dark:text-amber-200">
+            Safari doesn't support the MV3 extension format without an Xcode
+            wrapper. Use Chrome or Brave for now — we're working on a Safari
+            build.
+          </div>
+        ) : null}
+
+        <details className="rounded-lg border border-border/60 bg-muted/20 p-3 text-xs">
+          <summary className="cursor-pointer font-medium text-foreground">
+            Is this safe? What does the extension read?
+          </summary>
+          <div className="mt-2 space-y-2 text-muted-foreground">
+            <p>
+              The extension only runs when you click the toolbar icon and
+              explicitly press "Push cookies". It reads cookies for the
+              supplier domain you're looking at — <em>only</em> on that
+              click. No background script, no polling, no access to your
+              browsing history or other tabs.
+            </p>
+            <p>
+              Cookies are encrypted (AES-256-GCM) the moment they reach
+              StockPilot and only decrypted in the browser-agent process at
+              order-dispatch time. Source is in{" "}
+              <code className="rounded bg-background px-1">
+                browser-extension/
+              </code>{" "}
+              in the app repo if you want to audit it.
+            </p>
+          </div>
+        </details>
       </CardContent>
     </Card>
   );
+}
+
+function InstallStep({ n, title, body }: { n: number; title: string; body: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-card p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+          {n}
+        </span>
+        <span className="font-medium">{title}</span>
+      </div>
+      <div className="text-xs text-muted-foreground leading-relaxed">{body}</div>
+    </div>
+  );
+}
+
+function CopyableCode({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1400);
+        } catch {
+          /* browser blocked clipboard — user can still read the URL */
+        }
+      }}
+      className="mt-2 inline-flex items-center gap-1 rounded-md border border-border/60 bg-background px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+    >
+      <Clipboard className="h-3 w-3" />
+      {copied ? "Copied" : "Copy URL"}
+    </button>
+  );
+}
+
+function detectBrowser(): "chrome" | "edge" | "firefox" | "safari" | "other" {
+  if (typeof navigator === "undefined") return "chrome";
+  const ua = navigator.userAgent.toLowerCase();
+  if (/edg\//.test(ua)) return "edge";
+  if (/firefox|fxios/.test(ua)) return "firefox";
+  if (/safari/.test(ua) && !/chrome|chromium|crios/.test(ua)) return "safari";
+  if (/chrome|chromium|crios|brave|opera|opr\/|arc/.test(ua)) return "chrome";
+  return "other";
 }
 
 // ── Remote sign-in (primary path) ──────────────────────────────────
@@ -316,33 +410,82 @@ function RemoteSigninPanel({
     };
   }, [sessionId, supplierId]);
 
-  // Global keyboard capture while the sign-in panel is active.
-  // Previously we had a separate <input> the user had to focus
-  // BEFORE typing — confusing because they'd naturally click on
-  // the email field in the screenshot and start typing, and get
-  // nothing. Now keystrokes on this page are captured globally
-  // and forwarded to Chrome. We skip keystrokes that originated
-  // from a real form element (our Cancel button's focus ring,
-  // etc.) so interacting with the rest of the page still works.
+  // Global keyboard + paste capture while the sign-in panel is
+  // active. Keystrokes are forwarded to the server's Chrome as
+  // `type` / `key` interactions. Pastes are intercepted via a
+  // dedicated `paste` event listener so clipboard text (often a
+  // password manager dump) hits the page as ONE type call instead
+  // of N char-by-char round-trips. We skip events originating from
+  // a real form element on OUR page (e.g. the cookie-paste tab's
+  // textarea) so our own forms still work.
   useEffect(() => {
     if (!sessionId || status !== "ready") return;
 
-    const handleKey = async (e: KeyboardEvent) => {
-      // If the user is typing into an actual form field on OUR
-      // page (e.g. the cookie-paste tab's textarea), let that go.
-      const target = e.target as HTMLElement | null;
-      if (target) {
-        const tag = target.tagName;
-        if (
-          tag === "INPUT" ||
-          tag === "TEXTAREA" ||
-          tag === "SELECT" ||
-          target.isContentEditable
-        ) {
-          return;
-        }
+    const targetIsOurFormField = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        el.isContentEditable
+      );
+    };
+
+    const sendType = async (text: string) => {
+      if (!text) return;
+      try {
+        await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: "type", text }),
+        });
+      } catch {
+        /* screenshot poll recovers */
       }
-      // Skip modifier-only presses.
+      setTimeout(fetchScreenshot, 250);
+    };
+
+    const sendKey = async (key: string) => {
+      try {
+        await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: "key", key }),
+        });
+      } catch {
+        /* screenshot poll recovers */
+      }
+      setTimeout(fetchScreenshot, 250);
+    };
+
+    const named = new Set([
+      "Enter",
+      "Tab",
+      "Backspace",
+      "Escape",
+      "ArrowLeft",
+      "ArrowRight",
+      "ArrowUp",
+      "ArrowDown",
+      "Delete",
+      "Home",
+      "End",
+    ]);
+
+    const handleKey = (e: KeyboardEvent) => {
+      if (targetIsOurFormField(e.target)) return;
+      // Let Ctrl/Cmd+V fall through to the paste handler — don't
+      // swallow it as a literal "v" keypress.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
+        return;
+      }
+      // Let copy/cut alone (nothing on our page to copy from, but
+      // don't interfere with the user's clipboard shortcuts).
+      if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C" || e.key === "x" || e.key === "X")) {
+        return;
+      }
       if (
         e.key === "Shift" ||
         e.key === "Control" ||
@@ -352,55 +495,79 @@ function RemoteSigninPanel({
       ) {
         return;
       }
-
-      const named = [
-        "Enter",
-        "Tab",
-        "Backspace",
-        "Escape",
-        "ArrowLeft",
-        "ArrowRight",
-        "ArrowUp",
-        "ArrowDown",
-        "Delete",
-        "Home",
-        "End",
-      ];
       e.preventDefault();
       e.stopPropagation();
-
-      try {
-        if (named.includes(e.key)) {
-          await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ kind: "key", key: e.key }),
-          });
-        } else if (e.key.length === 1) {
-          await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ kind: "type", text: e.key }),
-          });
-        } else {
-          // Unknown key — ignore.
-          return;
-        }
-      } catch {
-        // Network blip — screenshot poll will recover state.
+      if (named.has(e.key)) {
+        void sendKey(e.key);
+      } else if (e.key.length === 1) {
+        void sendType(e.key);
       }
-      // Refresh the screenshot quickly so the user sees their
-      // typing land instead of waiting for the 1.5s poll.
-      setTimeout(fetchScreenshot, 250);
+    };
+
+    const handlePaste = (e: ClipboardEvent) => {
+      if (targetIsOurFormField(e.target)) return;
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      if (!text) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void sendType(text);
     };
 
     window.addEventListener("keydown", handleKey);
+    window.addEventListener("paste", handlePaste);
     setKeyboardActive(true);
     return () => {
       window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("paste", handlePaste);
       setKeyboardActive(false);
     };
   }, [sessionId, status, supplierId, fetchScreenshot]);
+
+  /** Send an explicit chunk of text from the quick-entry panel. */
+  const sendTextChunk = useCallback(
+    async (text: string) => {
+      if (!sessionId || !text) return;
+      try {
+        await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: "type", text }),
+        });
+      } catch {
+        /* caller doesn't care — screenshot poll catches up */
+      }
+      setTimeout(fetchScreenshot, 250);
+    },
+    [sessionId, supplierId, fetchScreenshot]
+  );
+
+  const sendEnter = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "key", key: "Enter" }),
+      });
+    } catch {
+      /* ignore */
+    }
+    setTimeout(fetchScreenshot, 250);
+  }, [sessionId, supplierId, fetchScreenshot]);
+
+  const sendTab = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "key", key: "Tab" }),
+      });
+    } catch {
+      /* ignore */
+    }
+    setTimeout(fetchScreenshot, 250);
+  }, [sessionId, supplierId, fetchScreenshot]);
 
   const start = async () => {
     setStatus("starting");
@@ -622,22 +789,41 @@ function RemoteSigninPanel({
           </div>
         )}
 
-        {/* Keyboard-active indicator. Keystrokes are captured
-            globally on this page (see the useEffect with
-            window.keydown) — no input to focus. The indicator
-            tells the user it's working. */}
+        {/* Captcha-warning banner for sites where the remote
+            browser reliably gets blocked. The right answer for
+            those sites is the Extension tab, not more polish on
+            this flow. Honesty saves the user an hour of frustration. */}
+        <BotBlockedWarning supplierName={supplierName} supplierWebsite={supplierWebsite} />
+
+        {/* Keyboard-active indicator + quick-entry panel. Keystrokes
+            are captured globally (see the useEffect with window.
+            keydown + window.paste) — and these explicit inputs are
+            the reliable fallback for password managers and copy/
+            paste workflows that don't play nice with the image. */}
         <div
-          className={`flex items-center gap-2 rounded-xl border p-3 text-sm transition ${
+          className={`rounded-xl border p-3 text-sm transition ${
             keyboardActive
               ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
               : "border-border/60 bg-card text-muted-foreground"
           }`}
         >
-          <span className="inline-block size-2 rounded-full bg-current" />
-          {keyboardActive
-            ? `Keyboard is live. Click the email field above, type your email, tap the password field, type your password, then hit Enter or the Sign In button on the page.`
-            : "Keyboard not active yet — session still loading."}
+          <div className="flex items-center gap-2">
+            <span className="inline-block size-2 rounded-full bg-current" />
+            <span>
+              {keyboardActive
+                ? "Keyboard + paste are live. Click a field in the image, type or paste — it goes straight to the page."
+                : "Keyboard not active yet — session still loading."}
+            </span>
+          </div>
         </div>
+
+        {status === "ready" ? (
+          <QuickEntryPanel
+            onSendText={sendTextChunk}
+            onPressTab={sendTab}
+            onPressEnter={sendEnter}
+          />
+        ) : null}
 
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-muted-foreground">
@@ -796,4 +982,236 @@ function CookiePastePanel({
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+// ── Quick-entry panel + bot-blocked warning (RemoteSigninPanel helpers) ──
+
+/**
+ * A pair of dedicated inputs for getting text into the remote
+ * Chrome reliably. The image above does have global keyboard +
+ * paste capture, but those get swallowed on some hosts (password
+ * managers that autofill without focus, certain Chrome-for-Testing
+ * builds that drop events on hidden iframes, etc.) — this panel is
+ * the deterministic fallback.
+ *
+ * Two inputs because a single input would either expose the
+ * password (if not masked) or force the user to type twice (if
+ * masked, since browsers refuse autofill into type=password unless
+ * the form semantics match). Keeping them separate:
+ *   - "Type or paste" — plain text input; each keystroke is sent
+ *     immediately so the user sees their typing land in the image.
+ *   - "Password (hidden)" — masked input; paste your password, the
+ *     whole thing ships on Send. Value is wiped after send.
+ */
+function QuickEntryPanel({
+  onSendText,
+  onPressTab,
+  onPressEnter,
+}: {
+  onSendText: (text: string) => Promise<void>;
+  onPressTab: () => Promise<void>;
+  onPressEnter: () => Promise<void>;
+}) {
+  const [liveText, setLiveText] = useState("");
+  const [password, setPassword] = useState("");
+  const [pwSending, setPwSending] = useState(false);
+
+  const handleLiveKey = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Translate Enter here into an Enter key forwarded to the page
+    // (submit the form). Don't add a newline to the input.
+    if (e.key === "Enter") {
+      e.preventDefault();
+      await onPressEnter();
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      await onPressTab();
+    }
+  };
+
+  // The "type" input forwards each keystroke for live feedback —
+  // we debounce so a fast typer sends 1 call per 120ms with the
+  // accumulated delta instead of one per character.
+  const lastSentRef = useRef("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushLive = async (value: string) => {
+    const prev = lastSentRef.current;
+    if (value === prev) return;
+    if (value.startsWith(prev)) {
+      // Common case: user typed more characters.
+      const delta = value.slice(prev.length);
+      await onSendText(delta);
+    } else {
+      // Edit case — can't send "backspace N times" cleanly without
+      // knowing focus state. Simplest: user will click the field
+      // in the image and retype. Reset tracker to sync.
+    }
+    lastSentRef.current = value;
+  };
+  const handleLiveChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setLiveText(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => void flushLive(value), 120);
+  };
+  const clearLive = () => {
+    setLiveText("");
+    lastSentRef.current = "";
+  };
+
+  const sendPassword = async () => {
+    if (!password) return;
+    setPwSending(true);
+    try {
+      await onSendText(password);
+    } finally {
+      setPassword("");
+      setPwSending(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card p-3 text-sm">
+      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Paste directly into the page (reliable fallback)
+      </p>
+      <div className="grid gap-2 md:grid-cols-2">
+        <div>
+          <label
+            htmlFor="remote-quick-text"
+            className="block text-xs text-muted-foreground"
+          >
+            Type or paste (email, OTP, username)
+          </label>
+          <div className="mt-1 flex gap-1">
+            <Input
+              id="remote-quick-text"
+              type="text"
+              value={liveText}
+              onChange={handleLiveChange}
+              onKeyDown={handleLiveKey}
+              placeholder="Click a field in the image, then type here"
+              className="h-10 rounded-xl"
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={clearLive}
+              className="rounded-xl"
+            >
+              Clear
+            </Button>
+          </div>
+        </div>
+        <div>
+          <label
+            htmlFor="remote-quick-password"
+            className="block text-xs text-muted-foreground"
+          >
+            Password (hidden; value cleared after send)
+          </label>
+          <div className="mt-1 flex gap-1">
+            <Input
+              id="remote-quick-password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void sendPassword();
+                }
+              }}
+              placeholder="Click the password field, paste, Send"
+              className="h-10 rounded-xl"
+              autoComplete="off"
+            />
+            <Button
+              type="button"
+              size="sm"
+              disabled={!password || pwSending}
+              onClick={sendPassword}
+              className="rounded-xl"
+            >
+              {pwSending ? "Sending…" : "Send"}
+            </Button>
+          </div>
+        </div>
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onPressTab}
+          className="rounded-xl"
+        >
+          Tab
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onPressEnter}
+          className="rounded-xl"
+        >
+          Enter (submit)
+        </Button>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Tip: click the email field <em>in the image above</em> first so the
+        page's cursor is in the right spot, then paste/type here.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * List of supplier hostnames that run aggressive bot-detection
+ * (reCAPTCHA / Cloudflare turnstile / Amazon's proprietary
+ * challenges). On those sites, the remote-Chrome flow is not the
+ * right tool — the user needs the browser extension instead. We
+ * show a banner that's honest about this BEFORE they spend five
+ * minutes fighting the captcha.
+ */
+const BOT_BLOCKED_HOSTS = [
+  /amazon\./i,
+  /costco\./i,
+  /walmart\./i,
+  /samsclub\./i,
+  /target\./i,
+  /lcbo\.com/i,
+  /saq\./i,
+  /bevmo\./i,
+  /totalwine\./i,
+  /instacart\./i,
+];
+
+function BotBlockedWarning({
+  supplierName,
+  supplierWebsite,
+}: {
+  supplierName: string;
+  supplierWebsite: string | null;
+}) {
+  if (!supplierWebsite) return null;
+  const blocked = BOT_BLOCKED_HOSTS.some((re) => re.test(supplierWebsite));
+  if (!blocked) return null;
+  return (
+    <div className="rounded-xl border border-amber-400/40 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-100">
+      <p className="font-medium">
+        {supplierName} uses captchas that block automated browsers.
+      </p>
+      <p className="mt-1 text-xs">
+        You might still succeed here if the captcha happens to skip —
+        but the reliable path is the{" "}
+        <strong>Use browser extension</strong> tab at the top. It ships
+        the cookies from <em>your</em> real browser, so the captcha is
+        already solved before StockPilot ever touches the cart.
+      </p>
+    </div>
+  );
 }
