@@ -13,6 +13,7 @@ import {
   Receipt,
   Rocket,
   ScanBarcode,
+  Scale,
   Settings,
   ShoppingCart,
   Store,
@@ -147,6 +148,13 @@ export const secondaryNav: readonly NavItem[] = [
     icon: PiggyBank,
     minimumRole: Role.SUPERVISOR,
     description: "Per-menu-item COGS and margin — flags the unprofitable ones.",
+  },
+  {
+    href: "/variance",
+    label: "Variance",
+    icon: Scale,
+    minimumRole: Role.SUPERVISOR,
+    description: "Theoretical vs actual — catches waste and shrinkage.",
   },
   {
     href: "/analytics",
