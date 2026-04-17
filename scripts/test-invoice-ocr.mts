@@ -489,20 +489,29 @@ await scenario("parseInvoiceImage: fetch payload includes image + PO context", a
 });
 
 await scenario("parseInvoiceImage: missing API key → ok=false, no network call", async () => {
-  let fetchCalls = 0;
-  const res = await parseInvoiceImage({
-    imageDataUrl: "data:image/jpeg;base64,/9j/AAAA",
-    imageContentType: "image/jpeg",
-    poContext: { orderNumber: "PO-X", supplierName: "X", lines: [] },
-    apiKey: undefined,
-    fetchImpl: (async () => {
-      fetchCalls += 1;
-      return new Response("", { status: 200 });
-    }) as typeof fetch,
-  });
-  assert(!res.ok, "ok=false");
-  assert(fetchCalls === 0, "no network call on missing key");
-  assert(typeof res.reason === "string" && res.reason.includes("GROQ_API_KEY"), "reason mentions env var");
+  // parseInvoiceImage falls back to process.env.GROQ_API_KEY when
+  // input.apiKey is undefined, so we need to clear the env too —
+  // otherwise this test breaks when .env provides a real key.
+  const savedKey = process.env.GROQ_API_KEY;
+  delete process.env.GROQ_API_KEY;
+  try {
+    let fetchCalls = 0;
+    const res = await parseInvoiceImage({
+      imageDataUrl: "data:image/jpeg;base64,/9j/AAAA",
+      imageContentType: "image/jpeg",
+      poContext: { orderNumber: "PO-X", supplierName: "X", lines: [] },
+      apiKey: undefined,
+      fetchImpl: (async () => {
+        fetchCalls += 1;
+        return new Response("", { status: 200 });
+      }) as typeof fetch,
+    });
+    assert(!res.ok, "ok=false");
+    assert(fetchCalls === 0, "no network call on missing key");
+    assert(typeof res.reason === "string" && res.reason.includes("GROQ_API_KEY"), "reason mentions env var");
+  } finally {
+    if (savedKey !== undefined) process.env.GROQ_API_KEY = savedKey;
+  }
 });
 
 await scenario("parseInvoiceImage: non-data URL → ok=false", async () => {
