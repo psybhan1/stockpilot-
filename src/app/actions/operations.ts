@@ -151,13 +151,19 @@ export async function approveRecipeAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const recipeId = String(formData.get("recipeId") ?? "");
 
-  const recipe = await db.recipe.findUniqueOrThrow({
-    where: { id: recipeId },
+  // Tenant guard: the recipe must belong to the session's location.
+  // findFirst with a compound filter returns null on mismatch —
+  // findUniqueOrThrow would accept cross-tenant ids.
+  const recipe = await db.recipe.findFirst({
+    where: { id: recipeId, locationId: session.locationId },
     include: {
       components: true,
       mappings: true,
     },
   });
+  if (!recipe) {
+    throw new Error("Recipe not found at this location.");
+  }
 
   await db.$transaction(async (tx) => {
     for (const component of recipe.components) {
@@ -282,7 +288,8 @@ export async function approveRecommendationAction(formData: FormData) {
   const purchaseOrder = await approveRecommendation(
     recommendationId,
     session.userId,
-    recommendedPackCount
+    recommendedPackCount,
+    session.locationId
   );
   revalidatePurchaseOrderPaths(purchaseOrder.id, purchaseOrder.supplierId);
 }
@@ -291,7 +298,7 @@ export async function deferRecommendationAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const recommendationId = String(formData.get("recommendationId") ?? "");
 
-  await deferRecommendation(recommendationId, session.userId);
+  await deferRecommendation(recommendationId, session.userId, session.locationId);
   revalidateOperations();
 }
 
@@ -299,7 +306,7 @@ export async function rejectRecommendationAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const recommendationId = String(formData.get("recommendationId") ?? "");
 
-  await rejectRecommendation(recommendationId, session.userId);
+  await rejectRecommendation(recommendationId, session.userId, session.locationId);
   revalidateOperations();
 }
 
@@ -361,13 +368,16 @@ export async function acknowledgeAlertAction(formData: FormData) {
   const session = await requireSession(Role.SUPERVISOR);
   const alertId = String(formData.get("alertId") ?? "");
 
+  // Tenant guard — Prisma `update({where:{id}})` accepts any id. Use
+  // `updateMany` with a compound where so cross-tenant ids no-op.
   await db.$transaction(async (tx) => {
-    await tx.alert.update({
-      where: { id: alertId },
-      data: {
-        status: "ACKNOWLEDGED",
-      },
+    const { count } = await tx.alert.updateMany({
+      where: { id: alertId, locationId: session.locationId },
+      data: { status: "ACKNOWLEDGED" },
     });
+    if (count === 0) {
+      throw new Error("Alert not found at this location.");
+    }
 
     await createAuditLogTx(tx, {
       locationId: session.locationId,
@@ -386,13 +396,16 @@ export async function resolveAlertAction(formData: FormData) {
   const alertId = String(formData.get("alertId") ?? "");
 
   await db.$transaction(async (tx) => {
-    await tx.alert.update({
-      where: { id: alertId },
+    const { count } = await tx.alert.updateMany({
+      where: { id: alertId, locationId: session.locationId },
       data: {
         status: "RESOLVED",
         resolvedAt: new Date(),
       },
     });
+    if (count === 0) {
+      throw new Error("Alert not found at this location.");
+    }
 
     await createAuditLogTx(tx, {
       locationId: session.locationId,
@@ -555,6 +568,15 @@ export async function completeAgentTaskAction(formData: FormData) {
   let purchaseOrderId: string | null = null;
   let purchaseOrderSupplierId: string | null = null;
 
+  // Tenant guard — pre-check before mutating.
+  const ownedTask = await db.agentTask.findFirst({
+    where: { id: taskId, locationId: session.locationId },
+    select: { id: true },
+  });
+  if (!ownedTask) {
+    throw new Error("Agent task not found at this location.");
+  }
+
   await db.$transaction(async (tx) => {
     const task = await tx.agentTask.update({
       where: { id: taskId },
@@ -592,7 +614,8 @@ export async function completeAgentTaskAction(formData: FormData) {
       const purchaseOrder = await markPurchaseOrderSent(
         purchaseOrderId,
         session.userId,
-        "Manager approved the website ordering workflow and marked the order as sent."
+        "Manager approved the website ordering workflow and marked the order as sent.",
+        session.locationId
       );
       purchaseOrderSupplierId = purchaseOrder.supplierId;
     }
@@ -609,6 +632,15 @@ export async function failAgentTaskAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const taskId = String(formData.get("taskId") ?? "");
   const notes = String(formData.get("notes") ?? "");
+
+  // Tenant guard.
+  const ownedTask = await db.agentTask.findFirst({
+    where: { id: taskId, locationId: session.locationId },
+    select: { id: true },
+  });
+  if (!ownedTask) {
+    throw new Error("Agent task not found at this location.");
+  }
 
   await db.$transaction(async (tx) => {
     const task = await tx.agentTask.update({
@@ -660,7 +692,12 @@ export async function markPurchaseOrderSentAction(formData: FormData) {
   const purchaseOrderId = String(formData.get("purchaseOrderId") ?? "");
   const notes = String(formData.get("notes") ?? "");
 
-  const purchaseOrder = await markPurchaseOrderSent(purchaseOrderId, session.userId, notes);
+  const purchaseOrder = await markPurchaseOrderSent(
+    purchaseOrderId,
+    session.userId,
+    notes,
+    session.locationId
+  );
   revalidatePurchaseOrderPaths(purchaseOrder.id, purchaseOrder.supplierId);
 }
 
@@ -669,7 +706,12 @@ export async function acknowledgePurchaseOrderAction(formData: FormData) {
   const purchaseOrderId = String(formData.get("purchaseOrderId") ?? "");
   const notes = String(formData.get("notes") ?? "");
 
-  const purchaseOrder = await acknowledgePurchaseOrder(purchaseOrderId, session.userId, notes);
+  const purchaseOrder = await acknowledgePurchaseOrder(
+    purchaseOrderId,
+    session.userId,
+    notes,
+    session.locationId
+  );
   revalidatePurchaseOrderPaths(purchaseOrder.id, purchaseOrder.supplierId);
 }
 
@@ -711,6 +753,7 @@ export async function deliverPurchaseOrderAction(formData: FormData) {
   const deliveredOrder = await deliverPurchaseOrder({
     purchaseOrderId: purchaseOrder.id,
     userId: session.userId,
+    locationId: session.locationId,
     notes,
     lineReceipts,
     actualUnitCostsCents: Object.keys(actualUnitCostsCents).length > 0
@@ -726,7 +769,12 @@ export async function cancelPurchaseOrderAction(formData: FormData) {
   const purchaseOrderId = String(formData.get("purchaseOrderId") ?? "");
   const notes = String(formData.get("notes") ?? "");
 
-  const purchaseOrder = await cancelPurchaseOrder(purchaseOrderId, session.userId, notes);
+  const purchaseOrder = await cancelPurchaseOrder(
+    purchaseOrderId,
+    session.userId,
+    notes,
+    session.locationId
+  );
   revalidatePurchaseOrderPaths(purchaseOrder.id, purchaseOrder.supplierId);
 }
 

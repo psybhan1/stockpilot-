@@ -62,33 +62,43 @@ type TelegramUpdate = {
   };
 };
 
+/** Discriminated failure so the caller can tell the user the right thing. */
+type VoiceTranscriptionResult =
+  | { kind: "ok"; text: string }
+  | { kind: "no_api_key" }     // server misconfig — ops-visible, user-soft
+  | { kind: "rate_limited" }   // Groq TPD/TPM exhausted
+  | { kind: "download_failed" } // Telegram couldn't get the audio
+  | { kind: "empty" }           // Whisper returned no words
+  | { kind: "error"; detail: string }; // anything else
+
 /**
- * Downloads a voice message from Telegram and transcribes it via Groq Whisper.
- * Returns the transcribed text, or null if anything fails.
+ * Downloads a voice message from Telegram and transcribes it via Groq
+ * Whisper. Returns a discriminated result so the caller can say the
+ * right thing to the user instead of a bland "couldn't make out."
  */
-async function transcribeVoiceMessage(fileId: string): Promise<string | null> {
+async function transcribeVoiceMessage(fileId: string): Promise<VoiceTranscriptionResult> {
+  const botToken = env.TELEGRAM_BOT_TOKEN;
+  const groqKey = process.env.GROQ_API_KEY;
+
+  if (!botToken || !groqKey) return { kind: "no_api_key" };
+
   try {
-    const botToken = env.TELEGRAM_BOT_TOKEN;
-    const groqKey = process.env.GROQ_API_KEY;
-
-    if (!botToken || !groqKey) return null;
-
     const baseUrl = env.TELEGRAM_BOT_API_BASE_URL.replace(/\/$/, "");
 
     // Step 1: get the file path from Telegram
     const fileRes = await fetch(`${baseUrl}/bot${botToken}/getFile?file_id=${fileId}`);
-    if (!fileRes.ok) return null;
+    if (!fileRes.ok) return { kind: "download_failed" };
 
     const fileData = (await fileRes.json()) as {
       ok?: boolean;
       result?: { file_path?: string };
     };
     const filePath = fileData?.result?.file_path;
-    if (!filePath) return null;
+    if (!filePath) return { kind: "download_failed" };
 
     // Step 2: download the OGG audio file
     const audioRes = await fetch(`https://api.telegram.org/file/bot${botToken}/${filePath}`);
-    if (!audioRes.ok) return null;
+    if (!audioRes.ok) return { kind: "download_failed" };
 
     const audioBuffer = await audioRes.arrayBuffer();
     const audioBlob = new Blob([audioBuffer], { type: "audio/ogg" });
@@ -108,14 +118,22 @@ async function transcribeVoiceMessage(fileId: string): Promise<string | null> {
       signal: AbortSignal.timeout(60000),
     });
 
-    if (!whisperRes.ok) return null;
+    if (whisperRes.status === 429) return { kind: "rate_limited" };
+    if (!whisperRes.ok) {
+      const body = await whisperRes.text().catch(() => "");
+      return { kind: "error", detail: `Whisper ${whisperRes.status}: ${body.slice(0, 120)}` };
+    }
 
     const whisperData = (await whisperRes.json()) as { text?: string };
     const transcription = whisperData?.text?.trim();
 
-    return transcription || null;
-  } catch {
-    return null;
+    if (!transcription) return { kind: "empty" };
+    return { kind: "ok", text: transcription };
+  } catch (err) {
+    return {
+      kind: "error",
+      detail: err instanceof Error ? err.message.slice(0, 200) : "unknown",
+    };
   }
 }
 
@@ -125,6 +143,34 @@ export async function POST(request: Request) {
   }
 
   const payload = (await request.json()) as TelegramUpdate;
+
+  // Per-sender rate limit. A single chat flooding us (bot, user typo,
+  // network retry storm) must not block other users' messages by
+  // hogging the webhook's serialized processing. 15 messages per 60s
+  // is well above real human usage (even a manic typer tops at ~5)
+  // and low enough to contain abuse.
+  const rateLimitKey =
+    payload.callback_query?.from?.id ?? payload.message?.from?.id ?? null;
+  if (rateLimitKey) {
+    const { rateLimit } = await import("@/lib/rate-limit");
+    const rl = rateLimit({
+      key: `tg:${rateLimitKey}`,
+      windowMs: 60_000,
+      max: 15,
+    });
+    if (!rl.allowed) {
+      const chatId =
+        payload.callback_query?.message?.chat?.id ?? payload.message?.chat?.id;
+      if (chatId) {
+        await sendTelegramMessage(
+          String(chatId),
+          `⚠ You're sending messages too fast — give me ${rl.retryAfterSec}s and try again.`
+        ).catch(() => null);
+      }
+      return NextResponse.json({ ok: false, rateLimited: true }, { status: 200 });
+    }
+  }
+
   try {
     return await handleTelegramUpdate(payload);
   } catch (err) {
@@ -194,11 +240,15 @@ async function handleTelegramUpdate(payload: TelegramUpdate) {
   // Resolve the message text — either a direct text or a transcribed voice message
   let text = payload.message?.text?.trim() ?? null;
   let isVoice = false;
+  let voiceFailure: VoiceTranscriptionResult["kind"] | null = null;
 
   if (!text && payload.message?.voice?.file_id) {
     const transcription = await transcribeVoiceMessage(payload.message.voice.file_id);
-    if (transcription) {
-      text = transcription.trim();
+    if (transcription.kind === "ok") {
+      text = transcription.text.trim();
+      isVoice = true;
+    } else {
+      voiceFailure = transcription.kind;
       isVoice = true;
     }
   }
@@ -214,9 +264,24 @@ async function handleTelegramUpdate(payload: TelegramUpdate) {
 
   if (!text) {
     if (isVoice) {
+      // Match the reply to the actual failure so the user knows what
+      // to do. "Couldn't make out" is only right for empty/noisy audio.
+      const voiceReply: Record<VoiceTranscriptionResult["kind"], string> = {
+        ok: "", // won't hit this branch
+        empty:
+          "I couldn't make out your voice message — try again, maybe a bit louder or closer to the mic.",
+        no_api_key:
+          "Voice transcription is off on this server. Please type your message instead.",
+        rate_limited:
+          "Voice transcription is busy right now — give me a minute, or type your message.",
+        download_failed:
+          "I couldn't download your voice message from Telegram. Try sending it again.",
+        error:
+          "Something went wrong transcribing your voice message. Please type it instead.",
+      };
       await sendTelegramMessage(
         String(chatId),
-        "I couldn't make out your voice message — try again, maybe a bit louder or closer to the mic."
+        voiceReply[voiceFailure ?? "empty"] ?? voiceReply.empty
       );
     }
     return NextResponse.json({ ok: true, ignored: true });

@@ -50,16 +50,20 @@ function appendOperationalNote(existing: string | null | undefined, next: string
 export async function approveRecommendation(
   recommendationId: string,
   userId: string,
-  overridePackCount?: number
+  overridePackCount: number | undefined,
+  locationId: string
 ) {
-  const recommendation = await db.reorderRecommendation.findUniqueOrThrow({
-    where: { id: recommendationId },
+  const recommendation = await db.reorderRecommendation.findFirst({
+    where: { id: recommendationId, locationId },
     include: {
       inventoryItem: true,
       supplier: true,
       location: { select: { name: true, business: { select: { name: true } } } },
     },
   });
+  if (!recommendation) {
+    throw new Error("Recommendation not found at this location.");
+  }
 
   const approver = await db.user.findUnique({
     where: { id: userId },
@@ -375,10 +379,17 @@ export async function approveRecommendation(
   );
 }
 
-export async function deferRecommendation(recommendationId: string, userId: string) {
-  const recommendation = await db.reorderRecommendation.findUniqueOrThrow({
-    where: { id: recommendationId },
+export async function deferRecommendation(
+  recommendationId: string,
+  userId: string,
+  locationId: string
+) {
+  const recommendation = await db.reorderRecommendation.findFirst({
+    where: { id: recommendationId, locationId },
   });
+  if (!recommendation) {
+    throw new Error("Recommendation not found at this location.");
+  }
 
   return db.$transaction(async (tx) => {
     await tx.reorderRecommendation.update({
@@ -410,10 +421,17 @@ export async function deferRecommendation(recommendationId: string, userId: stri
   });
 }
 
-export async function rejectRecommendation(recommendationId: string, userId: string) {
-  const recommendation = await db.reorderRecommendation.findUniqueOrThrow({
-    where: { id: recommendationId },
+export async function rejectRecommendation(
+  recommendationId: string,
+  userId: string,
+  locationId: string
+) {
+  const recommendation = await db.reorderRecommendation.findFirst({
+    where: { id: recommendationId, locationId },
   });
+  if (!recommendation) {
+    throw new Error("Recommendation not found at this location.");
+  }
 
   return db.$transaction(async (tx) => {
     await tx.reorderRecommendation.update({
@@ -449,15 +467,19 @@ export async function rejectRecommendation(recommendationId: string, userId: str
 export async function markPurchaseOrderSent(
   purchaseOrderId: string,
   userId: string,
-  notes?: string
+  notes: string | undefined,
+  locationId: string
 ) {
-  const purchaseOrder = await db.purchaseOrder.findUniqueOrThrow({
-    where: { id: purchaseOrderId },
+  const purchaseOrder = await db.purchaseOrder.findFirst({
+    where: { id: purchaseOrderId, locationId },
     include: {
       supplier: true,
       communications: true,
     },
   });
+  if (!purchaseOrder) {
+    throw new Error("Purchase order not found at this location.");
+  }
 
   if (!canMarkPurchaseOrderSent(purchaseOrder.status)) {
     throw new Error("This purchase order cannot be marked as sent from its current status.");
@@ -524,11 +546,15 @@ export async function markPurchaseOrderSent(
 export async function acknowledgePurchaseOrder(
   purchaseOrderId: string,
   userId: string,
-  notes?: string
+  notes: string | undefined,
+  locationId: string
 ) {
-  const purchaseOrder = await db.purchaseOrder.findUniqueOrThrow({
-    where: { id: purchaseOrderId },
+  const purchaseOrder = await db.purchaseOrder.findFirst({
+    where: { id: purchaseOrderId, locationId },
   });
+  if (!purchaseOrder) {
+    throw new Error("Purchase order not found at this location.");
+  }
 
   if (!canAcknowledgePurchaseOrder(purchaseOrder.status)) {
     throw new Error("This purchase order cannot be acknowledged from its current status.");
@@ -564,11 +590,15 @@ export async function acknowledgePurchaseOrder(
 export async function cancelPurchaseOrder(
   purchaseOrderId: string,
   userId: string,
-  notes?: string
+  notes: string | undefined,
+  locationId: string
 ) {
-  const purchaseOrder = await db.purchaseOrder.findUniqueOrThrow({
-    where: { id: purchaseOrderId },
+  const purchaseOrder = await db.purchaseOrder.findFirst({
+    where: { id: purchaseOrderId, locationId },
   });
+  if (!purchaseOrder) {
+    throw new Error("Purchase order not found at this location.");
+  }
 
   if (!canCancelPurchaseOrder(purchaseOrder.status)) {
     throw new Error("This purchase order is already closed.");
@@ -604,6 +634,7 @@ export async function cancelPurchaseOrder(
 export async function deliverPurchaseOrder(input: {
   purchaseOrderId: string;
   userId: string;
+  locationId: string;
   notes?: string;
   lineReceipts?: Record<string, number>;
   /**
@@ -616,14 +647,17 @@ export async function deliverPurchaseOrder(input: {
    */
   actualUnitCostsCents?: Record<string, number>;
 }) {
-  const purchaseOrder = await db.purchaseOrder.findUniqueOrThrow({
-    where: { id: input.purchaseOrderId },
+  const purchaseOrder = await db.purchaseOrder.findFirst({
+    where: { id: input.purchaseOrderId, locationId: input.locationId },
     include: {
       supplier: true,
       lines: true,
       agentTasks: true,
     },
   });
+  if (!purchaseOrder) {
+    throw new Error("Purchase order not found at this location.");
+  }
 
   if (!canDeliverPurchaseOrder(purchaseOrder.status)) {
     throw new Error("This purchase order has already been closed for receiving.");

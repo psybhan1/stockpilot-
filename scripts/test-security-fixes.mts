@@ -28,6 +28,18 @@ const { advanceActiveWorkflow } = await import(
 const { handleTelegramCallback } = await import(
   "../src/modules/operator-bot/telegram-callbacks.ts"
 );
+const {
+  approveRecommendation,
+  deferRecommendation,
+  rejectRecommendation,
+  markPurchaseOrderSent,
+  acknowledgePurchaseOrder,
+  cancelPurchaseOrder,
+  deliverPurchaseOrder,
+} = await import("../src/modules/purchasing/service.ts");
+const { rateLimit, _resetRateLimitForTests } = await import(
+  "../src/lib/rate-limit.ts"
+);
 
 const db = new PrismaClient();
 
@@ -217,6 +229,145 @@ try {
   });
   assert(unauthLogs.length >= 2, `unauthorized attempts were audited (got ${unauthLogs.length})`);
 
+  // ── Service-layer tenant guards (purchasing/service.ts) ────────
+
+  console.log("\n━━ Service-layer: cross-tenant service calls rejected");
+
+  // Seed a recommendation + PO on B, then try from A.
+  const recB = await db.reorderRecommendation.create({
+    data: {
+      locationId: locB.location.id,
+      inventoryItemId: locB.item.id,
+      supplierId: locB.supplier.id,
+      status: "PENDING_APPROVAL",
+      recommendedOrderQuantityBase: 3000,
+      recommendedPurchaseUnit: "CASE",
+      recommendedPackCount: 3,
+      urgency: "INFO",
+      rationale: "test fixture",
+    },
+  });
+
+  {
+    let threw = false;
+    try {
+      await approveRecommendation(recB.id, locA.user.id, undefined, locA.location.id);
+    } catch (err) {
+      threw = err instanceof Error && /not found/i.test(err.message);
+    }
+    assert(threw, "approveRecommendation refuses cross-tenant");
+    const stillPending = await db.reorderRecommendation.findUnique({
+      where: { id: recB.id },
+      select: { status: true },
+    });
+    assert(stillPending?.status === "PENDING_APPROVAL", "rec stays PENDING_APPROVAL");
+  }
+
+  {
+    let threw = false;
+    try {
+      await deferRecommendation(recB.id, locA.user.id, locA.location.id);
+    } catch (err) {
+      threw = err instanceof Error && /not found/i.test(err.message);
+    }
+    assert(threw, "deferRecommendation refuses cross-tenant");
+  }
+
+  {
+    let threw = false;
+    try {
+      await rejectRecommendation(recB.id, locA.user.id, locA.location.id);
+    } catch (err) {
+      threw = err instanceof Error && /not found/i.test(err.message);
+    }
+    assert(threw, "rejectRecommendation refuses cross-tenant");
+  }
+
+  // Create another PO on B at AWAITING_APPROVAL (poB from earlier
+  // was approved + sent). Test all 4 PO-mutating service fns.
+  const poBFresh = await db.purchaseOrder.create({
+    data: {
+      locationId: locB.location.id,
+      supplierId: locB.supplier.id,
+      orderNumber: `PO-SEC-SVC-${STAMP}`,
+      status: "APPROVED",
+      totalLines: 1,
+      placedById: locB.user.id,
+      lines: {
+        create: {
+          inventoryItemId: locB.item.id,
+          description: "Test",
+          quantityOrdered: 1,
+          expectedQuantityBase: 1000,
+          purchaseUnit: "CASE",
+          packSizeBase: 1000,
+          latestCostCents: 500,
+        },
+      },
+    },
+  });
+
+  {
+    let threw = false;
+    try {
+      await markPurchaseOrderSent(poBFresh.id, locA.user.id, "hostile", locA.location.id);
+    } catch (err) {
+      threw = err instanceof Error && /not found/i.test(err.message);
+    }
+    assert(threw, "markPurchaseOrderSent refuses cross-tenant");
+  }
+  {
+    let threw = false;
+    try {
+      await acknowledgePurchaseOrder(poBFresh.id, locA.user.id, undefined, locA.location.id);
+    } catch (err) {
+      threw = err instanceof Error && /not found/i.test(err.message);
+    }
+    assert(threw, "acknowledgePurchaseOrder refuses cross-tenant");
+  }
+  {
+    let threw = false;
+    try {
+      await cancelPurchaseOrder(poBFresh.id, locA.user.id, undefined, locA.location.id);
+    } catch (err) {
+      threw = err instanceof Error && /not found/i.test(err.message);
+    }
+    assert(threw, "cancelPurchaseOrder refuses cross-tenant");
+  }
+  {
+    let threw = false;
+    try {
+      await deliverPurchaseOrder({
+        purchaseOrderId: poBFresh.id,
+        userId: locA.user.id,
+        locationId: locA.location.id,
+      });
+    } catch (err) {
+      threw = err instanceof Error && /not found/i.test(err.message);
+    }
+    assert(threw, "deliverPurchaseOrder refuses cross-tenant");
+  }
+
+  // ── Rate limiter ───────────────────────────────────────────────
+
+  console.log("\n━━ Rate limiter: allow→deny→recover");
+
+  _resetRateLimitForTests();
+  const key = "rl-test";
+  let allowedCount = 0;
+  for (let i = 0; i < 20; i += 1) {
+    const r = rateLimit({ key, windowMs: 60_000, max: 15 });
+    if (r.allowed) allowedCount += 1;
+  }
+  assert(allowedCount === 15, `first 15 allowed, rest denied (got ${allowedCount})`);
+  const denied = rateLimit({ key, windowMs: 60_000, max: 15 });
+  assert(!denied.allowed, "16th request denied");
+  assert(denied.retryAfterSec > 0 && denied.retryAfterSec <= 60, "retryAfterSec reasonable");
+
+  // Different key still flows through.
+  const otherKey = rateLimit({ key: "rl-other", windowMs: 60_000, max: 15 });
+  assert(otherKey.allowed, "other key unaffected");
+
   // ── Bug #1: update-item workflow tenant guard ──────────────────
 
   console.log("\n━━ Bug #1: update-item workflow cannot mutate another location's item");
@@ -292,6 +443,9 @@ try {
 } finally {
   // Cleanup everything we created.
   for (const loc of [locA, locB]) {
+    await db.reorderRecommendation.deleteMany({
+      where: { locationId: loc.location.id },
+    });
     await db.botConversationState.deleteMany({
       where: { locationId: loc.location.id },
     });

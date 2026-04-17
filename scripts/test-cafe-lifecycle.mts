@@ -343,7 +343,7 @@ await scenario("Approving a recommendation creates a PO, sends the email, and tr
   const rec = await db.reorderRecommendation.findFirstOrThrow({
     where: { inventoryItemId: w.milkId, status: "PENDING_APPROVAL" },
   });
-  const po = await approveRecommendation(rec.id, w.userId);
+  const po = await approveRecommendation(rec.id, w.userId, undefined, w.locationId);
   assert(po != null, "PO returned from approveRecommendation");
 
   // For EMAIL-mode suppliers, approveRecommendation auto-transitions
@@ -411,7 +411,7 @@ await scenario("Delivering with actuals writes cost + price history + variance a
   const rec = await db.reorderRecommendation.findFirstOrThrow({
     where: { inventoryItemId: w.milkId, status: "PENDING_APPROVAL" },
   });
-  const po = await approveRecommendation(rec.id, w.userId);
+  const po = await approveRecommendation(rec.id, w.userId, undefined, w.locationId);
 
   const poLines = await db.purchaseOrderLine.findMany({
     where: { purchaseOrderId: po.id },
@@ -423,6 +423,7 @@ await scenario("Delivering with actuals writes cost + price history + variance a
   await deliverPurchaseOrder({
     purchaseOrderId: po.id,
     userId: w.userId,
+    locationId: w.locationId,
     notes: "Cost went up — check invoice",
     lineReceipts: { [line.id]: line.quantityOrdered },
     actualUnitCostsCents: { [line.id]: 1400 },
@@ -546,13 +547,14 @@ await scenario("Pricing dashboard shows the 16.67% price increase", async () => 
   const rec1 = await db.reorderRecommendation.findFirstOrThrow({
     where: { inventoryItemId: w.milkId, status: "PENDING_APPROVAL" },
   });
-  const po1 = await approveRecommendation(rec1.id, w.userId);
+  const po1 = await approveRecommendation(rec1.id, w.userId, undefined, w.locationId);
   const po1Lines = await db.purchaseOrderLine.findMany({
     where: { purchaseOrderId: po1.id },
   });
   await deliverPurchaseOrder({
     purchaseOrderId: po1.id,
     userId: w.userId,
+    locationId: w.locationId,
     lineReceipts: { [po1Lines[0].id]: po1Lines[0].quantityOrdered },
     actualUnitCostsCents: { [po1Lines[0].id]: 1200 }, // baseline
   });
@@ -581,13 +583,14 @@ await scenario("Pricing dashboard shows the 16.67% price increase", async () => 
   });
   assert(rec2 != null, "second reorder recommendation after more depletion");
   if (!rec2) return;
-  const po2 = await approveRecommendation(rec2.id, w.userId);
+  const po2 = await approveRecommendation(rec2.id, w.userId, undefined, w.locationId);
   const po2Lines = await db.purchaseOrderLine.findMany({
     where: { purchaseOrderId: po2.id },
   });
   await deliverPurchaseOrder({
     purchaseOrderId: po2.id,
     userId: w.userId,
+    locationId: w.locationId,
     lineReceipts: { [po2Lines[0].id]: po2Lines[0].quantityOrdered },
     actualUnitCostsCents: { [po2Lines[0].id]: 1400 }, // 16.67% up
   });
@@ -658,6 +661,7 @@ await scenario("Multi-line PO (built directly) delivers all lines with per-line 
   await deliverPurchaseOrder({
     purchaseOrderId: po.id,
     userId: w.userId,
+    locationId: w.locationId,
     lineReceipts: { [milkLine.id]: 2, [beansLine.id]: 3 },
     actualUnitCostsCents: { [milkLine.id]: 1200, [beansLine.id]: 2550 },
   });
@@ -707,6 +711,7 @@ await scenario("Partial delivery: ordered 3 cases, driver dropped 2", async () =
   await deliverPurchaseOrder({
     purchaseOrderId: po.id,
     userId: w.userId,
+    locationId: w.locationId,
     notes: "Driver short 1 case; supplier will redeliver",
     lineReceipts: { [line.id]: 2 }, // Only 2 of 3 received
   });
@@ -744,6 +749,7 @@ await scenario("Over-delivery: ordered 2 cases, supplier dropped 3", async () =>
   await deliverPurchaseOrder({
     purchaseOrderId: po.id,
     userId: w.userId,
+    locationId: w.locationId,
     lineReceipts: { [line.id]: 3 }, // 1 extra case showed up
   });
   const fresh = await db.purchaseOrderLine.findUnique({ where: { id: line.id } });
@@ -766,12 +772,12 @@ await scenario("Cancel PO mid-flight: status → CANCELLED, inventory untouched"
   const rec = await db.reorderRecommendation.findFirstOrThrow({
     where: { inventoryItemId: w.milkId, status: "PENDING_APPROVAL" },
   });
-  const po = await approveRecommendation(rec.id, w.userId);
+  const po = await approveRecommendation(rec.id, w.userId, undefined, w.locationId);
   const stockBefore = (
     await db.inventoryItem.findUnique({ where: { id: w.milkId } })
   )?.stockOnHandBase;
 
-  await cancelPurchaseOrder(po.id, w.userId, "supplier not responding");
+  await cancelPurchaseOrder(po.id, w.userId, "supplier not responding", w.locationId);
 
   const fresh = await db.purchaseOrder.findUnique({ where: { id: po.id } });
   assert(fresh?.status === "CANCELLED", `PO status = CANCELLED (got ${fresh?.status})`);
@@ -859,6 +865,7 @@ await scenario("Unit conversion sanity: purchase-unit → base-unit math across 
   await deliverPurchaseOrder({
     purchaseOrderId: po.id,
     userId: w.userId,
+    locationId: w.locationId,
     lineReceipts: { [po.lines[0].id]: 3 },
   });
   let milk = await db.inventoryItem.findUnique({ where: { id: w.milkId } });

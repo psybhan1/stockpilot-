@@ -636,6 +636,7 @@ await scenario(
     const delivered = await deliverPurchaseOrder({
       purchaseOrderId: po.id,
       userId: user.id,
+      locationId: location.id,
       notes: "invoice scanned + applied",
       lineReceipts: { [line.id]: 3 },
       actualUnitCostsCents: { [line.id]: 1400 }, // 16.67% over → review
@@ -755,6 +756,7 @@ await scenario(
     await deliverPurchaseOrder({
       purchaseOrderId: po.id,
       userId: user.id,
+      locationId: location.id,
       lineReceipts: { [line.id]: 5 },
       // No actualUnitCostsCents passed — manual "just received" flow.
     });
