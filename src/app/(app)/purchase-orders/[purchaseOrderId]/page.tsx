@@ -179,6 +179,14 @@ export default async function PurchaseOrderDetailPage({
                   expectedUnitCostCents: line.latestCostCents ?? null,
                   itemName: line.inventoryItem.name,
                 }))}
+                initialParsed={
+                  purchaseOrder.invoiceParsed
+                    ? {
+                        parsed: purchaseOrder.invoiceParsed as unknown as Record<string, unknown>,
+                        parsedAt: purchaseOrder.invoiceParsedAt?.toISOString() ?? null,
+                      }
+                    : null
+                }
               />
             </Panel>
           ) : null}

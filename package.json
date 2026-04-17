@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run test:compile && npm run test:run",
     "test:compile": "node -e \"require('node:fs').rmSync('.test-build', { recursive: true, force: true })\" && tsc -p tsconfig.tests.json",
-    "test:run": "node --test --test-concurrency=1 --test-isolation=none .test-build/src/modules/**/*.test.js",
+    "test:run": "node --test --test-concurrency=1 --test-isolation=none .test-build/src/modules/**/*.test.js .test-build/src/lib/**/*.test.js",
     "test:db": "node --env-file=.env scripts/test-quick-add.mjs",
     "test:bot-e2e": "node --env-file=.env --import tsx scripts/test-bot-e2e.mts",
     "test:ai-provider": "node --env-file=.env --import tsx scripts/test-ai-provider.mts",

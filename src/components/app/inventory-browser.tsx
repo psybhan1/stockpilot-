@@ -3,10 +3,11 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { Download, Search } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { downloadCsv, isoDateForFilename, toCsv } from "@/lib/csv";
 
 type InventoryBrowserItem = {
   id: string;
@@ -94,6 +95,29 @@ export function InventoryBrowser({ items }: InventoryBrowserProps) {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            onClick={() =>
+              downloadCsv(
+                `stockpilot-inventory-${isoDateForFilename()}.csv`,
+                toCsv(visibleItems, [
+                  { header: "Item", value: (i) => i.name },
+                  { header: "Category", value: (i) => i.categoryLabel },
+                  { header: "On hand", value: (i) => i.onHandLabel },
+                  { header: "Stock % of par", value: (i) => i.stockPercent },
+                  { header: "Days left", value: (i) => i.daysLeftLabel },
+                  { header: "Supplier", value: (i) => i.supplierName },
+                  { header: "Urgency", value: (i) => i.urgency },
+                ])
+              )
+            }
+            disabled={visibleItems.length === 0}
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
+            title="Download the filtered list as CSV"
+          >
+            <Download className="h-3.5 w-3.5" />
+            CSV
+          </button>
         </div>
       </div>
 

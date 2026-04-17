@@ -7,9 +7,10 @@
  */
 
 import { useMemo, useState, useEffect } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Download } from "lucide-react";
 
 import type { VarianceRow } from "@/modules/variance/report";
+import { downloadCsv, isoDateForFilename, toCsv } from "@/lib/csv";
 
 type Filter = "all" | "review" | "watch" | "shrinkage-only";
 
@@ -58,6 +59,33 @@ export function VarianceTable({
           <option value="watch">Watch (2–5% shrinkage or $15+)</option>
           <option value="shrinkage-only">Only items with shrinkage</option>
         </select>
+        <button
+          type="button"
+          onClick={() =>
+            downloadCsv(
+              `stockpilot-variance-${days}d-${isoDateForFilename()}.csv`,
+              toCsv(filtered, [
+                { header: "Item", value: (r) => r.itemName },
+                { header: "Category", value: (r) => r.category ?? "" },
+                { header: "Display unit", value: (r) => r.displayUnit },
+                { header: "Theoretical usage (base)", value: (r) => r.theoreticalUsageBase },
+                { header: "Theoretical $", value: (r) => r.theoreticalUsageCents != null ? (r.theoreticalUsageCents / 100).toFixed(2) : "" },
+                { header: "Tracked waste (base)", value: (r) => r.trackedWasteBase },
+                { header: "Tracked waste $", value: (r) => r.trackedWasteCents != null ? (r.trackedWasteCents / 100).toFixed(2) : "" },
+                { header: "Shrinkage (base, + = lost)", value: (r) => r.shrinkageBase },
+                { header: "Shrinkage $", value: (r) => r.shrinkageCents != null ? (r.shrinkageCents / 100).toFixed(2) : "" },
+                { header: "Shrinkage %", value: (r) => r.shrinkagePct != null ? (r.shrinkagePct * 100).toFixed(2) : "" },
+                { header: "Severity", value: (r) => r.severity },
+              ])
+            )
+          }
+          disabled={filtered.length === 0}
+          className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/60 bg-background px-3 text-sm transition hover:bg-muted disabled:opacity-50"
+          title={`Download the current ${days}-day view as CSV`}
+        >
+          <Download className="h-3.5 w-3.5" />
+          CSV
+        </button>
       </div>
 
       <div className="overflow-x-auto">
@@ -285,16 +313,44 @@ function DetailRow({
     <tr className="bg-muted/20">
       <td colSpan={7} className="px-4 py-4">
         {state.status === "loading" ? (
-          <div className="text-xs text-muted-foreground">Loading every movement…</div>
+          <DetailSkeleton />
         ) : state.status === "error" ? (
           <div className="text-xs text-red-700 dark:text-red-300">
-            Couldn&apos;t load breakdown: {state.message}
+            Couldn&apos;t load the movement list ({state.message}). Close and
+            reopen this row to retry.
           </div>
         ) : (
           <DetailTable data={state.data} row={row} />
         )}
       </td>
     </tr>
+  );
+}
+
+function DetailSkeleton() {
+  // Mirrors the real layout: 4 stat tiles on top, then a movement
+  // list. Prevents layout shift when data resolves.
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 rounded-xl border border-border/60 bg-card p-3 sm:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="space-y-1">
+            <div className="h-2 w-20 animate-pulse rounded bg-muted/60" />
+            <div className="h-4 w-16 animate-pulse rounded bg-muted/70" />
+          </div>
+        ))}
+      </div>
+      <div className="h-3 w-40 animate-pulse rounded bg-muted/50" />
+      <div className="space-y-1.5">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="flex items-center gap-3">
+            <div className="h-3 w-24 animate-pulse rounded bg-muted/60" />
+            <div className="h-4 w-24 animate-pulse rounded-full bg-muted/60" />
+            <div className="ml-auto h-3 w-16 animate-pulse rounded bg-muted/60" />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

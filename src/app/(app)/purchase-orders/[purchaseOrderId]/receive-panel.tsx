@@ -74,27 +74,54 @@ type LineState = {
 export function ReceivePanel({
   purchaseOrderId,
   lines,
+  initialParsed,
 }: {
   purchaseOrderId: string;
   lines: ReceiveLine[];
+  /**
+   * Persisted OCR output from a prior upload. When the page is
+   * reloaded mid-receive (accidental nav, tab close + restore),
+   * the panel rehydrates with the server-saved parse instead of
+   * making the user re-photograph the invoice.
+   */
+  initialParsed?: { parsed: Record<string, unknown>; parsedAt: string | null } | null;
 }) {
+  // Build initial line state. If we have a persisted parse, its
+  // applied values override the PO-estimate defaults so the form
+  // picks up exactly where the user left off.
+  const persistedApplied = useMemo(
+    () => buildLineStateFromParsed(initialParsed?.parsed ?? null, lines),
+    [initialParsed, lines]
+  );
   const [states, setStates] = useState<Record<string, LineState>>(() =>
     Object.fromEntries(
-      lines.map((l) => [
-        l.id,
-        {
-          receivedPacks: String(l.quantityOrdered),
-          actualUnitCostCents:
-            l.expectedUnitCostCents != null
-              ? (l.expectedUnitCostCents / 100).toFixed(2)
-              : "",
-        },
-      ])
+      lines.map((l) => {
+        const fromParse = persistedApplied[l.id];
+        return [
+          l.id,
+          {
+            receivedPacks:
+              fromParse?.receivedPacks ?? String(l.quantityOrdered),
+            actualUnitCostCents:
+              fromParse?.actualUnitCostCents ??
+              (l.expectedUnitCostCents != null
+                ? (l.expectedUnitCostCents / 100).toFixed(2)
+                : ""),
+          },
+        ];
+      })
     )
   );
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [parseResult, setParseResult] = useState<ParseResult | null>(null);
+  const [parseResult, setParseResult] = useState<ParseResult | null>(() => {
+    if (!initialParsed?.parsed) return null;
+    const normalised = initialParsed.parsed as unknown as ParseResult;
+    return typeof normalised === "object" && normalised !== null && "lines" in normalised
+      ? normalised
+      : null;
+  });
+  const [clearing, setClearing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const updateLine = (lineId: string, patch: Partial<LineState>) => {
@@ -108,11 +135,15 @@ export function ReceivePanel({
     setUploadError(null);
     setParseResult(null);
     if (!/^image\/(jpeg|png|webp|heic)$/i.test(file.type)) {
-      setUploadError("Upload a JPEG, PNG, or WEBP photo of the invoice.");
+      setUploadError(
+        `"${file.name}" isn't a photo we can read — save as JPEG, PNG, WEBP, or HEIC and try again.`
+      );
       return;
     }
     if (file.size > 6 * 1024 * 1024) {
-      setUploadError("Photo is larger than 6 MB — try a smaller one.");
+      setUploadError(
+        `"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB, which is over the 6 MB limit. Use your phone's "medium" or "small" photo setting, or crop to just the invoice.`
+      );
       return;
     }
     setUploading(true);
@@ -128,7 +159,14 @@ export function ReceivePanel({
       );
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { message?: string };
-        setUploadError(body.message || `HTTP ${res.status}`);
+        setUploadError(
+          body.message ||
+            (res.status === 413
+              ? "The invoice photo was too big to upload — try a smaller one."
+              : res.status >= 500
+                ? "The server hit a problem reading that invoice. Try again, or fill in the form by hand."
+                : `Upload failed (HTTP ${res.status}).`)
+        );
         return;
       }
       const data = (await res.json()) as { parsed: ParseResult };
@@ -137,7 +175,11 @@ export function ReceivePanel({
         applyParsedToForm(data.parsed);
       }
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : String(err));
+      setUploadError(
+        err instanceof Error
+          ? `Couldn't upload the invoice: ${err.message}. Check your connection and try again.`
+          : "Couldn't upload the invoice. Check your connection and try again."
+      );
     } finally {
       setUploading(false);
     }
@@ -161,6 +203,53 @@ export function ReceivePanel({
     setStates(next);
   };
 
+  const handleClearInvoice = async () => {
+    if (!confirm("Remove the scanned invoice from this PO? You can re-upload afterward.")) {
+      return;
+    }
+    setClearing(true);
+    setUploadError(null);
+    try {
+      const res = await fetch(
+        `/api/purchase-orders/${encodeURIComponent(purchaseOrderId)}/invoice`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { message?: string };
+        setUploadError(
+          body.message ||
+            `Couldn't remove the scan (HTTP ${res.status}). Try again or reload the page.`
+        );
+        return;
+      }
+      setParseResult(null);
+      // Reset line state to PO defaults so the user isn't stuck with
+      // prefills from the scan they just deleted.
+      setStates(
+        Object.fromEntries(
+          lines.map((l) => [
+            l.id,
+            {
+              receivedPacks: String(l.quantityOrdered),
+              actualUnitCostCents:
+                l.expectedUnitCostCents != null
+                  ? (l.expectedUnitCostCents / 100).toFixed(2)
+                  : "",
+            },
+          ])
+        )
+      );
+    } catch (err) {
+      setUploadError(
+        err instanceof Error
+          ? `Couldn't reach the server: ${err.message}`
+          : "Couldn't reach the server. Check your connection and try again."
+      );
+    } finally {
+      setClearing(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border/60 bg-muted/20 p-4">
@@ -180,13 +269,31 @@ export function ReceivePanel({
           variant="outline"
           className="rounded-2xl"
           onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
+          disabled={uploading || clearing}
         >
-          {uploading ? "Reading invoice…" : "📷 Scan invoice"}
+          {uploading
+            ? "Reading invoice…"
+            : parseResult
+              ? "📷 Scan a different invoice"
+              : "📷 Scan invoice"}
         </Button>
+        {parseResult ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className="rounded-2xl"
+            onClick={handleClearInvoice}
+            disabled={clearing || uploading}
+          >
+            {clearing ? "Clearing…" : "Remove scan"}
+          </Button>
+        ) : null}
         <div className="flex-1 text-sm text-muted-foreground">
-          Snap the supplier's delivery invoice. We auto-fill received quantities
-          and actual costs — you review before saving.
+          {parseResult
+            ? initialParsed?.parsedAt
+              ? `Scan from ${new Date(initialParsed.parsedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}. Rescan if the numbers shifted.`
+              : "Scan applied. You can rescan with a clearer photo or remove it entirely."
+            : "Snap the supplier's delivery invoice. We auto-fill received quantities and actual costs — you review before saving."}
         </div>
       </div>
 
@@ -453,6 +560,36 @@ function classifyVariance(
   if (absPct >= 0.15) return { severity: "review", deltaPct };
   if (absPct >= 0.05) return { severity: "watch", deltaPct };
   return { severity: "none", deltaPct };
+}
+
+/**
+ * Turn a persisted ParseResult JSON (rehydrated from the PO's
+ * invoiceParsed column) back into per-line form defaults. Mirrors
+ * the logic of applyParsedToForm but runs once at mount, so a
+ * user who reloads the page mid-receive sees their earlier fills
+ * still populated instead of having to rescan.
+ */
+function buildLineStateFromParsed(
+  parsed: Record<string, unknown> | null,
+  lines: ReceiveLine[]
+): Record<string, Partial<LineState>> {
+  const out: Record<string, Partial<LineState>> = {};
+  if (!parsed || typeof parsed !== "object") return out;
+  const parsedLines = Array.isArray((parsed as { lines?: unknown }).lines)
+    ? ((parsed as { lines: unknown[] }).lines as Array<Record<string, unknown>>)
+    : [];
+  const valid = new Set(lines.map((l) => l.id));
+  for (const p of parsedLines) {
+    const id = typeof p.lineId === "string" && valid.has(p.lineId) ? p.lineId : null;
+    if (!id) continue;
+    const qty = typeof p.quantityPacks === "number" ? p.quantityPacks : null;
+    const unit = typeof p.unitCostCents === "number" ? p.unitCostCents : null;
+    out[id] = {
+      ...(qty != null ? { receivedPacks: String(Math.round(qty)) } : {}),
+      ...(unit != null ? { actualUnitCostCents: (unit / 100).toFixed(2) } : {}),
+    };
+  }
+  return out;
 }
 
 function fileToDataUrl(file: File): Promise<string> {

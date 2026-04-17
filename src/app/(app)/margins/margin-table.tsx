@@ -11,12 +11,13 @@
  */
 
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Download } from "lucide-react";
 
 import type {
   MarginRow,
   MarginBreakdown,
 } from "@/modules/recipes/margin-dashboard";
+import { downloadCsv, isoDateForFilename, toCsv } from "@/lib/csv";
 
 type SortKey = "margin-asc" | "margin-desc" | "cogs-desc" | "name-asc";
 type Filter = "all" | "review" | "watch" | "unpriced" | "missing-data";
@@ -94,6 +95,34 @@ export function MarginTable({ rows }: { rows: MarginRow[] }) {
           <option value="cogs-desc">Sort: highest cost first</option>
           <option value="name-asc">Sort: A → Z</option>
         </select>
+        <button
+          type="button"
+          onClick={() =>
+            downloadCsv(
+              `stockpilot-margins-${isoDateForFilename()}.csv`,
+              toCsv(sorted, [
+                { header: "Menu item", value: (r) => r.menuItemName },
+                { header: "Variant", value: (r) => r.variantName ?? "" },
+                { header: "Category", value: (r) => r.category ?? "" },
+                { header: "Price $", value: (r) => r.sellPriceCents != null ? (r.sellPriceCents / 100).toFixed(2) : "" },
+                { header: "Cost $", value: (r) => r.cogsCents > 0 ? (r.cogsCents / 100).toFixed(2) : "" },
+                { header: "Margin $", value: (r) => r.marginCents != null ? (r.marginCents / 100).toFixed(2) : "" },
+                { header: "Margin %", value: (r) => r.marginPct != null ? (r.marginPct * 100).toFixed(1) : "" },
+                { header: "Severity", value: (r) => r.severity },
+                { header: "Ingredient confidence", value: (r) => (r.confidence * 100).toFixed(0) + "%" },
+                { header: "Recipe status", value: (r) => r.recipeStatus },
+                { header: "Components costed", value: (r) => r.componentsCosted },
+                { header: "Components missing", value: (r) => r.componentsMissing },
+              ])
+            )
+          }
+          disabled={sorted.length === 0}
+          className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/60 bg-background px-3 text-sm transition hover:bg-muted disabled:opacity-50"
+          title="Download the current filtered view as CSV"
+        >
+          <Download className="h-3.5 w-3.5" />
+          CSV
+        </button>
       </div>
 
       <div className="overflow-x-auto">
@@ -271,16 +300,40 @@ function BreakdownRow({ variantId }: { variantId: string }) {
     <tr className="bg-muted/20">
       <td colSpan={6} className="px-4 py-4">
         {state.status === "loading" ? (
-          <div className="text-xs text-muted-foreground">Loading breakdown…</div>
+          <BreakdownSkeleton />
         ) : state.status === "error" ? (
           <div className="text-xs text-red-700 dark:text-red-300">
-            Couldn&apos;t load breakdown: {state.message}
+            Couldn&apos;t load the ingredient breakdown ({state.message}). Close
+            and reopen this row to retry.
           </div>
         ) : (
           <BreakdownTable data={state.data} />
         )}
       </td>
     </tr>
+  );
+}
+
+function BreakdownSkeleton() {
+  // Shimmers 3 ingredient rows + a total. Matches the real table's
+  // shape so the page doesn't jump layout when data arrives.
+  return (
+    <div className="space-y-3">
+      <div className="h-3 w-32 animate-pulse rounded bg-muted/70" />
+      <div className="space-y-1.5">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="flex items-center gap-3">
+            <div className="h-3 w-40 animate-pulse rounded bg-muted/60" />
+            <div className="h-3 w-24 animate-pulse rounded bg-muted/50" />
+            <div className="ml-auto h-3 w-16 animate-pulse rounded bg-muted/60" />
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center gap-3 border-t border-border/40 pt-2">
+        <div className="h-3 w-24 animate-pulse rounded bg-muted/70" />
+        <div className="ml-auto h-3 w-20 animate-pulse rounded bg-muted/70" />
+      </div>
+    </div>
   );
 }
 

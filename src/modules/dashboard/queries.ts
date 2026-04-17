@@ -304,6 +304,13 @@ export async function getPurchaseOrderDetail(locationId: string, purchaseOrderId
         id: purchaseOrderId,
         locationId,
       },
+      // The PO row carries the invoiceImage Bytes column which can
+      // be several MB. Omitting it here keeps the SSR payload light;
+      // the image is served separately via GET /api/purchase-orders
+      // /[id]/invoice when the UI actually wants to display it. The
+      // parsed JSON + parsedAt are kept — they're tiny and drive
+      // the ReceivePanel's rehydration on page load.
+      omit: { invoiceImage: true },
       include: {
         supplier: true,
         recommendation: {
