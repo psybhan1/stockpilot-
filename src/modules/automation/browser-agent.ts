@@ -388,15 +388,55 @@ export async function runWebsiteOrderAgent(
       const orderNum = task?.purchaseOrder?.orderNumber ?? "(unknown)";
       const supplierName = task?.purchaseOrder?.supplier?.name ?? "the supplier";
       const friendly = friendlyBrowserAgentError(errMsg);
+
+      // Phase 3 fallback: even when the headless agent fails (CAPTCHA,
+      // session expired, Chrome crashed), we can STILL give the user a
+      // one-tap cart-add link that opens in their own browser. This
+      // turns a "try again later" dead-end into "tap this button, you're
+      // one step from checkout."
+      const taskRow = await db.agentTask.findUnique({
+        where: { id: agentTaskId },
+        select: { purchaseOrderId: true },
+      });
+      const poForFallback = taskRow?.purchaseOrderId
+        ? await db.purchaseOrder.findUnique({
+            where: { id: taskRow.purchaseOrderId },
+            select: {
+              supplier: { select: { name: true, website: true } },
+              lines: { select: { description: true, quantityOrdered: true, notes: true } },
+            },
+          })
+        : null;
+      const { buildDeepCartAddUrl } = await import(
+        "@/modules/automation/cart-links"
+      );
+      const deepLink = poForFallback
+        ? buildDeepCartAddUrl({
+            supplierWebsite: poForFallback.supplier.website,
+            supplierName: poForFallback.supplier.name,
+            lines: poForFallback.lines.map((l) => ({
+              description: l.description,
+              quantityOrdered: l.quantityOrdered,
+              productUrl: extractLineProductUrl(l.notes),
+            })),
+          })
+        : null;
+
+      const fallbackLine = deepLink
+        ? `\n\n👉 Tap below to fill your cart manually in one tap:`
+        : `\n\nThe order is still marked as approved so you can retry, or open ${supplierName} and add it yourself.`;
       const body =
         `⚠️ *${orderNum}* — couldn't finish adding to *${supplierName}*'s cart.\n\n` +
-        `${friendly}\n\n` +
-        `The order is still marked as approved so you can retry, or open ${supplierName} and add it yourself.`;
+        `${friendly}${fallbackLine}`;
+      const fallbackKeyboard = deepLink
+        ? [[{ text: deepLink.label, url: deepLink.url }]]
+        : undefined;
       for (const m of managers) {
         if (!m.telegramChatId) continue;
-        await sendTelegramMessage(m.telegramChatId, body, { parseMode: "Markdown" }).catch(
-          () => null
-        );
+        await sendTelegramMessage(m.telegramChatId, body, {
+          parseMode: "Markdown",
+          replyMarkup: fallbackKeyboard,
+        }).catch(() => null);
       }
     } catch {
       /* notification is best-effort */
