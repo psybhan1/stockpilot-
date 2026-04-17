@@ -206,6 +206,18 @@ export async function createRescuePurchaseOrder(
       },
     });
     for (const line of alt.lines) {
+      // Snapshot the alternate supplier's last-paid price so the
+      // delivery-time variance audit has a baseline to diff against.
+      // Same policy as approveRecommendation / the operator-bot PO
+      // path — otherwise a supplier-swap (rescue) would land in the
+      // books without any price-creep signal.
+      const alternateSi = await tx.supplierItem.findFirst({
+        where: {
+          supplierId: alt.supplier.id,
+          inventoryItemId: line.inventoryItemId,
+        },
+        select: { lastUnitCostCents: true },
+      });
       await tx.purchaseOrderLine.create({
         data: {
           purchaseOrderId: created.id,
@@ -215,6 +227,7 @@ export async function createRescuePurchaseOrder(
           expectedQuantityBase: line.expectedQuantityBase,
           purchaseUnit: line.purchaseUnit,
           packSizeBase: line.packSizeBase,
+          latestCostCents: alternateSi?.lastUnitCostCents ?? null,
         },
       });
     }

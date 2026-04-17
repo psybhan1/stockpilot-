@@ -32,9 +32,9 @@ import { PrismaClient } from "../src/generated/prisma-postgres/client.js";
 const { recordInventoryMovement } = await import(
   "../src/modules/inventory/ledger.ts"
 );
-const { approveRecommendation, deliverPurchaseOrder } = await import(
-  "../src/modules/purchasing/service.ts"
-);
+const { approveRecommendation, deliverPurchaseOrder, cancelPurchaseOrder } =
+  await import("../src/modules/purchasing/service.ts");
+const { submitCountEntry } = await import("../src/modules/inventory/ledger.ts");
 const { getVarianceReport } = await import("../src/modules/variance/report.ts");
 const { getPricingDashboard } = await import(
   "../src/modules/pricing/history.ts"
@@ -610,6 +610,304 @@ await scenario("Pricing dashboard shows the 16.67% price increase", async () => 
       `severity = review at 16.67% (got ${row.summary.severity})`
     );
   }
+});
+
+// ── Harder scenarios: multi-line POs, partial delivery, cancels, counts, conversions ──
+
+await scenario("Multi-line PO (built directly) delivers all lines with per-line actuals", async () => {
+  const w = await buildCafe();
+  // Directly create a 2-line PO — bot / recommendations are single-item;
+  // the multi-line flow is what a manager building in the UI will hit.
+  const po = await db.purchaseOrder.create({
+    data: {
+      locationId: w.locationId,
+      supplierId: w.supplierId,
+      orderNumber: `PO-${STAMP}-ml`,
+      status: "SENT",
+      totalLines: 2,
+      sentAt: new Date(),
+      lines: {
+        create: [
+          {
+            inventoryItemId: w.milkId,
+            description: "Milk 2% case",
+            quantityOrdered: 2,
+            expectedQuantityBase: 8000,
+            purchaseUnit: "CASE",
+            packSizeBase: 4000,
+            latestCostCents: 1200,
+          },
+          {
+            inventoryItemId: w.beansId,
+            description: "Espresso beans kg",
+            quantityOrdered: 3,
+            expectedQuantityBase: 3000,
+            purchaseUnit: "KILOGRAM",
+            packSizeBase: 1000,
+            latestCostCents: 2500,
+          },
+        ],
+      },
+    },
+    include: { lines: true },
+  });
+  const lines = po.lines;
+  const milkLine = lines.find((l) => l.inventoryItemId === w.milkId)!;
+  const beansLine = lines.find((l) => l.inventoryItemId === w.beansId)!;
+
+  await deliverPurchaseOrder({
+    purchaseOrderId: po.id,
+    userId: w.userId,
+    lineReceipts: { [milkLine.id]: 2, [beansLine.id]: 3 },
+    actualUnitCostsCents: { [milkLine.id]: 1200, [beansLine.id]: 2550 },
+  });
+
+  const freshLines = await db.purchaseOrderLine.findMany({
+    where: { purchaseOrderId: po.id },
+  });
+  const fMilk = freshLines.find((l) => l.id === milkLine.id);
+  const fBeans = freshLines.find((l) => l.id === beansLine.id);
+  assert(fMilk?.actualUnitCostCents === 1200, `milk actual stored (got ${fMilk?.actualUnitCostCents})`);
+  assert(fBeans?.actualUnitCostCents === 2550, `beans actual stored (got ${fBeans?.actualUnitCostCents})`);
+  assert(fMilk?.actualQuantityBase === 8000, `milk qty stored 8000ml`);
+  assert(fBeans?.actualQuantityBase === 3000, `beans qty stored 3000g`);
+
+  // Both inventory levels went up
+  const milk = await db.inventoryItem.findUnique({ where: { id: w.milkId } });
+  const beans = await db.inventoryItem.findUnique({ where: { id: w.beansId } });
+  assert(milk?.stockOnHandBase === 16000 + 8000, `milk +8000ml (got ${milk?.stockOnHandBase})`);
+  assert(beans?.stockOnHandBase === 5000 + 3000, `beans +3000g (got ${beans?.stockOnHandBase})`);
+});
+
+await scenario("Partial delivery: ordered 3 cases, driver dropped 2", async () => {
+  const w = await buildCafe();
+  const po = await db.purchaseOrder.create({
+    data: {
+      locationId: w.locationId,
+      supplierId: w.supplierId,
+      orderNumber: `PO-${STAMP}-partial`,
+      status: "SENT",
+      totalLines: 1,
+      sentAt: new Date(),
+      lines: {
+        create: {
+          inventoryItemId: w.milkId,
+          description: "Milk",
+          quantityOrdered: 3,
+          expectedQuantityBase: 12000,
+          purchaseUnit: "CASE",
+          packSizeBase: 4000,
+          latestCostCents: 1200,
+        },
+      },
+    },
+    include: { lines: true },
+  });
+  const line = po.lines[0];
+  await deliverPurchaseOrder({
+    purchaseOrderId: po.id,
+    userId: w.userId,
+    notes: "Driver short 1 case; supplier will redeliver",
+    lineReceipts: { [line.id]: 2 }, // Only 2 of 3 received
+  });
+  const fresh = await db.purchaseOrderLine.findUnique({ where: { id: line.id } });
+  assert(fresh?.actualQuantityBase === 8000, `actual qty 8000ml (got ${fresh?.actualQuantityBase})`);
+  const milk = await db.inventoryItem.findUnique({ where: { id: w.milkId } });
+  assert(milk?.stockOnHandBase === 16000 + 8000, `stock +8000ml only (got ${milk?.stockOnHandBase})`);
+});
+
+await scenario("Over-delivery: ordered 2 cases, supplier dropped 3", async () => {
+  const w = await buildCafe();
+  const po = await db.purchaseOrder.create({
+    data: {
+      locationId: w.locationId,
+      supplierId: w.supplierId,
+      orderNumber: `PO-${STAMP}-over`,
+      status: "SENT",
+      totalLines: 1,
+      sentAt: new Date(),
+      lines: {
+        create: {
+          inventoryItemId: w.milkId,
+          description: "Milk",
+          quantityOrdered: 2,
+          expectedQuantityBase: 8000,
+          purchaseUnit: "CASE",
+          packSizeBase: 4000,
+          latestCostCents: 1200,
+        },
+      },
+    },
+    include: { lines: true },
+  });
+  const line = po.lines[0];
+  await deliverPurchaseOrder({
+    purchaseOrderId: po.id,
+    userId: w.userId,
+    lineReceipts: { [line.id]: 3 }, // 1 extra case showed up
+  });
+  const fresh = await db.purchaseOrderLine.findUnique({ where: { id: line.id } });
+  assert(fresh?.actualQuantityBase === 12000, `actual qty 12000ml (got ${fresh?.actualQuantityBase})`);
+  const milk = await db.inventoryItem.findUnique({ where: { id: w.milkId } });
+  assert(milk?.stockOnHandBase === 16000 + 12000, `stock +12000ml (got ${milk?.stockOnHandBase})`);
+});
+
+await scenario("Cancel PO mid-flight: status → CANCELLED, inventory untouched", async () => {
+  const w = await buildCafe();
+  await recordInventoryMovement({
+    locationId: w.locationId,
+    inventoryItemId: w.milkId,
+    movementType: "POS_DEPLETION",
+    quantityDeltaBase: -10000,
+    userId: w.userId,
+    sourceType: "pos_sale",
+    sourceId: "pre-cancel",
+  });
+  const rec = await db.reorderRecommendation.findFirstOrThrow({
+    where: { inventoryItemId: w.milkId, status: "PENDING_APPROVAL" },
+  });
+  const po = await approveRecommendation(rec.id, w.userId);
+  const stockBefore = (
+    await db.inventoryItem.findUnique({ where: { id: w.milkId } })
+  )?.stockOnHandBase;
+
+  await cancelPurchaseOrder(po.id, w.userId, "supplier not responding");
+
+  const fresh = await db.purchaseOrder.findUnique({ where: { id: po.id } });
+  assert(fresh?.status === "CANCELLED", `PO status = CANCELLED (got ${fresh?.status})`);
+  const stockAfter = (
+    await db.inventoryItem.findUnique({ where: { id: w.milkId } })
+  )?.stockOnHandBase;
+  assert(
+    stockBefore === stockAfter,
+    `inventory untouched by cancel (was ${stockBefore}, now ${stockAfter})`
+  );
+});
+
+await scenario("Stock count flow (submitCountEntry) posts the right adjustment", async () => {
+  const w = await buildCafe();
+  // Create a count session (manager doing a physical count).
+  const session = await db.stockCountSession.create({
+    data: {
+      locationId: w.locationId,
+      mode: "TABLE",
+      status: "IN_PROGRESS",
+      createdById: w.userId,
+    },
+  });
+  // Expected = stockOnHandBase = 16000. Count found 15500 (500ml short).
+  await submitCountEntry({
+    sessionId: session.id,
+    inventoryItemId: w.milkId,
+    countedBase: 15500,
+    userId: w.userId,
+    notes: "500ml short",
+  });
+  const milk = await db.inventoryItem.findUnique({ where: { id: w.milkId } });
+  assert(milk?.stockOnHandBase === 15500, `stock now 15500ml (got ${milk?.stockOnHandBase})`);
+  const entry = await db.stockCountEntry.findFirstOrThrow({
+    where: { sessionId: session.id, inventoryItemId: w.milkId },
+  });
+  assert(entry.expectedBase === 16000, `expected captured as 16000`);
+  assert(entry.countedBase === 15500, `counted = 15500`);
+  assert(
+    entry.adjustmentBase === -500,
+    `adjustment = -500 (got ${entry.adjustmentBase})`
+  );
+  assert(entry.disposition === "LOW", `disposition = LOW for shortfall`);
+  // A MANUAL_COUNT_ADJUSTMENT movement was posted.
+  const adj = await db.stockMovement.findFirst({
+    where: {
+      inventoryItemId: w.milkId,
+      movementType: "MANUAL_COUNT_ADJUSTMENT",
+      sourceId: session.id,
+    },
+  });
+  assert(adj != null, "MANUAL_COUNT_ADJUSTMENT movement posted");
+  assert(
+    adj?.quantityDeltaBase === -500,
+    `adjustment movement delta = -500 (got ${adj?.quantityDeltaBase})`
+  );
+});
+
+await scenario("Unit conversion sanity: purchase-unit → base-unit math across receive + count", async () => {
+  const w = await buildCafe();
+  // Receive 3 cases of milk. Each case = 4000ml (packSizeBase).
+  // Expected stock after receive: 16000 (starting) + 3 * 4000 = 28000ml
+  const po = await db.purchaseOrder.create({
+    data: {
+      locationId: w.locationId,
+      supplierId: w.supplierId,
+      orderNumber: `PO-${STAMP}-units`,
+      status: "SENT",
+      totalLines: 1,
+      sentAt: new Date(),
+      lines: {
+        create: {
+          inventoryItemId: w.milkId,
+          description: "Milk",
+          quantityOrdered: 3,
+          expectedQuantityBase: 12000,
+          purchaseUnit: "CASE",
+          packSizeBase: 4000,
+          latestCostCents: 1200,
+        },
+      },
+    },
+    include: { lines: true },
+  });
+  await deliverPurchaseOrder({
+    purchaseOrderId: po.id,
+    userId: w.userId,
+    lineReceipts: { [po.lines[0].id]: 3 },
+  });
+  let milk = await db.inventoryItem.findUnique({ where: { id: w.milkId } });
+  assert(
+    milk?.stockOnHandBase === 28000,
+    `after 3 cases delivered, stock = 28000ml (got ${milk?.stockOnHandBase})`
+  );
+
+  // Now sell 15 lattes @ 150ml each = 2250ml. Stock should drop to 25750.
+  await recordInventoryMovement({
+    locationId: w.locationId,
+    inventoryItemId: w.milkId,
+    movementType: "POS_DEPLETION",
+    quantityDeltaBase: -2250,
+    userId: w.userId,
+    sourceType: "pos_sale",
+    sourceId: "lattes",
+  });
+  milk = await db.inventoryItem.findUnique({ where: { id: w.milkId } });
+  assert(
+    milk?.stockOnHandBase === 25750,
+    `15 × 150ml lattes → 25750ml (got ${milk?.stockOnHandBase})`
+  );
+
+  // Now count and find 25 L exactly (= 25000ml, 750ml less than book).
+  const session = await db.stockCountSession.create({
+    data: {
+      locationId: w.locationId,
+      mode: "TABLE",
+      status: "IN_PROGRESS",
+      createdById: w.userId,
+    },
+  });
+  await submitCountEntry({
+    sessionId: session.id,
+    inventoryItemId: w.milkId,
+    countedBase: 25000,
+    userId: w.userId,
+  });
+  milk = await db.inventoryItem.findUnique({ where: { id: w.milkId } });
+  assert(milk?.stockOnHandBase === 25000, `after count = 25000ml`);
+
+  const entry = await db.stockCountEntry.findFirstOrThrow({
+    where: { sessionId: session.id, inventoryItemId: w.milkId },
+  });
+  assert(
+    entry.adjustmentBase === -750,
+    `adjustment = −750ml (got ${entry.adjustmentBase})`
+  );
 });
 
 await cleanup();

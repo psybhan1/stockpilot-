@@ -1040,6 +1040,17 @@ export async function createRestockOrderFromBotMessage(input: {
       },
     });
 
+    // Stamp the expected unit cost from the supplier's last-paid
+    // price (same as approveRecommendation). Without this, the
+    // delivery-time variance audit has no baseline to diff against
+    // and a supplier raising prices silently lands in the books.
+    const supplierItemForCost = await tx.supplierItem.findFirst({
+      where: {
+        supplierId: supplierContext.supplier.id,
+        inventoryItemId: refreshedItem.id,
+      },
+      select: { lastUnitCostCents: true },
+    });
     await tx.purchaseOrderLine.create({
       data: {
         purchaseOrderId: createdPurchaseOrder.id,
@@ -1049,6 +1060,7 @@ export async function createRestockOrderFromBotMessage(input: {
         expectedQuantityBase: order.orderQuantityBase,
         purchaseUnit: refreshedItem.purchaseUnit,
         packSizeBase: supplierContext.packSizeBase,
+        latestCostCents: supplierItemForCost?.lastUnitCostCents ?? null,
       },
     });
 
