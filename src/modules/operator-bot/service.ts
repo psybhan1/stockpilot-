@@ -1641,67 +1641,98 @@ async function dispatchBotPurchaseOrder(input: {
       });
     }
   } else if (input.supplier.orderingMode === SupplierOrderingMode.WEBSITE) {
-    const task = await supplierOrderProvider.prepareWebsiteTask({
-      supplierName: input.supplier.name,
-      website: input.supplier.website,
-      orderNumber: currentPurchaseOrder.orderNumber,
-      lines: [line],
-    });
+    // Pivotal simplification: the browser-ordering agent ONLY runs
+    // when the supplier has saved credentials (cookies). Without
+    // credentials, headless Chrome built a cart in its own ephemeral
+    // session that couldn't be transferred to the manager's own
+    // browser → the user ended up with an empty cart when they
+    // clicked "Open cart". For weeks this was the main source of
+    // "the bot doesn't work" complaints.
+    //
+    // With cookies: agent shops in the manager's real Amazon session.
+    //   Cart actually lands in their account. Worth the complexity.
+    //
+    // Without cookies: skip the agent entirely. Send a clean,
+    //   actionable message with the product URL + quantity +
+    //   step-by-step instructions. No browser launch, no Chrome
+    //   dependency, no cart-empty-ness bug — just the simplest
+    //   thing that solves the user's problem.
+    const hasCredentials = await supplierHasCredentials(input.supplier.id);
 
-    await db.$transaction(async (tx) => {
-      // Transition PO to SENT so the status doesn't stay stuck at
-      // APPROVED forever (Bug #1 from the deep audit).
-      await tx.purchaseOrder.update({
-        where: { id: input.purchaseOrderId },
-        data: { status: PurchaseOrderStatus.SENT, sentAt: new Date() },
-      });
-
-      const agentTask = await tx.agentTask.create({
-        data: {
-          locationId: input.locationId,
-          supplierId: input.supplier.id,
-          purchaseOrderId: input.purchaseOrderId,
-          type: AgentTaskType.WEBSITE_ORDER_PREP,
-          status: AgentTaskStatus.PENDING,
-          title: task.title,
-          description: task.description,
-          input: task.input as Prisma.InputJsonValue,
-        },
-      });
-
-      await tx.supplierCommunication.create({
-        data: {
-          supplierId: input.supplier.id,
-          purchaseOrderId: input.purchaseOrderId,
-          channel: input.supplier.orderingMode,
-          direction: CommunicationDirection.OUTBOUND,
-          subject: `PO ${currentPurchaseOrder.orderNumber} website prep queued`,
-          body:
-            "StockPilot queued a website-order preparation workflow from a manager bot command. Final checkout remains approval-first.",
-          status: CommunicationStatus.DRAFT,
-        },
-      });
-
-      await enqueueJobTx(tx, {
-        locationId: input.locationId,
-        type: "PREPARE_WEBSITE_ORDER",
-        payload: {
-          taskId: agentTask.id,
-          queuedById: input.userId,
-        },
-      });
-
-      await createAuditLogTx(tx, {
+    if (!hasCredentials) {
+      await handleWebsiteOrderWithoutCredentials({
+        tx: null,
+        purchaseOrderId: input.purchaseOrderId,
         locationId: input.locationId,
         userId: input.userId,
-        action: "bot.website_order_task_queued",
-        entityType: "agentTask",
-        entityId: agentTask.id,
-        details: {
-          purchaseOrderId: input.purchaseOrderId,
-        },
+        supplier: input.supplier,
+        orderNumber: currentPurchaseOrder.orderNumber,
+        lineDescription: input.inventoryName,
+        quantity: input.packCount,
       });
-    });
+    } else {
+      const task = await supplierOrderProvider.prepareWebsiteTask({
+        supplierName: input.supplier.name,
+        website: input.supplier.website,
+        orderNumber: currentPurchaseOrder.orderNumber,
+        lines: [line],
+      });
+
+      await db.$transaction(async (tx) => {
+        // Transition PO to SENT so the status doesn't stay stuck at
+        // APPROVED forever (Bug #1 from the deep audit).
+        await tx.purchaseOrder.update({
+          where: { id: input.purchaseOrderId },
+          data: { status: PurchaseOrderStatus.SENT, sentAt: new Date() },
+        });
+
+        const agentTask = await tx.agentTask.create({
+          data: {
+            locationId: input.locationId,
+            supplierId: input.supplier.id,
+            purchaseOrderId: input.purchaseOrderId,
+            type: AgentTaskType.WEBSITE_ORDER_PREP,
+            status: AgentTaskStatus.PENDING,
+            title: task.title,
+            description: task.description,
+            input: task.input as Prisma.InputJsonValue,
+          },
+        });
+
+        await tx.supplierCommunication.create({
+          data: {
+            supplierId: input.supplier.id,
+            purchaseOrderId: input.purchaseOrderId,
+            channel: input.supplier.orderingMode,
+            direction: CommunicationDirection.OUTBOUND,
+            subject: `PO ${currentPurchaseOrder.orderNumber} website prep queued`,
+            body:
+              "StockPilot queued a website-order preparation workflow from a manager bot command. Final checkout remains approval-first.",
+            status: CommunicationStatus.DRAFT,
+          },
+        });
+
+        await enqueueJobTx(tx, {
+          locationId: input.locationId,
+          type: "PREPARE_WEBSITE_ORDER",
+          payload: {
+            taskId: agentTask.id,
+            queuedById: input.userId,
+          },
+        });
+
+        await createAuditLogTx(tx, {
+          locationId: input.locationId,
+          userId: input.userId,
+          action: "bot.website_order_task_queued",
+          entityType: "agentTask",
+          entityId: agentTask.id,
+          details: {
+            purchaseOrderId: input.purchaseOrderId,
+          },
+        });
+      });
+    }
   } else {
     await db.$transaction(async (tx) => {
       await tx.supplierCommunication.create({
@@ -1733,6 +1764,145 @@ async function dispatchBotPurchaseOrder(input: {
       id: input.purchaseOrderId,
     },
   });
+}
+
+/**
+ * Does this supplier have website-login credentials saved? Without
+ * them the browser-ordering agent can't put items into the manager's
+ * real cart — so we skip the agent entirely and take the simpler,
+ * always-reliable path.
+ */
+async function supplierHasCredentials(supplierId: string): Promise<boolean> {
+  const row = await db.supplier.findUnique({
+    where: { id: supplierId },
+    select: { websiteCredentials: true },
+  });
+  if (!row?.websiteCredentials) return false;
+  const { decryptSupplierCredentials } = await import(
+    "@/modules/suppliers/website-credentials"
+  );
+  return !!decryptSupplierCredentials(row.websiteCredentials);
+}
+
+/**
+ * Simpler path when the supplier has no saved login. Doesn't launch
+ * headless Chrome, doesn't build an ephemeral cart that won't
+ * transfer — just confirms the approval to the manager on Telegram
+ * with the product URL they pasted, the quantity, and a clear
+ * one-tap link so they can add it to their own cart in their own
+ * browser. Marks the PO as SENT (there's nothing more we can do
+ * server-side without credentials) and queues a gentle nudge to
+ * set up cookies so next time is one-tap.
+ */
+async function handleWebsiteOrderWithoutCredentials(input: {
+  tx: null;
+  purchaseOrderId: string;
+  locationId: string;
+  userId: string | null;
+  supplier: {
+    id: string;
+    name: string;
+    website: string | null;
+  };
+  orderNumber: string;
+  lineDescription: string;
+  quantity: number;
+}): Promise<void> {
+  const { extractLineProductUrl } = await import(
+    "@/modules/automation/browser-agent"
+  );
+  const poLine = await db.purchaseOrderLine.findFirst({
+    where: { purchaseOrderId: input.purchaseOrderId },
+    select: { notes: true },
+  });
+  const productUrl = extractLineProductUrl(poLine?.notes) ?? input.supplier.website;
+
+  await db.$transaction(async (tx) => {
+    await tx.purchaseOrder.update({
+      where: { id: input.purchaseOrderId },
+      data: { status: PurchaseOrderStatus.SENT, sentAt: new Date() },
+    });
+    await tx.supplierCommunication.create({
+      data: {
+        supplierId: input.supplier.id,
+        purchaseOrderId: input.purchaseOrderId,
+        channel: SupplierOrderingMode.WEBSITE,
+        direction: CommunicationDirection.OUTBOUND,
+        subject: `PO ${input.orderNumber} handed off (no saved login)`,
+        body: "Sent the manager a direct product link + instructions to complete in their own browser.",
+        status: CommunicationStatus.SENT,
+        sentAt: new Date(),
+      },
+    });
+    await createAuditLogTx(tx, {
+      locationId: input.locationId,
+      userId: input.userId,
+      action: "bot.website_order_handoff_no_credentials",
+      entityType: "purchaseOrder",
+      entityId: input.purchaseOrderId,
+      details: { supplierId: input.supplier.id, productUrl },
+    });
+  });
+
+  // Send the handoff message to the manager(s).
+  try {
+    const { sendTelegramMessage } = await import("@/lib/telegram-bot");
+    const { env } = await import("@/lib/env");
+    const managers = await db.user.findMany({
+      where: {
+        telegramChatId: { not: null },
+        roles: { some: { locationId: input.locationId } },
+      },
+      select: { telegramChatId: true },
+      take: 3,
+    });
+    if (managers.length === 0) return;
+
+    const appUrl = env.APP_URL?.replace(/\/$/, "") ?? "";
+    const settingsUrl = appUrl ? `${appUrl}/suppliers/${input.supplier.id}` : null;
+    const keyboard: Array<
+      Array<{ text: string; url: string } | { text: string; callback_data: string }>
+    > = [];
+
+    // PRIMARY CTA: sign in once → bot does it for you forever.
+    // Top of the keyboard where taps land first.
+    if (settingsUrl) {
+      keyboard.push([
+        {
+          text: `🚀 Sign in to ${input.supplier.name} — next time it's one tap`,
+          url: settingsUrl,
+        },
+      ]);
+    }
+    // Secondary: complete manually THIS time. Product URL if we have
+    // it, else home page.
+    if (productUrl) {
+      keyboard.push([
+        {
+          text: `🛒 Or just open ${input.supplier.name} for this order`,
+          url: productUrl,
+        },
+      ]);
+    }
+
+    const body =
+      `✅ *${input.orderNumber}* approved — ${input.quantity}× ${input.lineDescription} from *${input.supplier.name}*.\n\n` +
+      `Right now I can't put items directly in your cart because you haven't signed in to ${input.supplier.name} yet.\n\n` +
+      `*Do this once* → tap *Sign in* below, paste your login (takes 30 seconds, encrypted at rest) → every future ${input.supplier.name} order auto-populates YOUR real cart. No more clicking around.\n\n` +
+      (productUrl
+        ? `For this order: tap *Open ${input.supplier.name}* below → Add to Cart → checkout.`
+        : `For this order: open ${input.supplier.name} and add ${input.quantity}× ${input.lineDescription}.`);
+
+    for (const m of managers) {
+      if (!m.telegramChatId) continue;
+      await sendTelegramMessage(m.telegramChatId, body, {
+        parseMode: "Markdown",
+        replyMarkup: keyboard.length > 0 ? keyboard : undefined,
+      }).catch(() => null);
+    }
+  } catch {
+    /* notification best-effort — PO is SENT regardless */
+  }
 }
 
 /**
