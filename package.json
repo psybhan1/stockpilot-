@@ -38,6 +38,7 @@
     "test:security": "node --env-file=.env --import tsx scripts/test-security-fixes.mts",
     "test:signup": "node --env-file=.env --import tsx scripts/test-signup.mts",
     "sim:cafe-week": "node --env-file=.env --import tsx scripts/simulate-cafe-week.mts",
+    "test:pos-auto-deplete": "node --env-file=.env --import tsx scripts/test-pos-auto-deplete.mts",
     "test:all": "npm run test && npm run test:db && npm run test:bot-e2e && npm run test:ai-provider && npm run test:credentials && npm run test:cart-links && npm run test:sniffer && npm run test:agent-steps && npm run test:product-metadata && npm run test:creative && npm run test:restaurant-day && npm run test:extension && npm run test:invoice-ocr && npm run test:margins && npm run test:variance && npm run test:pricing",
     "test:watch": "npm run test",
     "test:e2e": "playwright test",

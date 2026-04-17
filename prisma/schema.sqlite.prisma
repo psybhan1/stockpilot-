@@ -349,7 +349,7 @@ model InventoryItem {
   locationId              String
   primarySupplierId       String?
   name                    String
-  sku                     String                  @unique
+  sku                     String
   category                InventoryCategory
   imageUrl                String?
   baseUnit                BaseUnit
@@ -382,6 +382,8 @@ model InventoryItem {
   reorderRecommendations  ReorderRecommendation[]
   purchaseOrderLines      PurchaseOrderLine[]
   alerts                  Alert[]
+
+  @@unique([locationId, sku])
 }
 
 model InventoryUnitConversion {
@@ -713,7 +715,7 @@ model PosSaleEvent {
   id               String               @id @default(cuid())
   locationId       String
   integrationId    String?
-  externalOrderId  String?              @unique
+  externalOrderId  String?
   status           String
   source           PosProviderType
   serviceMode      ServiceMode?
@@ -725,6 +727,8 @@ model PosSaleEvent {
   location         Location             @relation(fields: [locationId], references: [id], onDelete: Cascade)
   integration      PosIntegration?      @relation(fields: [integrationId], references: [id], onDelete: SetNull)
   lines            PosSaleLine[]
+
+  @@unique([integrationId, externalOrderId])
 }
 
 model PosSaleLine {

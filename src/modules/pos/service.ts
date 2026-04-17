@@ -357,21 +357,49 @@ export async function syncCatalog(integrationId: string, userId?: string | null)
             serviceMode: variation.serviceMode,
           });
 
+          // Auto-approve high-confidence recipes so a brand-new café
+          // starts depleting inventory on its first sale — not after
+          // the owner has manually reviewed every drink. Low-confidence
+          // suggestions still land in DRAFT for review (safer when AI
+          // isn't sure). Owners can edit any auto-approved recipe from
+          // the /recipes page; mis-estimates will surface as shrinkage
+          // and can be corrected without data loss.
+          const autoApprove = suggestion.confidenceScore >= 0.75;
+
           const recipe = await tx.recipe.create({
             data: {
               locationId: integration.locationId,
               menuItemVariantId: menuItemVariant.id,
               version: 1,
-              status: RecipeStatus.DRAFT,
+              status: autoApprove ? RecipeStatus.APPROVED : RecipeStatus.DRAFT,
               aiSuggestedBy: env.DEFAULT_AI_PROVIDER,
               aiSummary: suggestion.summary,
               confidenceScore: suggestion.confidenceScore,
               completenessScore: 0.88,
+              approvedAt: autoApprove ? new Date() : null,
             },
           });
 
           recipeId = recipe.id;
-          mappingStatus = MappingStatus.RECIPE_DRAFT;
+          mappingStatus = autoApprove
+            ? MappingStatus.READY
+            : MappingStatus.RECIPE_DRAFT;
+
+          await createAuditLogTx(tx, {
+            locationId: integration.locationId,
+            userId: userId ?? undefined,
+            action: autoApprove
+              ? "recipe.ai_auto_approved"
+              : "recipe.ai_suggested_draft",
+            entityType: "recipe",
+            entityId: recipe.id,
+            details: {
+              confidenceScore: suggestion.confidenceScore,
+              menuItem: item.name,
+              variation: variation.name,
+              componentCount: suggestion.components.length,
+            },
+          });
 
           for (const component of suggestion.components) {
             const inventory = inventoryItems.find(
@@ -449,6 +477,14 @@ export async function syncCatalog(integrationId: string, userId?: string | null)
       entityId: integrationId,
       details: { recordsProcessed },
     });
+  }, {
+    // Real Square catalogs can have dozens to hundreds of items, and
+    // each one triggers an AI recipe suggestion call. Default 5s
+    // transaction timeout blows up on anything non-trivial. 60s gives
+    // headroom for realistic café menus. Larger catalogs should
+    // still be chunked — that's a follow-up.
+    maxWait: 30_000,
+    timeout: 60_000,
   });
 }
 
@@ -467,7 +503,10 @@ export async function importSampleSales(integrationId: string, userId?: string |
   for (const event of saleEvents) {
     const createdEvent = await db.posSaleEvent.upsert({
       where: {
-        externalOrderId: event.externalOrderId,
+        integrationId_externalOrderId: {
+          integrationId,
+          externalOrderId: event.externalOrderId,
+        },
       },
       update: {
         status: event.status,
