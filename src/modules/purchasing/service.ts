@@ -25,7 +25,16 @@ import { buildSupplierOrderEmail } from "@/modules/purchasing/email-template";
 import { getGmailCredentials } from "@/modules/channels/service";
 
 function nextOrderNumber() {
-  return `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  // Format: PO-YYYY-<6 base36> — about 2B values per year, plus a
+  // millisecond-timestamp prefix so two POs approved in the same
+  // second don't share digits. The old format (4 random digits,
+  // ~9k values) collided in the wild on any busy café and in any
+  // test that approved >10 POs back-to-back — the @@unique on
+  // orderNumber would throw P2002 and the whole transaction would
+  // roll back.
+  const ms = Date.now().toString(36);
+  const rand = Math.floor(Math.random() * 36 ** 4).toString(36).padStart(4, "0");
+  return `PO-${new Date().getFullYear()}-${ms}${rand}`;
 }
 
 function appendOperationalNote(existing: string | null | undefined, next: string | null | undefined) {
@@ -66,6 +75,22 @@ export async function approveRecommendation(
     : recommendation.recommendedPackCount;
   const approvedQuantityBase = approvedPackCount * recommendation.inventoryItem.packSizeBase;
 
+  // Capture the expected unit cost at PO-creation time from the
+  // preferred SupplierItem row. Without this, the delivery-time
+  // variance comparison has no baseline to diff the actual cost
+  // against, and `deliverPurchaseOrder`'s variance-audit logic
+  // silently does nothing — which hid the price-creep signal until
+  // now. Read the cheapest-supplier's price (same policy as the
+  // margin + pricing dashboards so the numbers agree across pages).
+  const supplierItemForCost = await db.supplierItem.findFirst({
+    where: {
+      supplierId: recommendation.supplierId,
+      inventoryItemId: recommendation.inventoryItemId,
+    },
+    select: { lastUnitCostCents: true },
+  });
+  const expectedLineCostCents = supplierItemForCost?.lastUnitCostCents ?? null;
+
   const purchaseOrder = await db.$transaction(async (tx) => {
     const po = await tx.purchaseOrder.create({
       data: {
@@ -94,6 +119,7 @@ export async function approveRecommendation(
         expectedQuantityBase: approvedQuantityBase,
         purchaseUnit: recommendation.recommendedPurchaseUnit,
         packSizeBase: recommendation.inventoryItem.packSizeBase,
+        latestCostCents: expectedLineCostCents,
       },
     });
 

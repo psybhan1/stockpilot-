@@ -560,7 +560,32 @@ export async function syncAlertsAndRecommendationsTx(
     },
   });
 
-  if (!supplierItem || item.snapshot.urgency === AlertSeverity.INFO) {
+  // Two signals fire a reorder recommendation:
+  //
+  //   1. `snapshot.urgency` is WARNING or CRITICAL — the usage-
+  //      projection says we'll be short before the next delivery.
+  //      Needs recent usage history to work.
+  //
+  //   2. `stockOnHandBase <= lowStockThresholdBase` — the operator
+  //      set an explicit floor and we've crossed it. Doesn't need
+  //      usage history. THIS IS THE NEW ONE — previously the gate
+  //      below only checked urgency, so brand-new items with no
+  //      usage history would get a LOW_STOCK alert (fires on the
+  //      same threshold) but NO reorder recommendation, forcing the
+  //      operator to build the PO by hand even though they'd told
+  //      us exactly when they wanted to reorder.
+  //
+  // Either signal fires the recommendation; we fall back to the
+  // supplier's lead time (or 2 days default) when no urgency was
+  // derived, so calculateRecommendedOrder still produces a sensible
+  // pack-rounded quantity.
+  const belowExplicitFloor =
+    item.stockOnHandBase <= item.lowStockThresholdBase;
+  const snapshotSaysReorder =
+    item.snapshot.urgency !== AlertSeverity.INFO;
+  const shouldRecommend = !!supplierItem && (belowExplicitFloor || snapshotSaysReorder);
+
+  if (!shouldRecommend) {
     if (existingRecommendation) {
       await tx.reorderRecommendation.update({
         where: { id: existingRecommendation.id },
@@ -587,12 +612,24 @@ export async function syncAlertsAndRecommendationsTx(
   const supplierDeliveryDays = parseDeliveryDays(supplierItem.deliveryDays);
   const itemDeliveryDays = parseDeliveryDays(item.deliveryDays);
 
+  // If the snapshot can't give us a lead time, fall back to the
+  // supplier's — otherwise a new item with leadTimeDays=0 (schema
+  // default) bricks the urgency classifier and makes demand-cover
+  // math zero-out. Using 2 days as a last-ditch floor so a wholly
+  // unconfigured item still produces a sensible reorder quantity.
+  const effectiveLeadTimeDays =
+    supplierItem.leadTimeDays != null && supplierItem.leadTimeDays > 0
+      ? supplierItem.leadTimeDays
+      : item.leadTimeDays > 0
+        ? item.leadTimeDays
+        : 2;
+
   const order = calculateRecommendedOrder({
     stockOnHandBase: item.stockOnHandBase,
     averageDailyUsageBase: item.snapshot.averageDailyUsageBase,
     parLevelBase: item.parLevelBase,
     safetyStockBase: item.safetyStockBase,
-    leadTimeDays: supplierItem.leadTimeDays ?? item.leadTimeDays,
+    leadTimeDays: effectiveLeadTimeDays,
     deliveryDays: supplierDeliveryDays.length
       ? supplierDeliveryDays
       : itemDeliveryDays,
@@ -600,12 +637,21 @@ export async function syncAlertsAndRecommendationsTx(
     minimumOrderQuantity: supplierItem.minimumOrderQuantity,
   });
 
+  // If the urgency snapshot is INFO but we triggered on the explicit
+  // threshold, synthesize WARNING so the recommendation's metadata,
+  // UI badges, and rationale copy read correctly ("needs attention"
+  // instead of "no issue").
+  const effectiveUrgency =
+    item.snapshot.urgency === AlertSeverity.INFO && belowExplicitFloor
+      ? AlertSeverity.WARNING
+      : item.snapshot.urgency;
+
   const rationale = buildRecommendationSummary({
     inventoryName: item.name,
     recommendedPackCount: order.recommendedPackCount,
     purchaseUnit: item.purchaseUnit,
     supplierName: supplierItem.supplier.name,
-    urgency: item.snapshot.urgency,
+    urgency: effectiveUrgency,
   });
 
   const recommendation = existingRecommendation
@@ -618,7 +664,7 @@ export async function syncAlertsAndRecommendationsTx(
           recommendedPurchaseUnit: item.purchaseUnit,
           recommendedPackCount: order.recommendedPackCount,
           projectedStockoutAt: item.snapshot.projectedRunoutAt,
-          urgency: item.snapshot.urgency,
+          urgency: effectiveUrgency,
           rationale,
           dismissedAt: null,
         },
@@ -633,7 +679,7 @@ export async function syncAlertsAndRecommendationsTx(
           recommendedPurchaseUnit: item.purchaseUnit,
           recommendedPackCount: order.recommendedPackCount,
           projectedStockoutAt: item.snapshot.projectedRunoutAt,
-          urgency: item.snapshot.urgency,
+          urgency: effectiveUrgency,
           rationale,
         },
       });
@@ -645,7 +691,7 @@ export async function syncAlertsAndRecommendationsTx(
     await tx.alert.update({
       where: { id: existingOrderAlert.id },
       data: {
-        severity: item.snapshot.urgency,
+        severity: effectiveUrgency,
         title: orderAlertTitle,
         message: orderAlertMessage,
         metadata: {
@@ -660,7 +706,7 @@ export async function syncAlertsAndRecommendationsTx(
         locationId: item.locationId,
         inventoryItemId,
         type: AlertType.ORDER_APPROVAL,
-        severity: item.snapshot.urgency,
+        severity: effectiveUrgency,
         title: orderAlertTitle,
         message: orderAlertMessage,
         metadata: {
