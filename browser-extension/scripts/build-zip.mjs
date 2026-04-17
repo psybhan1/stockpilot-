@@ -28,13 +28,17 @@ const outPath = resolve(outDir, "stockpilot-extension.zip");
 // Files to include. Explicit allowlist so we don't accidentally
 // ship the zip inside the zip, the build script itself, or any
 // stray editor cruft.
+// Files to ship inside the zip. INSTALL.md is what the user opens
+// after unzipping — it's the first thing they see and reads as a 90-
+// second install guide. README.md stays in the repo for developers
+// and is NOT shipped in the zip (it's too technical for an end user).
 const INCLUDE = [
   "manifest.json",
   "popup.html",
   "popup.css",
   "popup.js",
   "popup-helpers.js",
-  "README.md",
+  "INSTALL.md",
   "icons/icon16.png",
   "icons/icon48.png",
   "icons/icon128.png",

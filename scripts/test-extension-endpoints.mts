@@ -417,7 +417,7 @@ await scenario("Extension zip exists and includes every file popup.html needs", 
     "icons/icon16.png",
     "icons/icon48.png",
     "icons/icon128.png",
-    "README.md",
+    "INSTALL.md",
   ]) {
     assert(haystack.includes(needle), `zip contains ${needle}`);
   }

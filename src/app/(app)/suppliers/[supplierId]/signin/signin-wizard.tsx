@@ -200,7 +200,8 @@ function ExtensionPanel({
           </div>
         )}
 
-        {/* Headline CTA — make download the most obvious next action. */}
+        {/* Headline CTA — the download is the first + most obvious
+            step. The whole card is the click target. */}
         <a href={downloadHref} download className="block">
           <div className="flex items-center justify-between rounded-2xl border-2 border-primary/50 bg-primary/5 p-5 transition hover:border-primary hover:bg-primary/10">
             <div>
@@ -208,50 +209,49 @@ function ExtensionPanel({
                 ⬇ Download the StockPilot extension
               </div>
               <div className="mt-1 text-xs text-muted-foreground">
-                About 12 KB. Works on {browserKind === "edge" ? "Microsoft Edge" : browserKind === "firefox" ? "Firefox (developer mode)" : "Chrome, Brave, Arc, and other Chromium browsers"}.
+                ≈ 12 KB. Works on {browserKind === "edge" ? "Microsoft Edge" : browserKind === "firefox" ? "Firefox (developer mode)" : "Chrome, Brave, Arc, and other Chromium browsers"}. Takes about 90 seconds after download.
               </div>
             </div>
             <span aria-hidden="true" className="text-2xl">→</span>
           </div>
         </a>
 
-        {/* Numbered steps — visually distinct, not a wall of text. */}
+        {/* Three step cards with visual hints (SVG mini-mockups). The
+            mockups are inline SVG instead of PNG screenshots so the
+            page stays ~kilobytes and renders crisp on retina. */}
         <div className="grid gap-3 md:grid-cols-3">
           <InstallStep
             n={1}
-            title="Unzip"
+            title="Unzip the download"
+            diagram={<UnzipDiagram />}
             body={
               <>
-                Unzip <code className="rounded bg-muted px-1">stockpilot-extension.zip</code> anywhere (Desktop is fine). Keep the folder where it is — the extension reads from it.
+                Double-click <code className="rounded bg-muted px-1">stockpilot-extension.zip</code> in your Downloads folder. Keep the unzipped folder where it is — the browser reads the extension directly from there.
               </>
             }
           />
           <InstallStep
             n={2}
-            title="Load unpacked"
+            title="Load it in your browser"
+            diagram={<DevModeDiagram />}
             body={
               <>
-                Open{" "}
-                <a
-                  href={extensionsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline"
-                >
-                  {extensionsUrl}
-                </a>{" "}
-                → toggle <em>Developer mode</em> (top right) → click{" "}
-                <em>Load unpacked</em> → pick the unzipped folder.
+                Paste this in your address bar (can&apos;t click{" "}
+                <code>chrome://</code> links, browsers block them):
                 <CopyableCode value={extensionsUrl} />
+                Then toggle <strong>Developer mode</strong> on, click{" "}
+                <strong>Load unpacked</strong>, and pick the unzipped folder
+                from step 1.
               </>
             }
           />
           <InstallStep
             n={3}
-            title="Use it"
+            title="Save a supplier session"
+            diagram={<PushDiagram supplierHost={supplierHost} />}
             body={
               <>
-                Go to <code className="rounded bg-muted px-1">{supplierHost}</code>, sign in, click the StockPilot icon in your toolbar, pick <em>{supplierName}</em>, press <strong>Push cookies</strong>. Done.
+                Open <code className="rounded bg-muted px-1">{supplierHost}</code> in a tab and sign in like you normally would. Click the new StockPilot icon in your toolbar, pick <em>{supplierName}</em>, press <strong>Push cookies</strong>.
               </>
             }
           />
@@ -260,37 +260,75 @@ function ExtensionPanel({
         {browserKind === "firefox" ? (
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-900 dark:text-amber-200">
             Firefox only runs unsigned extensions in Developer Edition /
-            Nightly. On regular Firefox you'll need to wait until we publish
+            Nightly. On regular Firefox you&apos;ll need to wait until we publish
             to AMO (coming soon) or use Chrome / Edge / Brave instead.
           </div>
         ) : browserKind === "safari" ? (
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-900 dark:text-amber-200">
-            Safari doesn't support the MV3 extension format without an Xcode
-            wrapper. Use Chrome or Brave for now — we're working on a Safari
+            Safari doesn&apos;t support the MV3 extension format without an Xcode
+            wrapper. Use Chrome or Brave for now — we&apos;re working on a Safari
             build.
           </div>
         ) : null}
 
         <details className="rounded-lg border border-border/60 bg-muted/20 p-3 text-xs">
           <summary className="cursor-pointer font-medium text-foreground">
-            Is this safe? What does the extension read?
+            Stuck on a step?
           </summary>
           <div className="mt-2 space-y-2 text-muted-foreground">
             <p>
-              The extension only runs when you click the toolbar icon and
-              explicitly press "Push cookies". It reads cookies for the
-              supplier domain you're looking at — <em>only</em> on that
-              click. No background script, no polling, no access to your
-              browsing history or other tabs.
+              <strong>Can&apos;t find Developer mode?</strong> It&apos;s a toggle in
+              the top-right corner of the <code>{extensionsUrl}</code>{" "}
+              page. If the toggle isn&apos;t there, your browser admin may have
+              disabled extensions — check with your IT team.
+            </p>
+            <p>
+              <strong>&quot;Load unpacked&quot; button missing?</strong> Developer
+              mode isn&apos;t on yet. Toggle it, then the button appears.
+            </p>
+            <p>
+              <strong>Picked the wrong folder?</strong> Make sure you pick
+              the folder that <em>contains</em> <code>manifest.json</code> (the
+              unzipped folder itself, not the parent Downloads folder).
+            </p>
+            <p>
+              <strong>Extension icon doesn&apos;t show in toolbar?</strong> Click
+              the puzzle-piece icon next to the address bar, find StockPilot,
+              click the pin so it stays visible.
+            </p>
+          </div>
+        </details>
+
+        <details className="rounded-lg border border-border/60 bg-muted/20 p-3 text-xs">
+          <summary className="cursor-pointer font-medium text-foreground">
+            What does the extension read, exactly?
+          </summary>
+          <div className="mt-2 space-y-2 text-muted-foreground">
+            <p>
+              Only cookies for the supplier domain you&apos;re on, and only at
+              the moment you click <strong>Push cookies</strong>. No
+              background script, no polling, no access to other tabs.
             </p>
             <p>
               Cookies are encrypted (AES-256-GCM) the moment they reach
               StockPilot and only decrypted in the browser-agent process at
-              order-dispatch time. Source is in{" "}
+              order-dispatch time.
+            </p>
+            <p>
+              Full details:{" "}
+              <a
+                href="/privacy/extension"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline"
+              >
+                /privacy/extension
+              </a>
+              . Source code is in{" "}
               <code className="rounded bg-background px-1">
                 browser-extension/
               </code>{" "}
-              in the app repo if you want to audit it.
+              in the StockPilot repo (no minification, about 500 lines).
             </p>
           </div>
         </details>
@@ -299,17 +337,233 @@ function ExtensionPanel({
   );
 }
 
-function InstallStep({ n, title, body }: { n: number; title: string; body: React.ReactNode }) {
+function InstallStep({
+  n,
+  title,
+  body,
+  diagram,
+}: {
+  n: number;
+  title: string;
+  body: React.ReactNode;
+  diagram?: React.ReactNode;
+}) {
   return (
-    <div className="rounded-xl border border-border/60 bg-card p-4">
+    <div className="flex flex-col rounded-xl border border-border/60 bg-card p-4">
       <div className="mb-2 flex items-center gap-2">
         <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
           {n}
         </span>
         <span className="font-medium">{title}</span>
       </div>
-      <div className="text-xs text-muted-foreground leading-relaxed">{body}</div>
+      {diagram ? (
+        <div className="mb-3 overflow-hidden rounded-lg border border-border/40 bg-muted/30">
+          {diagram}
+        </div>
+      ) : null}
+      <div className="text-xs text-muted-foreground leading-relaxed">
+        {body}
+      </div>
     </div>
+  );
+}
+
+/**
+ * Three tiny SVG "mockups" of what each step looks like in the
+ * browser. SVG keeps them resolution-independent and adds ~1kb to
+ * the page, vs ~100kb each for screenshots (and screenshots would
+ * go stale every Chrome redesign).
+ */
+
+function UnzipDiagram() {
+  return (
+    <svg
+      viewBox="0 0 220 96"
+      role="img"
+      aria-label="A zip file turns into a folder"
+      className="block h-24 w-full"
+    >
+      {/* zip */}
+      <g transform="translate(24,20)">
+        <rect x="0" y="0" width="44" height="56" rx="4" fill="#94a3b8" />
+        <rect x="18" y="0" width="8" height="14" fill="#64748b" />
+        <rect x="18" y="16" width="8" height="6" fill="#64748b" />
+        <rect x="18" y="24" width="8" height="6" fill="#64748b" />
+        <text
+          x="22"
+          y="48"
+          textAnchor="middle"
+          fontSize="9"
+          fill="#1e293b"
+          fontFamily="ui-monospace, monospace"
+        >
+          .zip
+        </text>
+      </g>
+      {/* arrow */}
+      <g transform="translate(80,40)">
+        <line x1="0" y1="8" x2="50" y2="8" stroke="currentColor" strokeWidth="2" />
+        <polygon points="50,2 60,8 50,14" fill="currentColor" />
+      </g>
+      {/* folder */}
+      <g transform="translate(148,18)">
+        <path
+          d="M0 8 L0 56 L52 56 L52 14 L22 14 L18 8 Z"
+          fill="#fbbf24"
+          stroke="#b45309"
+          strokeWidth="1"
+        />
+        <rect x="6" y="30" width="40" height="4" fill="#b45309" opacity="0.25" />
+        <rect x="6" y="38" width="28" height="4" fill="#b45309" opacity="0.25" />
+      </g>
+    </svg>
+  );
+}
+
+function DevModeDiagram() {
+  return (
+    <svg
+      viewBox="0 0 220 96"
+      role="img"
+      aria-label="Developer mode toggle in the extensions page"
+      className="block h-24 w-full"
+    >
+      {/* browser chrome */}
+      <rect x="4" y="4" width="212" height="88" rx="6" fill="#fff" stroke="#cbd5e1" />
+      <rect x="4" y="4" width="212" height="14" rx="6" fill="#f1f5f9" />
+      <circle cx="12" cy="11" r="2" fill="#ef4444" />
+      <circle cx="20" cy="11" r="2" fill="#f59e0b" />
+      <circle cx="28" cy="11" r="2" fill="#22c55e" />
+      <rect x="44" y="7" width="110" height="8" rx="2" fill="#e2e8f0" />
+      <text
+        x="50"
+        y="13.5"
+        fontSize="6"
+        fill="#475569"
+        fontFamily="ui-monospace, monospace"
+      >
+        chrome://extensions
+      </text>
+      {/* top-right toggle highlight */}
+      <g transform="translate(150,26)">
+        <text x="0" y="7" fontSize="7" fill="#0f172a">
+          Developer mode
+        </text>
+        {/* toggle ON */}
+        <rect x="48" y="1" width="18" height="9" rx="4.5" fill="#16a34a" />
+        <circle cx="61" cy="5.5" r="3.5" fill="#fff" />
+        {/* highlight ring */}
+        <rect
+          x="45"
+          y="-2"
+          width="24"
+          height="15"
+          rx="6"
+          fill="none"
+          stroke="#f59e0b"
+          strokeWidth="1.5"
+          strokeDasharray="3 2"
+        />
+      </g>
+      {/* Load unpacked button */}
+      <g transform="translate(14,46)">
+        <rect x="0" y="0" width="58" height="16" rx="3" fill="#0f172a" />
+        <text
+          x="29"
+          y="10.5"
+          textAnchor="middle"
+          fontSize="6.5"
+          fill="#f8fafc"
+          fontFamily="ui-sans-serif, system-ui"
+        >
+          Load unpacked
+        </text>
+        {/* highlight arrow */}
+        <g transform="translate(64,8)">
+          <line x1="0" y1="0" x2="10" y2="0" stroke="#f59e0b" strokeWidth="1.5" />
+          <polygon points="0,-3 -5,0 0,3" fill="#f59e0b" />
+        </g>
+      </g>
+      {/* extension tile placeholder */}
+      <rect x="14" y="68" width="80" height="18" rx="3" fill="#e2e8f0" />
+      <rect x="104" y="68" width="80" height="18" rx="3" fill="#e2e8f0" />
+    </svg>
+  );
+}
+
+function PushDiagram({ supplierHost }: { supplierHost: string }) {
+  return (
+    <svg
+      viewBox="0 0 220 96"
+      role="img"
+      aria-label="Click the StockPilot icon, pick the supplier, push cookies"
+      className="block h-24 w-full"
+    >
+      {/* popup */}
+      <rect
+        x="8"
+        y="10"
+        width="120"
+        height="76"
+        rx="6"
+        fill="#fff"
+        stroke="#cbd5e1"
+      />
+      <text x="16" y="24" fontSize="8" fontWeight="bold" fill="#0f172a">
+        StockPilot
+      </text>
+      <text
+        x="16"
+        y="34"
+        fontSize="6"
+        fill="#64748b"
+        fontFamily="ui-monospace, monospace"
+      >
+        {supplierHost.length > 22 ? supplierHost.slice(0, 22) + "…" : supplierHost}
+      </text>
+      <rect x="16" y="40" width="104" height="10" rx="2" fill="#f1f5f9" />
+      <text x="21" y="47.5" fontSize="6" fill="#334155">
+        Supplier: (auto-matched)
+      </text>
+      <rect x="16" y="56" width="104" height="14" rx="3" fill="#0b3d2e" />
+      <text
+        x="68"
+        y="65.5"
+        textAnchor="middle"
+        fontSize="6.5"
+        fill="#f8fafc"
+      >
+        💾 Push cookies
+      </text>
+      {/* arrow out of popup */}
+      <g transform="translate(136,46)">
+        <line x1="0" y1="0" x2="24" y2="0" stroke="currentColor" strokeWidth="2" />
+        <polygon points="24,-4 32,0 24,4" fill="currentColor" />
+      </g>
+      {/* StockPilot server box */}
+      <g transform="translate(172,30)">
+        <rect x="0" y="0" width="40" height="36" rx="4" fill="#0b3d2e" />
+        <text
+          x="20"
+          y="20"
+          textAnchor="middle"
+          fontSize="6"
+          fill="#f8fafc"
+          fontFamily="ui-sans-serif, system-ui"
+        >
+          StockPilot
+        </text>
+        <text
+          x="20"
+          y="28"
+          textAnchor="middle"
+          fontSize="5"
+          fill="#a7f3d0"
+        >
+          encrypted
+        </text>
+      </g>
+    </svg>
   );
 }
 
