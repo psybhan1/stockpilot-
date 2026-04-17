@@ -8,14 +8,11 @@ import {
   PackageOpen,
   Receipt,
   ShoppingCart,
-  Store,
   TrendingDown,
   Zap,
 } from "lucide-react";
 
-import { connectSquareAction, runJobsAction, syncSalesAction } from "@/app/actions/operations";
 import { StatusBadge } from "@/components/app/status-badge";
-import { Button } from "@/components/ui/button";
 import { Role } from "@/lib/domain-enums";
 import { formatRelativeDays } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -336,72 +333,67 @@ export default async function TodayPage() {
             {data.inventory
               .filter((i) => i.snapshot?.urgency !== "INFO")
               .slice(0, 5)
-              .map((item) => (
-                <Link
-                  key={item.id}
-                  href={`/inventory/${item.id}`}
-                  className={cn(
-                    "notif-card flex items-center justify-between gap-3 p-4",
-                    item.snapshot?.urgency === "CRITICAL" && "notif-card-urgent"
-                  )}
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">{item.name}</p>
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {formatQuantityBase(item.stockOnHandBase, item.displayUnit, item.packSizeBase)}
-                      {" on hand"}
-                      {item.snapshot?.daysLeft != null
-                        ? ` · ${formatRelativeDays(item.snapshot.daysLeft)} left`
-                        : ""}
-                    </p>
-                  </div>
-                  <StatusBadge
-                    label={
-                      item.snapshot?.urgency === "CRITICAL"
-                        ? "Urgent"
-                        : item.snapshot?.urgency === "WARNING"
-                        ? "Low"
-                        : "OK"
-                    }
-                    tone={
-                      item.snapshot?.urgency === "CRITICAL"
-                        ? "critical"
-                        : item.snapshot?.urgency === "WARNING"
-                        ? "warning"
-                        : "success"
-                    }
-                  />
-                </Link>
-              ))}
+              .map((item) => {
+                // Brand-new items may not have a snapshot computed
+                // yet (background job hasn't run) — but we can still
+                // classify stock vs thresholds directly. Previously a
+                // 0-stock item showed "OK" here because the nullish
+                // snapshot fell through; now it correctly shows
+                // "Urgent" (or "Low" if above critical threshold).
+                const urgency =
+                  item.snapshot?.urgency ??
+                  (item.stockOnHandBase <= 0
+                    ? "CRITICAL"
+                    : item.stockOnHandBase <= item.lowStockThresholdBase
+                      ? "WARNING"
+                      : "INFO");
+                return (
+                  <Link
+                    key={item.id}
+                    href={`/inventory/${item.id}`}
+                    className={cn(
+                      "notif-card flex items-center justify-between gap-3 p-4",
+                      urgency === "CRITICAL" && "notif-card-urgent"
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{item.name}</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {formatQuantityBase(item.stockOnHandBase, item.displayUnit, item.packSizeBase)}
+                        {" on hand"}
+                        {item.snapshot?.daysLeft != null
+                          ? ` · ${formatRelativeDays(item.snapshot.daysLeft)} left`
+                          : ""}
+                      </p>
+                    </div>
+                    <StatusBadge
+                      label={
+                        urgency === "CRITICAL"
+                          ? "Urgent"
+                          : urgency === "WARNING"
+                          ? "Low"
+                          : "OK"
+                      }
+                      tone={
+                        urgency === "CRITICAL"
+                          ? "critical"
+                          : urgency === "WARNING"
+                          ? "warning"
+                          : "success"
+                      }
+                    />
+                  </Link>
+                );
+              })}
           </div>
         </section>
       )}
 
-      {/* ── Manager actions ───────────────────────────────────────── */}
-      {session.role === Role.MANAGER && (
-        <section className="space-y-3 border-t border-border pt-8">
-          <SectionLabel>Maintenance</SectionLabel>
-          <div className="flex flex-wrap gap-2">
-            <form action={connectSquareAction}>
-              <Button type="submit" variant="outline" size="sm" className="h-8 rounded-full text-xs">
-                <Store className="mr-1.5 size-3.5" />
-                Connect Square
-              </Button>
-            </form>
-            <form action={syncSalesAction}>
-              <Button type="submit" variant="outline" size="sm" className="h-8 rounded-full text-xs">
-                <ShoppingCart className="mr-1.5 size-3.5" />
-                Sync sales
-              </Button>
-            </form>
-            <form action={runJobsAction}>
-              <Button type="submit" variant="outline" size="sm" className="h-8 rounded-full text-xs">
-                Run jobs
-              </Button>
-            </form>
-          </div>
-        </section>
-      )}
+      {/* Maintenance section used to live here (Connect Square /
+          Sync sales / Run jobs buttons). Real user feedback: "too
+          much unneeded information" on the dashboard. Those tools
+          still exist at /settings — the dashboard is a task-first
+          landing, not an ops console. */}
     </div>
   );
 }
