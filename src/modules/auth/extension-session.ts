@@ -52,21 +52,56 @@ export async function linkExtensionSession(): Promise<AuthSession> {
     throw new Error("Sign in to StockPilot first.");
   }
 
-  const token = randomBytes(32).toString("hex");
-  const tokenHash = hashExtensionToken(token);
-  const expiresAt = new Date(
+  const cookieStore = await cookies();
+
+  // If the user already has a live extension cookie, reuse the
+  // existing Session row — just extend the TTL. This keeps the
+  // wizard's auto-link on every page load from accumulating stale
+  // rows, and also means "visit /extension/connect to refresh"
+  // actually refreshes instead of piling up rows.
+  const existingToken = cookieStore.get(EXTENSION_COOKIE_NAME)?.value;
+  const newExpires = new Date(
     Date.now() + EXTENSION_SESSION_TTL_DAYS * 24 * 60 * 60 * 1000
   );
+  if (existingToken) {
+    const existingHash = hashExtensionToken(existingToken);
+    const existing = await db.session.findUnique({
+      where: { tokenHash: existingHash },
+      select: { id: true, userId: true, expiresAt: true },
+    });
+    if (existing && existing.userId === mainSession.userId) {
+      await db.session.update({
+        where: { id: existing.id },
+        data: { expiresAt: newExpires, lastSeenAt: new Date() },
+      });
+      const isProd = process.env.NODE_ENV === "production";
+      cookieStore.set(EXTENSION_COOKIE_NAME, existingToken, {
+        httpOnly: true,
+        sameSite: isProd ? "none" : "lax",
+        secure: isProd,
+        expires: newExpires,
+        path: "/",
+      });
+      return mainSession;
+    }
+  }
+
+  // No existing live extension cookie — mint a new row. Old
+  // extension rows whose cookies the user no longer has will expire
+  // on their 30-day TTL. Distinguishing ext rows from main rows
+  // without a schema column isn't reliable (tokenHash is opaque),
+  // so we accept this small drift.
+  const token = randomBytes(32).toString("hex");
+  const tokenHash = hashExtensionToken(token);
 
   await db.session.create({
     data: {
       userId: mainSession.userId,
       tokenHash,
-      expiresAt,
+      expiresAt: newExpires,
     },
   });
 
-  const cookieStore = await cookies();
   const isProd = process.env.NODE_ENV === "production";
   cookieStore.set(EXTENSION_COOKIE_NAME, token, {
     httpOnly: true,
@@ -76,7 +111,7 @@ export async function linkExtensionSession(): Promise<AuthSession> {
     // testing still works.
     sameSite: isProd ? "none" : "lax",
     secure: isProd,
-    expires: expiresAt,
+    expires: newExpires,
     path: "/",
   });
 

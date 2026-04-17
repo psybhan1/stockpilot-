@@ -319,10 +319,10 @@ document.getElementById("stockpilot-url").addEventListener("input", () => {
 
 document.getElementById("open-link").addEventListener("click", async () => {
   if (!state.baseUrl) return;
-  // The wizard's Extension tab auto-posts to /api/extension/link on
-  // mount. Dropping the user on ANY supplier's signin page works —
-  // the link is global to the user, not per-supplier.
-  await chrome.tabs.create({ url: `${state.baseUrl}/suppliers` });
+  // /extension/connect mints the extension cookie server-side on
+  // page load — no client-side useEffect races. Drops the user on
+  // a "You're linked. Close this tab." page.
+  await chrome.tabs.create({ url: `${state.baseUrl}/extension/connect` });
   window.close();
 });
 
