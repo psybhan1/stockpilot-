@@ -1407,17 +1407,25 @@ function QuickEntryPanel({
   };
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card p-3 text-sm">
-      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Paste directly into the page (reliable fallback)
+    <div className="rounded-2xl border-2 border-primary/40 bg-primary/5 p-4 text-sm">
+      <p className="mb-1 text-sm font-semibold text-foreground">
+        ⌨️ Type here — this is where your keystrokes go
       </p>
-      <div className="grid gap-2 md:grid-cols-2">
+      <p className="mb-3 text-xs text-muted-foreground">
+        The image above is just a preview. To enter your email and
+        password, use the two boxes below. On phones, this also opens
+        your keyboard.
+      </p>
+
+      {/* Stacked layout — phones see one input per row, not cramped
+          side-by-side. Desktop users get the same layout (it's fine). */}
+      <div className="space-y-3">
         <div>
           <label
             htmlFor="remote-quick-text"
-            className="block text-xs text-muted-foreground"
+            className="block text-xs font-medium text-foreground"
           >
-            Type or paste (email, OTP, username)
+            1. Email / username / 2FA code
           </label>
           <div className="mt-1 flex gap-1">
             <Input
@@ -1426,11 +1434,14 @@ function QuickEntryPanel({
               value={liveText}
               onChange={handleLiveChange}
               onKeyDown={handleLiveKey}
-              placeholder="Click a field in the image, then type here"
-              className="h-10 rounded-xl"
+              placeholder="Tap the email field above, then type here"
+              className="h-11 rounded-xl text-base"
               autoComplete="off"
               autoCorrect="off"
+              autoCapitalize="off"
               spellCheck={false}
+              autoFocus
+              inputMode="text"
             />
             <Button
               type="button"
@@ -1446,9 +1457,9 @@ function QuickEntryPanel({
         <div>
           <label
             htmlFor="remote-quick-password"
-            className="block text-xs text-muted-foreground"
+            className="block text-xs font-medium text-foreground"
           >
-            Password (hidden; value cleared after send)
+            2. Password (hidden, wiped after send)
           </label>
           <div className="mt-1 flex gap-1">
             <Input
@@ -1462,8 +1473,8 @@ function QuickEntryPanel({
                   void sendPassword();
                 }
               }}
-              placeholder="Click the password field, paste, Send"
-              className="h-10 rounded-xl"
+              placeholder="Tap the password field above, then paste here"
+              className="h-11 rounded-xl text-base"
               autoComplete="off"
             />
             <Button
@@ -1477,31 +1488,27 @@ function QuickEntryPanel({
             </Button>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onPressTab}
+            className="h-9 rounded-xl"
+          >
+            Tab
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onPressEnter}
+            className="h-9 rounded-xl"
+          >
+            Enter / Submit
+          </Button>
+        </div>
       </div>
-      <div className="mt-2 flex items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onPressTab}
-          className="rounded-xl"
-        >
-          Tab
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onPressEnter}
-          className="rounded-xl"
-        >
-          Enter (submit)
-        </Button>
-      </div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        Tip: click the email field <em>in the image above</em> first so the
-        page's cursor is in the right spot, then paste/type here.
-      </p>
     </div>
   );
 }

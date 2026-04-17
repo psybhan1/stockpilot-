@@ -36,8 +36,12 @@ export type SigninSession = {
 };
 
 const SESSIONS = new Map<string, SigninSession>();
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
-const MAX_TOTAL_MS = 15 * 60 * 1000;
+// Phone users routinely take >5 min — pause to read a 2FA text, switch
+// apps, deal with CAPTCHAs, etc. 12 min idle is a better fit; the
+// screenshot poll also bumps activity now, so someone actively
+// watching the page stays alive indefinitely up to the hard cap.
+const IDLE_TIMEOUT_MS = 12 * 60 * 1000;
+const MAX_TOTAL_MS = 20 * 60 * 1000;
 const MAX_CONCURRENT = 5;
 
 /**

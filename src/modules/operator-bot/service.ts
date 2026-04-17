@@ -2044,27 +2044,40 @@ async function handleWebsiteOrderWithoutCredentials(input: {
       Array<{ text: string; url: string } | { text: string; callback_data: string }>
     > = [];
 
-    // PRIMARY tap: whatever the deep-link builder chose. For `populates`
-    // (Walmart) this fills the cart; for `per_item` it's either the
-    // single product page or a "storefront + per-item buttons below".
-    if (deepLink) {
+    // Honesty pass: when the user HAS NO CREDENTIALS saved, the only
+    // thing we can give them is links to the product pages they
+    // already sent us. That's useless — they can't "tap to get a
+    // ready cart" until they sign in once. So:
+    //
+    //   - `populates` kind (Walmart): yes, one tap genuinely fills
+    //     the cart. Keep this button.
+    //   - `per_item` / `open_site` kinds: those URLs are at best
+    //     equivalent to what the user already has. Don't echo them
+    //     back. Lead with the single CTA that unlocks real automation.
+    const canGiveRealCart = deepLink?.kind === "populates";
+
+    if (canGiveRealCart && deepLink) {
       keyboard.push([{ text: deepLink.primary.label, url: deepLink.primary.url }]);
-      // Per-item rows for multi-line Amazon / generic. Telegram caps
-      // inline keyboards around ~8 rows — clamp per-item so we don't
-      // exceed limits.
-      if (deepLink.kind === "per_item" && deepLink.perItem.length > 1) {
-        for (const btn of deepLink.perItem.slice(0, 6)) {
-          keyboard.push([{ text: btn.label, url: btn.url }]);
-        }
-      }
     }
 
-    // Secondary tap: sign in once → overnight orders go fully auto
-    // next time. Framed as an upgrade, not a blocker.
-    if (settingsUrl) {
+    // PRIMARY CTA for the common case: connect the supplier once so
+    // the NEXT order fills a real cart in their real session.
+    if (!canGiveRealCart && settingsUrl) {
       keyboard.push([
         {
-          text: `⚡ Sign in to ${input.supplier.name} (next time: auto)`,
+          text: `🔐 Connect ${input.supplier.name} (30 sec, works on phone)`,
+          url: settingsUrl,
+        },
+      ]);
+    }
+
+    // Secondary "next time: auto" upsell for the Walmart case (they
+    // got a real cart this time, but might want cookie-auth for
+    // bigger speed wins later).
+    if (canGiveRealCart && settingsUrl) {
+      keyboard.push([
+        {
+          text: `⚡ Save login for faster next time`,
           url: settingsUrl,
         },
       ]);
@@ -2078,28 +2091,27 @@ async function handleWebsiteOrderWithoutCredentials(input: {
     const moreSuffix = poLines.length > 4 ? ` + ${poLines.length - 4} more` : "";
 
     const bodyLines: string[] = [];
-    bodyLines.push(
-      `✅ *${input.orderNumber}* approved — ${itemsSummary}${moreSuffix} from *${input.supplier.name}*.`
-    );
-    if (deepLink?.kind === "populates") {
+    if (canGiveRealCart && deepLink) {
+      bodyLines.push(
+        `✅ *${input.orderNumber}* approved — ${itemsSummary}${moreSuffix} from *${input.supplier.name}*.`
+      );
       bodyLines.push("");
       bodyLines.push(
         `Tap *${deepLink.primary.label}* — it fills your cart in one tap. Then just checkout.`
       );
-    } else if (deepLink?.kind === "per_item") {
-      bodyLines.push("");
-      bodyLines.push(
-        `Tap each item below to open it on *${input.supplier.name}* and hit *Add to Cart*. Everything stays in your own logged-in cart.`
-      );
-    } else if (deepLink?.kind === "open_site") {
-      bodyLines.push("");
-      bodyLines.push(
-        `Tap *${deepLink.primary.label}* — then search and add the items above.`
-      );
     } else {
+      // Honest message: don't pretend we built a cart. Tell the user
+      // what needs to happen for that.
+      bodyLines.push(
+        `📋 *${input.orderNumber}* drafted — ${itemsSummary}${moreSuffix} from *${input.supplier.name}*.`
+      );
       bodyLines.push("");
       bodyLines.push(
-        `I don't have a product URL, so just open ${input.supplier.name} and add the items above.`
+        `I can't auto-build an *${input.supplier.name}* cart until you sign in once — takes 30 seconds, works on your phone. After that, future orders land in your real cart automatically (no more scrolling links).`
+      );
+      bodyLines.push("");
+      bodyLines.push(
+        `Tap *Connect ${input.supplier.name}* below to set it up.`
       );
     }
 
