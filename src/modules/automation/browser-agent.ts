@@ -423,14 +423,25 @@ export async function runWebsiteOrderAgent(
         : null;
 
       const fallbackLine = deepLink
-        ? `\n\n👉 Tap below to fill your cart manually in one tap:`
+        ? `\n\n👉 Tap a button below to open the item(s) in your own browser and add to cart:`
         : `\n\nThe order is still marked as approved so you can retry, or open ${supplierName} and add it yourself.`;
       const body =
         `⚠️ *${orderNum}* — couldn't finish adding to *${supplierName}*'s cart.\n\n` +
         `${friendly}${fallbackLine}`;
-      const fallbackKeyboard = deepLink
-        ? [[{ text: deepLink.label, url: deepLink.url }]]
-        : undefined;
+      const fallbackKeyboard: Array<Array<{ text: string; url: string }>> | undefined =
+        deepLink
+          ? (() => {
+              const rows: Array<Array<{ text: string; url: string }>> = [
+                [{ text: deepLink.primary.label, url: deepLink.primary.url }],
+              ];
+              if (deepLink.kind === "per_item" && deepLink.perItem.length > 1) {
+                for (const btn of deepLink.perItem.slice(0, 6)) {
+                  rows.push([{ text: btn.label, url: btn.url }]);
+                }
+              }
+              return rows;
+            })()
+          : undefined;
       for (const m of managers) {
         if (!m.telegramChatId) continue;
         await sendTelegramMessage(m.telegramChatId, body, {

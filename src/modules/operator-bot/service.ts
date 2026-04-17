@@ -2003,7 +2003,7 @@ async function handleWebsiteOrderWithoutCredentials(input: {
         direction: CommunicationDirection.OUTBOUND,
         subject: `PO ${input.orderNumber} — deep-link handoff`,
         body: deepLink
-          ? `One-tap cart URL sent: ${deepLink.url}`
+          ? `${deepLink.kind} link sent: ${deepLink.primary.url}`
           : "Handed off to manager — no public cart-add URL for this supplier.",
         status: CommunicationStatus.SENT,
         sentAt: new Date(),
@@ -2017,7 +2017,7 @@ async function handleWebsiteOrderWithoutCredentials(input: {
       entityId: input.purchaseOrderId,
       details: {
         supplierId: input.supplier.id,
-        deepLinkUrl: deepLink?.url ?? null,
+        deepLinkUrl: deepLink?.primary.url ?? null,
         deepLinkKind: deepLink?.kind ?? null,
         lineCount: poLines.length,
       },
@@ -2044,11 +2044,19 @@ async function handleWebsiteOrderWithoutCredentials(input: {
       Array<{ text: string; url: string } | { text: string; callback_data: string }>
     > = [];
 
-    // PRIMARY tap: the deep cart-add link. When `populates` the cart
-    // fills in their real session on tap; when `product_page` they at
-    // least land on the right page in one tap.
+    // PRIMARY tap: whatever the deep-link builder chose. For `populates`
+    // (Walmart) this fills the cart; for `per_item` it's either the
+    // single product page or a "storefront + per-item buttons below".
     if (deepLink) {
-      keyboard.push([{ text: deepLink.label, url: deepLink.url }]);
+      keyboard.push([{ text: deepLink.primary.label, url: deepLink.primary.url }]);
+      // Per-item rows for multi-line Amazon / generic. Telegram caps
+      // inline keyboards around ~8 rows — clamp per-item so we don't
+      // exceed limits.
+      if (deepLink.kind === "per_item" && deepLink.perItem.length > 1) {
+        for (const btn of deepLink.perItem.slice(0, 6)) {
+          keyboard.push([{ text: btn.label, url: btn.url }]);
+        }
+      }
     }
 
     // Secondary tap: sign in once → overnight orders go fully auto
@@ -2076,12 +2084,17 @@ async function handleWebsiteOrderWithoutCredentials(input: {
     if (deepLink?.kind === "populates") {
       bodyLines.push("");
       bodyLines.push(
-        `Tap *${deepLink.label}* below — it opens in the browser you're already signed into and fills the cart. Hit checkout and you're done.`
+        `Tap *${deepLink.primary.label}* — it fills your cart in one tap. Then just checkout.`
       );
-    } else if (deepLink?.kind === "product_page") {
+    } else if (deepLink?.kind === "per_item") {
       bodyLines.push("");
       bodyLines.push(
-        `Tap below to open the item on *${input.supplier.name}* — add to cart + checkout in your browser.`
+        `Tap each item below to open it on *${input.supplier.name}* and hit *Add to Cart*. Everything stays in your own logged-in cart.`
+      );
+    } else if (deepLink?.kind === "open_site") {
+      bodyLines.push("");
+      bodyLines.push(
+        `Tap *${deepLink.primary.label}* — then search and add the items above.`
       );
     } else {
       bodyLines.push("");

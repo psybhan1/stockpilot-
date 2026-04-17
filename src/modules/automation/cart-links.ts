@@ -97,27 +97,24 @@ export function extractAmazonAsin(url: string | null | undefined): string | null
 }
 
 /**
- * Build a multi-item "add to cart" deep link for a supplier. When the
- * user taps the returned URL in Telegram, it opens in whatever
- * browser they're already signed into — so the cart ends up in THEIR
- * real account, not an ephemeral headless session. Falls back to a
- * plain product/home link when the supplier doesn't support a
- * public cart-add URL format.
+ * Build tap-to-open deep links for a supplier's cart.
  *
- * Returns null when there's nothing useful to link to (no recognised
- * supplier + no product URLs).
+ * There are two shapes because retailers don't agree on URL formats:
  *
- * Status notes per supplier:
- *   - Amazon (/gp/aws/cart/add.html?ASIN.1=X&Quantity.1=N):
- *     works ~85% of the time for signed-in users on web + mobile.
- *     Occasionally drops items during sign-in redirect — that's the
- *     reason we also keep per-product fallback buttons below the
- *     primary tap.
- *   - Walmart (affil.walmart.com/cart/addToCart?items=ID_QTY,ID_QTY):
- *     documented affiliate URL, works when items have real Walmart
- *     item IDs (we extract them from the URL).
- *   - Everything else: returns the product URL or supplier home.
- *     User opens, browses, adds manually.
+ *   populates  = one URL that fills the cart on tap. Only Walmart's
+ *                affiliate `addToCart` URL is reliably in this bucket
+ *                today. Amazon has a legacy `/gp/aws/cart/add.html`
+ *                equivalent but in Nov 2026 it routinely drops items
+ *                through the sign-in redirect → empty cart in prod
+ *                (user repro'd on amazon.ca; this replaces that
+ *                broken path).
+ *
+ *   per_item   = one URL PER item (each opens a product page; user
+ *                taps Add to Cart on the real retailer site). Slower
+ *                than a single tap but it always works, and every
+ *                retailer supports it.
+ *
+ * Returns null when there's genuinely nothing to link to.
  */
 export type DeepCartLine = {
   description: string;
@@ -125,19 +122,12 @@ export type DeepCartLine = {
   productUrl: string | null;
 };
 
-export type DeepCartLink = {
-  /** Primary URL for the "Add all to cart" button. */
-  url: string;
-  /** Human-friendly button label e.g. "🛒 Add 5 items to Amazon cart". */
-  label: string;
-  /**
-   * "populates" = URL is expected to actually fill the cart on tap
-   * (Amazon add.html, Walmart affil cart).
-   * "product_page" = URL opens the product/home but user must add
-   * manually.
-   */
-  kind: "populates" | "product_page";
-};
+export type DeepCartButton = { url: string; label: string };
+
+export type DeepCartLink =
+  | { kind: "populates"; primary: DeepCartButton }
+  | { kind: "per_item"; primary: DeepCartButton; perItem: DeepCartButton[] }
+  | { kind: "open_site"; primary: DeepCartButton };
 
 export function buildDeepCartAddUrl(input: {
   supplierWebsite: string | null;
@@ -146,49 +136,54 @@ export function buildDeepCartAddUrl(input: {
 }): DeepCartLink | null {
   if (input.lines.length === 0) return null;
 
-  // Amazon multi-item cart-add.
   const isAmazon =
     !!detectAmazonHostname(input.supplierWebsite) ||
     input.lines.some((l) => detectAmazonHostname(l.productUrl)) ||
     /amazon/i.test(input.supplierName);
+
   if (isAmazon) {
     const storefront = pickAmazonStorefront(
       input.supplierWebsite ??
         input.lines.find((l) => detectAmazonHostname(l.productUrl))?.productUrl ??
         null
     );
-    const asinParts: string[] = [];
-    let idx = 0;
+    // Per-item product pages — reliable. Each opens in user's session
+    // with an Add-to-Cart button they tap once.
+    const perItem: DeepCartButton[] = [];
     for (const line of input.lines) {
       const asin = extractAmazonAsin(line.productUrl);
       if (!asin) continue;
-      idx += 1;
-      asinParts.push(`ASIN.${idx}=${asin}&Quantity.${idx}=${Math.max(1, line.quantityOrdered)}`);
+      const labelBase = (line.description || "").trim();
+      const short = labelBase.length > 24 ? labelBase.slice(0, 22) + "…" : labelBase;
+      const qty = Math.max(1, line.quantityOrdered);
+      perItem.push({
+        url: `${storefront}/dp/${asin}`,
+        label: `📦 Open ${short || "product"} (×${qty})`,
+      });
     }
-    if (asinParts.length > 0) {
-      const url = `${storefront}/gp/aws/cart/add.html?${asinParts.join("&")}`;
-      const totalQty = input.lines
-        .slice(0, idx)
-        .reduce((s, l) => s + Math.max(1, l.quantityOrdered), 0);
-      const label =
-        asinParts.length === 1
-          ? `🛒 Add ${totalQty} to Amazon cart`
-          : `🛒 Add ${asinParts.length} items to Amazon cart`;
-      return { url, label, kind: "populates" };
+    if (perItem.length === 1) {
+      // Single-item case — one tap to product page, user adds to cart.
+      return { kind: "per_item", primary: perItem[0], perItem };
     }
-    // Amazon supplier but no ASIN we can extract — open the storefront
-    // so the user can search.
+    if (perItem.length > 1) {
+      // Multi-item: primary button goes to Amazon's storefront (so
+      // they land in their signed-in account first), and each item
+      // gets its own row. Primary tap is a good anchor even if they
+      // only want to open the site.
+      return {
+        kind: "per_item",
+        primary: { url: `${storefront}/`, label: `🌐 Open Amazon (${perItem.length} items below)` },
+        perItem,
+      };
+    }
+    // Amazon supplier but no ASIN extractable → open the storefront.
     return {
-      url: `${storefront}/`,
-      label: `🌐 Open Amazon`,
-      kind: "product_page",
+      kind: "open_site",
+      primary: { url: `${storefront}/`, label: `🌐 Open Amazon` },
     };
   }
 
-  // Walmart affiliate cart-add format.
-  // Item IDs appear in URLs like /ip/Whatever-Product/5265 (ID is the
-  // trailing number). Only usable when we actually pulled item IDs
-  // off every line.
+  // Walmart affiliate cart-add — this one actually populates.
   const isWalmart = /walmart\.(?:com|ca)$/i.test(
     hostFromUrl(input.supplierWebsite) ?? ""
   ) || /walmart/i.test(input.supplierName);
@@ -201,34 +196,44 @@ export function buildDeepCartAddUrl(input: {
     }
     if (parts.length > 0) {
       return {
-        url: `https://affil.walmart.com/cart/addToCart?items=${parts.join(",")}`,
-        label:
-          parts.length === 1
-            ? `🛒 Add to Walmart cart`
-            : `🛒 Add ${parts.length} items to Walmart cart`,
         kind: "populates",
+        primary: {
+          url: `https://affil.walmart.com/cart/addToCart?items=${parts.join(",")}`,
+          label:
+            parts.length === 1
+              ? `🛒 Add to Walmart cart`
+              : `🛒 Add ${parts.length} items to Walmart cart`,
+        },
       };
     }
   }
 
-  // Generic: point at the first product URL we have, else the
-  // supplier's homepage. User shops manually.
-  const firstProductUrl = input.lines.find((l) => l.productUrl)?.productUrl;
-  if (firstProductUrl) {
-    return {
-      url: firstProductUrl,
-      label:
-        input.lines.length === 1
-          ? `📦 Open ${input.supplierName}`
-          : `📦 Open first item at ${input.supplierName}`,
-      kind: "product_page",
-    };
+  // Generic: per-item buttons when we have product URLs; else open site.
+  const perItemGeneric: DeepCartButton[] = [];
+  for (const line of input.lines) {
+    if (!line.productUrl) continue;
+    const labelBase = (line.description || "").trim();
+    const short = labelBase.length > 24 ? labelBase.slice(0, 22) + "…" : labelBase;
+    const qty = Math.max(1, line.quantityOrdered);
+    perItemGeneric.push({
+      url: line.productUrl,
+      label: `📦 Open ${short || "product"} (×${qty})`,
+    });
+  }
+  if (perItemGeneric.length > 0) {
+    const primary =
+      perItemGeneric.length === 1
+        ? perItemGeneric[0]
+        : {
+            url: input.supplierWebsite ?? perItemGeneric[0].url,
+            label: `🌐 Open ${input.supplierName} (${perItemGeneric.length} items below)`,
+          };
+    return { kind: "per_item", primary, perItem: perItemGeneric };
   }
   if (input.supplierWebsite) {
     return {
-      url: input.supplierWebsite,
-      label: `🌐 Open ${input.supplierName}`,
-      kind: "product_page",
+      kind: "open_site",
+      primary: { url: input.supplierWebsite, label: `🌐 Open ${input.supplierName}` },
     };
   }
   return null;

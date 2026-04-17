@@ -510,7 +510,7 @@ const { buildDeepCartAddUrl } = await import(
   "../src/modules/automation/cart-links.ts"
 );
 
-await runScenario("buildDeepCartAddUrl: Amazon single ASIN → populates URL", async () => {
+await runScenario("buildDeepCartAddUrl: Amazon single ASIN → product page (add.html empties cart in prod)", async () => {
   const link = buildDeepCartAddUrl({
     supplierWebsite: "https://www.amazon.com",
     supplierName: "Amazon",
@@ -523,14 +523,16 @@ await runScenario("buildDeepCartAddUrl: Amazon single ASIN → populates URL", a
     ],
   });
   assert(link != null, "returns a link");
-  assert(link?.kind === "populates", "kind is 'populates'");
-  assert(/ASIN\.1=B005YJZE2I/.test(link?.url ?? ""), "ASIN in URL");
-  assert(/Quantity\.1=3/.test(link?.url ?? ""), "quantity in URL");
-  assert(/gp\/aws\/cart\/add\.html/.test(link?.url ?? ""), "add.html endpoint");
-  assert(/Add 3 to Amazon cart/i.test(link?.label ?? ""), "label includes qty");
+  assert(link?.kind === "per_item", "kind is 'per_item' (NOT populates — add.html is broken)");
+  assert(!/gp\/aws\/cart\/add\.html/.test(link?.primary.url ?? ""), "does NOT use the broken add.html URL");
+  assert(/\/dp\/B005YJZE2I/.test(link?.primary.url ?? ""), "primary points at /dp/<ASIN>");
+  if (link?.kind === "per_item") {
+    assert(link.perItem.length === 1, "single per-item button");
+    assert(/×3/.test(link.perItem[0].label), "label shows quantity");
+  }
 });
 
-await runScenario("buildDeepCartAddUrl: Amazon multi-item → merged URL", async () => {
+await runScenario("buildDeepCartAddUrl: Amazon multi-item → per-item buttons", async () => {
   const link = buildDeepCartAddUrl({
     supplierWebsite: null,
     supplierName: "Amazon",
@@ -540,11 +542,14 @@ await runScenario("buildDeepCartAddUrl: Amazon multi-item → merged URL", async
       { description: "Lids", quantityOrdered: 5, productUrl: "https://www.amazon.com/dp/B09TESTBBB" },
     ],
   });
-  assert(link != null, "returns a link");
-  assert(/ASIN\.1=B005YJZE2I&Quantity\.1=2/.test(link?.url ?? ""), "line 1 merged");
-  assert(/ASIN\.2=B08TESTAAA&Quantity\.2=5/.test(link?.url ?? ""), "line 2 merged");
-  assert(/ASIN\.3=B09TESTBBB&Quantity\.3=5/.test(link?.url ?? ""), "line 3 merged");
-  assert(/Add 3 items to Amazon cart/i.test(link?.label ?? ""), "label shows count");
+  assert(link != null && link.kind === "per_item", "kind per_item for multi-item Amazon");
+  if (link?.kind === "per_item") {
+    assert(link.perItem.length === 3, `3 per-item buttons (got ${link.perItem.length})`);
+    assert(/\/dp\/B005YJZE2I/.test(link.perItem[0].url), "item 1 /dp/ URL");
+    assert(/\/dp\/B08TESTAAA/.test(link.perItem[1].url), "item 2 /dp/ URL");
+    assert(/\/dp\/B09TESTBBB/.test(link.perItem[2].url), "item 3 /dp/ URL");
+    assert(/3 items below/i.test(link.primary.label), "primary label mentions 3 items");
+  }
 });
 
 await runScenario("buildDeepCartAddUrl: Amazon locale (amazon.ca) preserved", async () => {
@@ -556,7 +561,9 @@ await runScenario("buildDeepCartAddUrl: Amazon locale (amazon.ca) preserved", as
     ],
   });
   assert(link != null, "returns link");
-  assert(/amazon\.ca\/gp\/aws/.test(link?.url ?? ""), "stays on .ca");
+  if (link?.kind === "per_item") {
+    assert(/amazon\.ca\/dp\//.test(link.primary.url), "stays on .ca");
+  }
 });
 
 await runScenario("buildDeepCartAddUrl: Amazon with no ASINs → storefront", async () => {
@@ -568,11 +575,11 @@ await runScenario("buildDeepCartAddUrl: Amazon with no ASINs → storefront", as
     ],
   });
   assert(link != null, "returns link");
-  assert(link?.kind === "product_page", "falls back to product_page");
-  assert(/amazon\.com/.test(link?.url ?? ""), "points at storefront");
+  assert(link?.kind === "open_site", "falls back to open_site");
+  assert(/amazon\.com/.test(link?.primary.url ?? ""), "points at storefront");
 });
 
-await runScenario("buildDeepCartAddUrl: Walmart item-id extraction", async () => {
+await runScenario("buildDeepCartAddUrl: Walmart item-id extraction (still populates)", async () => {
   const link = buildDeepCartAddUrl({
     supplierWebsite: "https://www.walmart.com",
     supplierName: "Walmart",
@@ -582,12 +589,14 @@ await runScenario("buildDeepCartAddUrl: Walmart item-id extraction", async () =>
     ],
   });
   assert(link != null, "returns link");
-  assert(link?.kind === "populates", "populates");
-  assert(/affil\.walmart\.com\/cart\/addToCart/.test(link?.url ?? ""), "affil URL");
-  assert(/items=5265_3,4728_1/.test(link?.url ?? ""), "items joined with qty");
+  assert(link?.kind === "populates", "Walmart still populates (affil URL works)");
+  if (link?.kind === "populates") {
+    assert(/affil\.walmart\.com\/cart\/addToCart/.test(link.primary.url), "affil URL");
+    assert(/items=5265_3,4728_1/.test(link.primary.url), "items joined with qty");
+  }
 });
 
-await runScenario("buildDeepCartAddUrl: generic supplier with product URL → product_page", async () => {
+await runScenario("buildDeepCartAddUrl: generic supplier with product URL → per_item", async () => {
   const link = buildDeepCartAddUrl({
     supplierWebsite: "https://www.lcbo.com",
     supplierName: "LCBO",
@@ -596,11 +605,13 @@ await runScenario("buildDeepCartAddUrl: generic supplier with product URL → pr
     ],
   });
   assert(link != null, "returns link");
-  assert(link?.kind === "product_page", "product_page kind");
-  assert(/lcbo\.com/.test(link?.url ?? ""), "LCBO URL");
+  assert(link?.kind === "per_item", "per_item kind");
+  if (link?.kind === "per_item") {
+    assert(/lcbo\.com/.test(link.primary.url), "LCBO URL");
+  }
 });
 
-await runScenario("buildDeepCartAddUrl: generic supplier no URL → home", async () => {
+await runScenario("buildDeepCartAddUrl: generic supplier no URL → open_site", async () => {
   const link = buildDeepCartAddUrl({
     supplierWebsite: "https://example.com",
     supplierName: "Example",
@@ -609,8 +620,8 @@ await runScenario("buildDeepCartAddUrl: generic supplier no URL → home", async
     ],
   });
   assert(link != null, "returns link");
-  assert(link?.url === "https://example.com", "opens home");
-  assert(link?.kind === "product_page", "product_page");
+  assert(link?.kind === "open_site", "open_site when no product URL");
+  assert(link?.primary.url === "https://example.com", "opens home");
 });
 
 await runScenario("buildDeepCartAddUrl: empty lines → null", async () => {

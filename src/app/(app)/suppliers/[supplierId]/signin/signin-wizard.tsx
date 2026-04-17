@@ -718,29 +718,53 @@ function RemoteSigninPanel({
       );
     };
 
+    const recordInteractFailure = (detail: string) => {
+      // Surface the first real failure so the user isn't left staring
+      // at a password field that silently swallows their keystrokes.
+      // They're one tab click away from a working path (extension or
+      // cookie paste), so make the problem visible.
+      setErrorMsg(
+        `Keystrokes aren't reaching the remote browser (${detail}). ` +
+          `Try the *browser extension* tab — it's easier and doesn't ` +
+          `depend on our proxy session.`
+      );
+    };
+
     const sendType = async (text: string) => {
       if (!text) return;
       try {
-        await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind: "type", text }),
-        });
-      } catch {
-        /* screenshot poll recovers */
+        const res = await fetch(
+          `/api/suppliers/${supplierId}/signin/${sessionId}/interact`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "type", text }),
+          }
+        );
+        if (!res.ok) recordInteractFailure(`HTTP ${res.status}`);
+      } catch (err) {
+        recordInteractFailure(
+          err instanceof Error ? err.message.slice(0, 60) : "network error"
+        );
       }
       setTimeout(fetchScreenshot, 250);
     };
 
     const sendKey = async (key: string) => {
       try {
-        await fetch(`/api/suppliers/${supplierId}/signin/${sessionId}/interact`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind: "key", key }),
-        });
-      } catch {
-        /* screenshot poll recovers */
+        const res = await fetch(
+          `/api/suppliers/${supplierId}/signin/${sessionId}/interact`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "key", key }),
+          }
+        );
+        if (!res.ok) recordInteractFailure(`HTTP ${res.status}`);
+      } catch (err) {
+        recordInteractFailure(
+          err instanceof Error ? err.message.slice(0, 60) : "network error"
+        );
       }
       setTimeout(fetchScreenshot, 250);
     };
@@ -1060,6 +1084,20 @@ function RemoteSigninPanel({
   return (
     <Card>
       <CardContent className="space-y-3 p-4">
+        {/* Honest upsell. The remote-browser path works but it's
+            finicky — keystrokes sometimes don't reach the iframe,
+            captchas block us, some sites refuse headless. The
+            extension tab is usually one click total. */}
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200">
+          <div className="font-semibold">Tip: the Extension tab is simpler.</div>
+          <div className="mt-1 leading-relaxed">
+            You sign in to {supplierName} in your own browser (where
+            you're probably already logged in) and tap the extension
+            once — done, no typing here. This tab is a fallback when
+            the extension isn't an option.
+          </div>
+        </div>
+
         {screenshot ? (
           <div className="relative overflow-hidden rounded-xl border border-border/60 bg-black">
             <img
