@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { MoneyPulseCard } from "@/components/app/money-pulse-card";
+import { ShrinkageCard } from "@/components/app/shrinkage-card";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Role } from "@/lib/domain-enums";
 import { formatRelativeDays } from "@/lib/format";
@@ -263,6 +264,33 @@ export default async function TodayPage() {
           and a price-jump alert when a recent delivery came in N%
           over estimate. Honest zero-state for brand-new users. */}
       {moneyPulse ? <MoneyPulseCard data={moneyPulse} /> : null}
+
+      {/* ── Shrinkage detector ──────────────────────────────────────
+          The revolutionary piece: paid competitors charge $300+/mo
+          for variance analysis. We surface it free, live, next to
+          today's tasks. Only renders when there IS shrinkage to
+          report — no point nagging about $0.00. */}
+      {variance && variance.shrinkageCents > 0 && variance.rows.length > 0 ? (
+        <ShrinkageCard
+          data={{
+            totalCents: variance.shrinkageCents,
+            itemCount: variance.flaggedCount,
+            rangeDays: 7,
+            worstItem: (() => {
+              const worst = variance.rows.find(
+                (r) => r.shrinkageCents != null && r.shrinkageCents > 0
+              );
+              return worst
+                ? {
+                    name: worst.itemName,
+                    cents: worst.shrinkageCents ?? 0,
+                    pctOfUsage: worst.shrinkagePct,
+                  }
+                : null;
+            })(),
+          }}
+        />
+      ) : null}
 
       {/* Jump-to cards and Supplier-pulse section used to live here.
           Both removed for the "one page, one question" rewrite — the
