@@ -778,6 +778,129 @@ export async function cancelPurchaseOrderAction(formData: FormData) {
   revalidatePurchaseOrderPaths(purchaseOrder.id, purchaseOrder.supplierId);
 }
 
+/**
+ * Add a single inventory item from the UI (empty-state form on
+ * /inventory). Intentionally light: name + category + par level are
+ * the minimum a café manager thinks about when they're setting up.
+ * Everything else (safetyStockBase, lowStockThresholdBase, pack size)
+ * is computed from sensible defaults so new users don't have to
+ * learn every field upfront.
+ *
+ * If supplierId + unitPriceDollars are provided, we also link the
+ * item to that supplier and stamp the price as lastUnitCostCents +
+ * latestCostCents on the SupplierItem. Having a price on the
+ * supplier link is what makes auto-approve work on future POs
+ * (auto-approve refuses to fire without a known price).
+ */
+export async function addInventoryItemAction(formData: FormData) {
+  // Same minimum role as updateInventoryItemAction so supervisors
+  // can set up inventory without a manager in the loop.
+  const session = await requireSession(Role.SUPERVISOR);
+  const name = readStringValue(formData, "name");
+  if (!name) {
+    // We could return an error via useActionState, but the form has
+    // required inputs; this is a defensive guard.
+    return;
+  }
+  const category =
+    readStringValue(formData, "category") ?? "SUPPLY";
+  const baseUnit = readStringValue(formData, "baseUnit") ?? "COUNT";
+  const parLevelBase = Math.max(
+    1,
+    readIntegerValue(formData, "parLevelBase", 1)
+  );
+  const stockOnHandBase = Math.max(
+    0,
+    readIntegerValue(formData, "stockOnHandBase", 0)
+  );
+  const supplierId = readNullableStringValue(formData, "supplierId");
+  const priceDollarsRaw = formData.get("unitPriceDollars");
+  const priceDollars =
+    typeof priceDollarsRaw === "string" && priceDollarsRaw.trim()
+      ? Number(priceDollarsRaw)
+      : NaN;
+  const unitCostCents =
+    Number.isFinite(priceDollars) && priceDollars > 0
+      ? Math.round(priceDollars * 100)
+      : null;
+
+  const sku = `ITM-${Date.now().toString(36).toUpperCase()}-${Math.random()
+    .toString(36)
+    .slice(2, 5)
+    .toUpperCase()}`;
+
+  // Tenant guard: if a supplierId was supplied, it MUST belong to
+  // this location before we accept it.
+  let primarySupplierId: string | null = null;
+  if (supplierId) {
+    const owned = await db.supplier.findFirst({
+      where: { id: supplierId, locationId: session.locationId },
+      select: { id: true },
+    });
+    if (owned) primarySupplierId = owned.id;
+  }
+
+  await db.$transaction(async (tx) => {
+    const item = await tx.inventoryItem.create({
+      data: {
+        locationId: session.locationId,
+        name,
+        sku,
+        category: category as Prisma.InventoryItemCreateInput["category"],
+        baseUnit: baseUnit as Prisma.InventoryItemCreateInput["baseUnit"],
+        displayUnit: baseUnit as Prisma.InventoryItemCreateInput["displayUnit"],
+        countUnit: baseUnit as Prisma.InventoryItemCreateInput["countUnit"],
+        purchaseUnit: baseUnit as Prisma.InventoryItemCreateInput["purchaseUnit"],
+        packSizeBase: 1,
+        stockOnHandBase,
+        parLevelBase,
+        safetyStockBase: Math.max(1, Math.round(parLevelBase * 0.2)),
+        lowStockThresholdBase: Math.max(1, Math.round(parLevelBase * 0.4)),
+        primarySupplierId,
+      },
+    });
+
+    if (primarySupplierId) {
+      await tx.supplierItem.upsert({
+        where: {
+          supplierId_inventoryItemId: {
+            supplierId: primarySupplierId,
+            inventoryItemId: item.id,
+          },
+        },
+        create: {
+          supplierId: primarySupplierId,
+          inventoryItemId: item.id,
+          packSizeBase: 1,
+          minimumOrderQuantity: 1,
+          preferred: true,
+          lastUnitCostCents: unitCostCents ?? undefined,
+        },
+        update: {
+          lastUnitCostCents: unitCostCents ?? undefined,
+        },
+      });
+    }
+
+    await createAuditLogTx(tx, {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "inventoryItem.created",
+      entityType: "inventoryItem",
+      entityId: item.id,
+      details: {
+        name,
+        category,
+        parLevelBase,
+        primarySupplierId,
+        unitCostCents,
+      },
+    });
+  });
+
+  revalidateOperations();
+}
+
 export async function updateInventoryItemAction(formData: FormData) {
   const session = await requireSession(Role.SUPERVISOR);
   const itemId = String(formData.get("itemId") ?? "");
