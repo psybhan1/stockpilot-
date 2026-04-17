@@ -45,6 +45,7 @@ const NAV_SHORTCUTS: Shortcut[] = [
   { combo: "g o", label: "Go to orders", href: "/purchase-orders" },
   { combo: "g m", label: "Go to margins", href: "/margins" },
   { combo: "g v", label: "Go to variance", href: "/variance" },
+  { combo: "g p", label: "Go to pricing", href: "/pricing" },
   { combo: "g a", label: "Go to analytics", href: "/analytics" },
   { combo: "g s", label: "Go to suppliers", href: "/suppliers" },
   { combo: "g r", label: "Go to menu (recipes)", href: "/recipes" },

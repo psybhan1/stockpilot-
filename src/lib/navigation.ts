@@ -11,6 +11,7 @@ import {
   PackageOpen,
   PiggyBank,
   Receipt,
+  LineChart,
   Rocket,
   ScanBarcode,
   Scale,
@@ -155,6 +156,13 @@ export const secondaryNav: readonly NavItem[] = [
     icon: Scale,
     minimumRole: Role.SUPERVISOR,
     description: "Theoretical vs actual — catches waste and shrinkage.",
+  },
+  {
+    href: "/pricing",
+    label: "Pricing",
+    icon: LineChart,
+    minimumRole: Role.SUPERVISOR,
+    description: "Ingredient price trends — see what's quietly eroding margins.",
   },
   {
     href: "/analytics",
