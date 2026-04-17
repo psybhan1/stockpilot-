@@ -273,15 +273,30 @@ function Row({
   return (
     <>
       <tr
-        className="cursor-pointer border-b border-border/40 transition hover:bg-muted/40"
+        className="cursor-pointer border-b border-border/40 transition hover:bg-muted/40 focus-within:bg-muted/40"
         onClick={onToggle}
+        aria-expanded={expanded}
       >
         <td className="px-2 py-3 text-muted-foreground">
-          {expanded ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle();
+            }}
+            aria-label={
+              expanded
+                ? `Collapse ingredient breakdown for ${row.menuItemName}`
+                : `Expand ingredient breakdown for ${row.menuItemName}`
+            }
+            className="flex size-6 items-center justify-center rounded-md hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            {expanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </button>
         </td>
         <td className="px-4 py-3">
           <div className="font-medium">

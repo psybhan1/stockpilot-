@@ -27,7 +27,7 @@
  * doesn't navigate you away.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Keyboard, X } from "lucide-react";
 
@@ -61,6 +61,18 @@ const ACTION_SHORTCUTS: Array<{ combo: string; label: string }> = [
 export function KeyboardShortcuts() {
   const [helpOpen, setHelpOpen] = useState(false);
   const router = useRouter();
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Auto-focus the close button when the help overlay opens so a
+  // keyboard user can dismiss with Enter / space without hunting.
+  // Also captures Tab inside the modal — since the only interactive
+  // elements are the close button and outside links (none), tab
+  // just loops back.
+  useEffect(() => {
+    if (helpOpen) {
+      setTimeout(() => closeButtonRef.current?.focus(), 10);
+    }
+  }, [helpOpen]);
 
   useEffect(() => {
     let gPending = false;
@@ -138,7 +150,7 @@ export function KeyboardShortcuts() {
   return (
     <div
       role="dialog"
-      aria-label="Keyboard shortcuts"
+      aria-labelledby="kbd-shortcuts-title"
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
       onClick={() => setHelpOpen(false)}
@@ -150,13 +162,16 @@ export function KeyboardShortcuts() {
         <div className="flex items-center justify-between gap-2 border-b border-border/60 px-5 py-3">
           <div className="inline-flex items-center gap-2">
             <Keyboard className="size-4 text-muted-foreground" aria-hidden />
-            <h2 className="text-sm font-semibold">Keyboard shortcuts</h2>
+            <h2 id="kbd-shortcuts-title" className="text-sm font-semibold">
+              Keyboard shortcuts
+            </h2>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={() => setHelpOpen(false)}
-            className="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            aria-label="Close"
+            className="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label="Close keyboard shortcuts"
           >
             <X className="size-3.5" />
           </button>

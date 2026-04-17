@@ -190,7 +190,7 @@ export function CommandPalette({
     >
       <div
         role="dialog"
-        aria-label="Search"
+        aria-label="Search and jump to a page, supplier, item, or order"
         aria-modal="true"
         className="w-full max-w-xl overflow-hidden rounded-2xl border border-border/60 bg-card shadow-2xl"
         onClick={(e) => e.stopPropagation()}

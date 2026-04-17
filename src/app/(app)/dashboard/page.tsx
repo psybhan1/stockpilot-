@@ -23,6 +23,8 @@ import { requireSession } from "@/modules/auth/session";
 import { getDashboardData } from "@/modules/dashboard/queries";
 import { formatQuantityBase } from "@/modules/inventory/units";
 import { getAnalyticsOverview } from "@/modules/analytics/queries";
+import { getMarginDashboard } from "@/modules/recipes/margin-dashboard";
+import { getVarianceReport } from "@/modules/variance/report";
 
 /**
  * Today — the task-first landing.
@@ -33,9 +35,16 @@ import { getAnalyticsOverview } from "@/modules/analytics/queries";
  */
 export default async function TodayPage() {
   const session = await requireSession(Role.STAFF);
-  const [data, analytics] = await Promise.all([
+  const [data, analytics, margins, variance] = await Promise.all([
     getDashboardData(session.locationId),
     getAnalyticsOverview(session.locationId),
+    // Margin + variance surface on the landing so managers see money
+    // issues without having to know the page exists. Both are fast
+    // single-query joins, so adding them to the dashboard load is ~
+    // a few ms each. .catch to null keeps the dashboard resilient if
+    // either query throws (e.g. a location with no recipes yet).
+    getMarginDashboard(session.locationId).catch(() => []),
+    getVarianceReport(session.locationId, { days: 7 }).catch(() => null),
   ]);
   const firstName = session.userName.split(" ")[0];
   const topSuppliers = analytics.topSuppliers.slice(0, 3);
@@ -45,10 +54,22 @@ export default async function TodayPage() {
   const lowCount = data.metrics.lowStockCount;
   const openAlerts = data.alerts.length;
   const itemsTotal = data.metrics.inventoryCount;
+  const marginReviewCount = margins.filter((m) => m.severity === "review").length;
+  const shrinkageCents = variance?.shrinkageCents ?? 0;
+  const topShrinkItem = variance?.rows.find(
+    (r) => (r.shrinkageCents ?? 0) > 0
+  );
 
   // Compose prioritised task list
   type Task = {
-    kind: "approve" | "critical" | "alert" | "count" | "watch";
+    kind:
+      | "approve"
+      | "critical"
+      | "alert"
+      | "count"
+      | "watch"
+      | "shrinkage"
+      | "margin";
     title: string;
     hint: string;
     cta: string;
@@ -103,6 +124,39 @@ export default async function TodayPage() {
       href: "/inventory",
       tone: "info",
       icon: Package,
+    });
+  }
+
+  // Shrinkage > $15 in last 7 days is the threshold where it's
+  // worth opening the variance page — matches /variance's own
+  // severity floors. Over $50 → urgent; anything else lives in the
+  // "watch" pile.
+  if (shrinkageCents >= 1500 && session.role !== Role.STAFF) {
+    const dollars = (shrinkageCents / 100).toFixed(2);
+    tasks.push({
+      kind: "shrinkage",
+      title: `$${dollars} in unexplained shrinkage this week`,
+      hint: topShrinkItem
+        ? `Biggest gap: ${topShrinkItem.itemName}. Drill in to see which movements drove it.`
+        : "Look at the per-item breakdown to find the leak.",
+      cta: "Open variance",
+      href: "/variance",
+      tone: shrinkageCents >= 5000 ? "urgent" : "warn",
+      icon: TrendingDown,
+    });
+  }
+
+  // Margin reviews: >= 1 variant under 60% margin is a real call
+  // to re-price or swap ingredient sources. Managers only.
+  if (marginReviewCount > 0 && session.role !== Role.STAFF) {
+    tasks.push({
+      kind: "margin",
+      title: `${marginReviewCount} menu item${marginReviewCount === 1 ? "" : "s"} under 60% margin`,
+      hint: "Either ingredient costs crept up or the sell price is too low. Both are fixable.",
+      cta: "Review margins",
+      href: "/margins",
+      tone: marginReviewCount >= 5 ? "warn" : "info",
+      icon: ShoppingCart,
     });
   }
 
