@@ -406,18 +406,32 @@ export async function handleInboundManagerBotMessage(
         // Instead return a helpful "try again" message. Only fall
         // through for genuine agent bugs (unexpected exceptions).
         if (/rate.limit|429|413|model.*decommission|model.*not.found/i.test(errMsg)) {
+          // Parse the actual wait from the upstream body.
+          // Covers both TPM ("try again in 7.572s") and TPD ("try again in 13m16.0896s").
+          const waitMatch = errMsg.match(/try again in\s+(?:(\d+)m)?\s*([\d.]+)s/i);
+          let friendlyWait = "a moment";
+          if (waitMatch) {
+            const minutes = waitMatch[1] ? parseInt(waitMatch[1], 10) : 0;
+            const seconds = Math.ceil(parseFloat(waitMatch[2] ?? "0"));
+            const totalSecs = minutes * 60 + seconds;
+            if (totalSecs <= 30) friendlyWait = "30 seconds";
+            else if (totalSecs <= 120) friendlyWait = `${Math.ceil(totalSecs / 10) * 10} seconds`;
+            else if (totalSecs <= 900) friendlyWait = `${Math.ceil(totalSecs / 60)} minutes`;
+            else friendlyWait = "a while (daily quota hit — try again later today)";
+          }
+          const reply = `I'm a bit overloaded right now — give me ${friendlyWait} and try again.`;
           await completeBotMessageReceipt({
             receiptId,
             locationId: managerContext.locationId,
             userId: managerContext.userId,
-            reply: "I'm a bit overloaded right now — give me 30 seconds and try again. (Groq rate limit hit)",
+            reply,
             purchaseOrderId: null,
             orderNumber: null,
-            metadata: toInputJsonValue({ error: errMsg, source: "rate_limit" }),
+            metadata: toInputJsonValue({ error: errMsg, source: "rate_limit", waitSeconds: waitMatch ? (parseInt(waitMatch[1] ?? "0", 10) * 60 + Math.ceil(parseFloat(waitMatch[2] ?? "0"))) : null }),
           });
           return {
             ok: true,
-            reply: "I'm a bit overloaded right now — give me 30 seconds and try again.",
+            reply,
             replyScenario: "rate_limited",
           };
         }
@@ -1391,8 +1405,6 @@ export async function approveAndDispatchPurchaseOrder(input: {
     };
   }
 
-  // Primary line drives the dispatch template — the bot only creates
-  // single-line POs today.
   const firstLine = po.lines[0];
   if (!firstLine) {
     await db.purchaseOrder.update({
@@ -1424,12 +1436,17 @@ export async function approveAndDispatchPurchaseOrder(input: {
       website: po.supplier.website,
       orderingMode: po.supplier.orderingMode,
     },
-    inventoryName: firstLine.inventoryItem.name,
-    purchaseUnit: firstLine.purchaseUnit,
-    packCount: firstLine.quantityOrdered,
-    orderQuantityBase: firstLine.expectedQuantityBase,
-    reportedOnHandBase: firstLine.inventoryItem.stockOnHandBase,
-    parLevelBase: firstLine.inventoryItem.parLevelBase,
+    // Pass ALL lines, not just firstLine. Multi-line POs (low-stock
+    // batch-approve, Square-POS-driven orders, rescue PO swaps) would
+    // otherwise silently drop items 2..N from the supplier email.
+    lines: po.lines.map((l) => ({
+      inventoryName: l.inventoryItem.name,
+      purchaseUnit: l.purchaseUnit,
+      packCount: l.quantityOrdered,
+      orderQuantityBase: l.expectedQuantityBase,
+      reportedOnHandBase: l.inventoryItem.stockOnHandBase,
+      parLevelBase: l.inventoryItem.parLevelBase,
+    })),
   });
 
   const reason = readPurchaseOrderFailure(result.metadata) ?? undefined;
@@ -1459,12 +1476,14 @@ async function dispatchBotPurchaseOrder(input: {
     website: string | null;
     orderingMode: SupplierOrderingMode;
   };
-  inventoryName: string;
-  purchaseUnit: string;
-  packCount: number;
-  orderQuantityBase: number;
-  reportedOnHandBase: number;
-  parLevelBase: number;
+  lines: Array<{
+    inventoryName: string;
+    purchaseUnit: string;
+    packCount: number;
+    orderQuantityBase: number;
+    reportedOnHandBase: number;
+    parLevelBase: number;
+  }>;
 }) {
   // Per-location provider: picks up the business's own connected
   // Gmail (free, uses their own quota) before falling through to
@@ -1475,10 +1494,15 @@ async function dispatchBotPurchaseOrder(input: {
   );
 
   const line = {
-    description: input.inventoryName,
-    quantity: input.packCount,
-    unit: input.purchaseUnit.toLowerCase(),
+    description: input.lines[0].inventoryName,
+    quantity: input.lines[0].packCount,
+    unit: input.lines[0].purchaseUnit.toLowerCase(),
   };
+  const emailLines = input.lines.map((l) => ({
+    description: l.inventoryName,
+    quantity: l.packCount,
+    unit: l.purchaseUnit.toLowerCase(),
+  }));
 
   // Pull richer context for the email (business name, location name,
   // who approved, sender's Gmail address) so the supplier sees a
@@ -1530,7 +1554,7 @@ async function dispatchBotPurchaseOrder(input: {
           orderNumber: currentPurchaseOrder.orderNumber,
           orderedByName,
           replyToEmail,
-          lines: [line],
+          lines: emailLines,
           notes: currentPurchaseOrder.notes ?? null,
         });
 
@@ -1679,15 +1703,20 @@ async function dispatchBotPurchaseOrder(input: {
         userId: input.userId,
         supplier: input.supplier,
         orderNumber: currentPurchaseOrder.orderNumber,
-        lineDescription: input.inventoryName,
-        quantity: input.packCount,
+        // Show primary item + " + N more" when there's a multi-line PO,
+        // so the chat message isn't silently missing items.
+        lineDescription:
+          emailLines.length > 1
+            ? `${line.description} + ${emailLines.length - 1} more`
+            : line.description,
+        quantity: line.quantity,
       });
     } else {
       const task = await supplierOrderProvider.prepareWebsiteTask({
         supplierName: input.supplier.name,
         website: input.supplier.website,
         orderNumber: currentPurchaseOrder.orderNumber,
-        lines: [line],
+        lines: emailLines,
       });
 
       await db.$transaction(async (tx) => {

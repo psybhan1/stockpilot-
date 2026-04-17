@@ -17,6 +17,13 @@ for (const key of ENV_KEYS) {
   savedEnv[key] = process.env[key];
   delete process.env[key];
 }
+// tsx's dynamic-import path silently re-reads .env (observed on
+// Node 24 + tsx 4.21). So process.env gets re-populated after every
+// `await import(...)`. We have to re-clear at the START of each
+// scenario, otherwise scenario 1 sees whatever was in .env.
+function clearTestEnv() {
+  for (const key of ENV_KEYS) delete process.env[key];
+}
 function restoreEnv() {
   for (const key of ENV_KEYS) {
     if (savedEnv[key] === undefined) delete process.env[key];
@@ -70,6 +77,7 @@ async function freshClasses() {
 await runScenario("Default → MockAiProvider when no keys", async () => {
   const getProvider = await freshGetAiProvider();
   const { MockAiProvider } = await freshClasses();
+  clearTestEnv(); // re-clear after the dynamic imports repopulated .env
   const provider = getProvider();
   assert(provider instanceof MockAiProvider, "expected MockAiProvider");
 });
