@@ -282,6 +282,22 @@ async function fetchViaMicrolink(
   url: string,
   options?: { timeoutMs?: number; fetchImpl?: typeof fetch }
 ): Promise<ProductMetadata | null> {
+  // Retry once on transient failures. Microlink's free endpoint
+  // occasionally returns 502/504 for 1-2s; a single retry after
+  // 800ms usually succeeds. Keeps us free-tier-clean (we still
+  // cache the success so a third hit won't happen).
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await microlinkOnce(url, options);
+    if (result !== null) return result;
+    if (attempt === 0) await sleep(800);
+  }
+  return null;
+}
+
+async function microlinkOnce(
+  url: string,
+  options?: { timeoutMs?: number; fetchImpl?: typeof fetch }
+): Promise<ProductMetadata | null> {
   const timeoutMs = options?.timeoutMs ?? 8000;
   const fetchImpl = options?.fetchImpl ?? globalThis.fetch;
   const apiUrl = `${MICROLINK_ENDPOINT}?url=${encodeURIComponent(url)}`;
@@ -326,6 +342,10 @@ async function fetchViaMicrolink(
     );
     return null;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function readFirstBytes(res: Response, maxBytes: number): Promise<string> {

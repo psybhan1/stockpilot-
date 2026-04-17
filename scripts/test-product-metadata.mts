@@ -289,6 +289,60 @@ await runScenario("fetchProductMetadata: microlink HTTP error → null", async (
   assert(meta === null, "HTTP error → null");
 });
 
+// ── Microlink retry-once on transient failures ────────────────────
+await runScenario(
+  "fetchProductMetadata: microlink 502 first time, success on retry",
+  async () => {
+    _resetProductMetadataCacheForTests();
+    let attempts = 0;
+    const meta = await fetchProductMetadata("https://www.amazon.com/dp/RETRY", {
+      skipPuppeteer: true,
+      fetchImpl: (async (url) => {
+        const href =
+          typeof url === "string"
+            ? url
+            : url instanceof URL
+              ? url.toString()
+              : String(url);
+        if (!href.startsWith("https://api.microlink.io")) {
+          return new Response("unexpected", { status: 500 });
+        }
+        attempts += 1;
+        if (attempts === 1) {
+          // First try fails with a transient 502
+          return new Response("bad gateway", { status: 502 });
+        }
+        return new Response(
+          JSON.stringify({
+            status: "success",
+            data: { title: "Recovered Title" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }) as typeof fetch,
+    });
+    assert(meta?.title === "Recovered Title", `retry recovered (got: ${meta?.title})`);
+    assert(attempts === 2, `exactly 2 attempts (got ${attempts})`);
+  }
+);
+
+await runScenario(
+  "fetchProductMetadata: microlink persistent failure → null after retry",
+  async () => {
+    _resetProductMetadataCacheForTests();
+    let attempts = 0;
+    const meta = await fetchProductMetadata("https://www.amazon.com/dp/PERMA", {
+      skipPuppeteer: true,
+      fetchImpl: (async () => {
+        attempts += 1;
+        return new Response("down", { status: 502 });
+      }) as typeof fetch,
+    });
+    assert(meta === null, "null after all retries exhausted");
+    assert(attempts === 2, `retried once (got ${attempts} attempts)`);
+  }
+);
+
 // ── Cache tests ────────────────────────────────────────────────────
 await runScenario("fetchProductMetadata: same URL twice → cache hit", async () => {
   _resetProductMetadataCacheForTests();

@@ -41,6 +41,29 @@ RUN apt-get update && apt-get install -y \
 
 ENV NODE_ENV=production
 
+# Pre-bake Chrome for Testing (Stable channel) into the image so the
+# browser-ordering agent + product-metadata puppeteer fallback never
+# hit a runtime download failure. Previously we downloaded at first-
+# use into /tmp/.chrome-cache, which wiped on container restart and
+# occasionally failed mid-download. This moves the download to build
+# time (reliable network, proper error propagation) and puts the
+# binary in /opt/chrome which survives container lifetime.
+RUN apt-get update && apt-get install -y wget unzip && \
+    CHROME_JSON=$(wget -qO- https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json) && \
+    CHROME_URL=$(echo "$CHROME_JSON" | grep -oE '"url":\s*"[^"]+linux64/chrome-linux64.zip"' | head -1 | sed -E 's/.*"(https:[^"]+)".*/\1/') && \
+    echo "Downloading Chrome from: $CHROME_URL" && \
+    wget -qO /tmp/chrome.zip "$CHROME_URL" && \
+    unzip -q /tmp/chrome.zip -d /opt && \
+    mv /opt/chrome-linux64 /opt/chrome && \
+    chmod -R 755 /opt/chrome && \
+    rm /tmp/chrome.zip && \
+    /opt/chrome/chrome --version && \
+    apt-get remove -y wget unzip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
+# Point puppeteer-core at the baked binary. chrome-launcher.ts
+# respects this env var first.
+ENV PUPPETEER_EXECUTABLE_PATH=/opt/chrome/chrome
+
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public

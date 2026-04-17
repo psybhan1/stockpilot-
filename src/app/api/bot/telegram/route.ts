@@ -125,6 +125,34 @@ export async function POST(request: Request) {
   }
 
   const payload = (await request.json()) as TelegramUpdate;
+  try {
+    return await handleTelegramUpdate(payload);
+  } catch (err) {
+    // FINAL SAFETY NET. If anything else in the webhook throws
+    // (DB outage, Prisma connection pool, unexpected model error,
+    // etc.) we still want the user to get SOME reply rather than
+    // stare at a chat that looks dead. Best-effort — if even this
+    // try/catch's body fails, Telegram will at least see our 200
+    // and not retry the webhook.
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error("[telegram webhook] unhandled error:", errMsg);
+    const chatId =
+      payload.callback_query?.message?.chat?.id ??
+      payload.message?.chat?.id ??
+      null;
+    if (chatId) {
+      await sendTelegramMessage(
+        String(chatId),
+        "⚠ Something went wrong on my end. Give me a minute and try again — if it keeps happening, your manager can check Settings → Alerts."
+      ).catch(() => null);
+    }
+    // Always return 200 so Telegram doesn't hammer us with retries
+    // on transient failures.
+    return NextResponse.json({ ok: false, handled: "safety_net" });
+  }
+}
+
+async function handleTelegramUpdate(payload: TelegramUpdate) {
 
   // ── Inline-button callback (one-click order approval / cancel etc.) ──
   if (payload.callback_query) {
@@ -250,18 +278,43 @@ export async function POST(request: Request) {
     });
   }
 
-  const result = await handleInboundManagerBotMessage({
-    channel: "TELEGRAM",
-    senderId: String(chatId),
-    senderDisplayName:
-      displayName || payload.message?.from?.username || String(senderId),
-    text,
-    sourceMessageId,
-    rawPayload: {
-      ...(payload as unknown as Record<string, unknown>),
-      isVoiceTranscription: isVoice,
-    } as unknown as Prisma.InputJsonValue,
-  });
+  // Hard 45s ceiling on the whole bot turn. If the underlying agent
+  // is stuck (Groq 30s timeout × 3 retries, metadata fetch hanging,
+  // etc.) we don't want the webhook to block forever — Telegram
+  // retries after ~60s on its end, which creates duplicate-processing
+  // storms. Return a safe "try again" instead.
+  const result = await Promise.race([
+    handleInboundManagerBotMessage({
+      channel: "TELEGRAM",
+      senderId: String(chatId),
+      senderDisplayName:
+        displayName || payload.message?.from?.username || String(senderId),
+      text,
+      sourceMessageId,
+      rawPayload: {
+        ...(payload as unknown as Record<string, unknown>),
+        isVoiceTranscription: isVoice,
+      } as unknown as Prisma.InputJsonValue,
+    }),
+    new Promise<{
+      ok: boolean;
+      reply: string;
+      purchaseOrderId?: string | null;
+      orderNumber?: string | null;
+      skipSend?: boolean;
+    }>((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            ok: false,
+            reply:
+              "⌛ Taking longer than expected — try again in a moment. Complex operations like searching Amazon can take 30+ seconds.",
+            skipSend: false,
+          }),
+        45000
+      )
+    ),
+  ]);
 
   if (!result.skipSend && result.reply) {
     // If the bot just drafted a purchase order, attach inline approval
