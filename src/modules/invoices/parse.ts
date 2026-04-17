@@ -48,11 +48,23 @@ export type InvoiceParsedLine = {
   quantityPacks: number | null;
   /** Per-pack cost in cents; null if the invoice didn't print one we could read. */
   unitCostCents: number | null;
+  /** Extended price (row total, qty × unit price) in cents — used to cross-check the math. */
+  extPriceCents: number | null;
   /** OCR confidence — the UI shows low-confidence rows more prominently. */
   confidence: "high" | "medium" | "low";
   /** Short human-readable note (e.g. "line partially obscured", "weight-pricing not standard pack"). */
   note: string;
 };
+
+export type InvoiceSanityFlag =
+  /** extPrice doesn't match qty*unit, off by more than 5%. */
+  | { kind: "line_math_mismatch"; lineIndex: number; delta: number }
+  /** sum of extPrices doesn't match reported subtotal. */
+  | { kind: "subtotal_mismatch"; reportedCents: number; sumCents: number }
+  /** supplier name on invoice doesn't resemble the PO's supplier. */
+  | { kind: "supplier_name_mismatch"; invoiceName: string; expectedName: string }
+  /** a line's quantityPacks is absurd vs what was ordered (e.g. 1000× the PO). */
+  | { kind: "quantity_outlier"; lineIndex: number; ordered: number; reported: number };
 
 export type InvoiceParseResult = {
   ok: boolean;
@@ -63,10 +75,23 @@ export type InvoiceParseResult = {
     taxCents?: number | null;
     totalCents?: number | null;
   };
+  /** Supplier name as printed on the invoice, if the model could read it. */
+  supplierName?: string | null;
+  /** Invoice/packing-slip number printed on the page. */
+  invoiceNumber?: string | null;
   /** Short free-text model observation (e.g. "Delivery short 2 cases of tomatoes"). */
   summary?: string;
   /** If ok=false, why (network, JSON parse fail, missing key, etc.). */
   reason?: string;
+  /** Server-side sanity checks that look for obvious parse errors. */
+  sanity?: InvoiceSanityFlag[];
+  /** Debugging: raw model response body + model id. Persisted on the PO
+   * so ops can inspect what the model actually said when a parse looks off.
+   * Never shown in the main UI; only in an admin detail view. */
+  debug?: {
+    model: string;
+    raw: string;
+  };
 };
 
 /**
@@ -101,18 +126,47 @@ export async function parseInvoiceImage(input: {
     return { ok: false, lines: [], reason: "Invoice image missing or not a data URL" };
   }
 
-  const systemPrompt = `You are a bookkeeping assistant for a restaurant. Given a photo of a supplier's delivery invoice and the PO the restaurant sent, extract each line item they actually received.
+  const systemPrompt = `You are a bookkeeping assistant reading a supplier's delivery invoice for a restaurant. The invoice is typically a printed document (or sometimes a packing slip) with the following structure that you should scan in order:
 
-Return STRICT JSON: {"lines":[{"lineId":"po-line-id-or-null","rawDescription":"...","quantityPacks":<number-or-null>,"unitCostCents":<integer-or-null>,"confidence":"high|medium|low","note":"short reason"}],"totals":{"subtotalCents":<int-or-null>,"taxCents":<int-or-null>,"totalCents":<int-or-null>},"summary":"one-line observation"}
+1. HEADER area (top of page): supplier name, invoice number or packing slip number, date, and often a PO number referencing the restaurant's order.
+2. LINE ITEMS TABLE (middle): each row = one product delivered. Columns usually include: item SKU / code, description, quantity, unit of measure (cs=case, bt=bottle, lb=pound, ea=each, kg=kilogram), unit price, extended price (= qty × unit price).
+3. TOTALS block (bottom): subtotal, tax, delivery/fuel surcharge, and grand total.
+
+The restaurant will send you THEIR ordered lines (with stable ids). Your job: for each LINE ITEM you can read, match it to one of those ids by description/SKU, and return what was actually delivered and charged.
+
+Return STRICT JSON with this exact shape:
+{
+  "supplierName": "<name as printed at top, or null>",
+  "invoiceNumber": "<printed on the invoice, or null>",
+  "lines": [
+    {
+      "lineId": "<exact PO line id or null if no match>",
+      "rawDescription": "<product as printed on the invoice>",
+      "quantityPacks": <number or null>,
+      "unitCostCents": <integer cents or null>,
+      "extPriceCents": <integer cents: the row's extended/line total, or null>,
+      "confidence": "high" | "medium" | "low",
+      "note": "<short reason, under 25 words>"
+    }
+  ],
+  "totals": {
+    "subtotalCents": <integer cents or null>,
+    "taxCents": <integer cents or null>,
+    "totalCents": <integer cents or null>
+  },
+  "summary": "<one line, e.g. 'Delivery short 2 cases of tomatoes'>"
+}
 
 Rules:
-- Match each invoice line to a PO line by product description or SKU. Use the PO line's id EXACTLY as given; if no match exists (a bonus item, or a line you can't read), set lineId=null.
-- quantityPacks is the COUNT of purchase units on the invoice (cases, bottles, pounds as written). Not converted to base units — we'll do that.
-- unitCostCents is the PER-UNIT cost charged (price printed per case / per bottle / etc.) in integer cents. A $12.45/case → 1245. Exclude taxes and delivery fees from unit cost; those go in totals.
-- Totals are for the whole invoice. Include them if clearly printed.
-- confidence="high" when the line and numbers are crisply legible; "medium" when something is smudged or a format guess; "low" for anything that's plausibly wrong.
-- Keep note under 25 words.
-- Never invent lines. If you can't read a row, skip it.`;
+- Match each invoice row to a PO line by product description or SKU. Use the EXACT lineId from the PO context. If there is no match (bonus item, unreadable row, supplier substituted), set lineId=null — don't force a match.
+- quantityPacks is the COUNT in the purchase unit as written on the invoice (e.g. "3 CS" → 3; "2.5 LB" → 2.5). Do NOT convert to grams/ml — our server handles that.
+- unitCostCents is the PRICE-PER-UNIT as printed in integer cents. $12.45/case → 1245. A $4.99/lb line with qty 2.5 lb and ext price $12.48 → unitCostCents=499. Exclude taxes, delivery fees, and fuel surcharges — those go in totals.
+- extPriceCents is the line's extended total (qty × unit price). Include it when visible — we cross-check the math.
+- Totals.* are for the WHOLE invoice, including tax and delivery if printed.
+- Confidence: "high" only when both description AND numbers are crisply legible. "medium" when one number is smudged, you're inferring a column, or the format is unusual. "low" when you're guessing more than reading.
+- NEVER invent lines. A row you can't read at all → skip it. A row missing a price → include with unitCostCents=null and confidence="low".
+- If the invoice is not readable at all (blank page, wrong document, too blurry), return { "lines": [] } and use summary to explain.
+- Keep rawDescription faithful to what's printed; don't expand abbreviations or correct typos.`;
 
   const poLinesText = input.poContext.lines
     .map((l) => {
@@ -195,7 +249,15 @@ Read the invoice photo and extract what was actually delivered and charged.`;
     };
   }
 
-  return coerceParsedResponse(raw, input.poContext.lines);
+  const coerced = coerceParsedResponse(raw, input.poContext.lines);
+  if (!coerced.ok) return coerced;
+  // Attach debug + sanity checks now that we have a clean parse.
+  coerced.debug = { model, raw };
+  coerced.sanity = sanityCheckParse(coerced, {
+    supplierName: input.poContext.supplierName,
+    lines: input.poContext.lines,
+  });
+  return coerced;
 }
 
 /**
@@ -236,6 +298,7 @@ export function coerceParsedResponse(
       rawDescription,
       quantityPacks: coerceNonNegativeNumber(e.quantityPacks),
       unitCostCents: coerceNonNegativeInteger(e.unitCostCents),
+      extPriceCents: coerceNonNegativeInteger(e.extPriceCents),
       confidence:
         e.confidence === "high" || e.confidence === "medium" || e.confidence === "low"
           ? (e.confidence as "high" | "medium" | "low")
@@ -249,6 +312,11 @@ export function coerceParsedResponse(
       ? (obj.totals as Record<string, unknown>)
       : {};
 
+  const supplierName =
+    typeof obj.supplierName === "string" ? obj.supplierName.slice(0, 120) : null;
+  const invoiceNumber =
+    typeof obj.invoiceNumber === "string" ? obj.invoiceNumber.slice(0, 64) : null;
+
   return {
     ok: true,
     lines,
@@ -257,9 +325,144 @@ export function coerceParsedResponse(
       taxCents: coerceNonNegativeInteger(totalsObj.taxCents),
       totalCents: coerceNonNegativeInteger(totalsObj.totalCents),
     },
+    supplierName,
+    invoiceNumber,
     summary: typeof obj.summary === "string" ? obj.summary.slice(0, 400) : undefined,
   };
 }
+
+/**
+ * Post-parse sanity checks. Run after coerceParsedResponse; returns
+ * a list of warnings the UI surfaces next to the parsed data.
+ *
+ * Each check is a cheap deterministic test that catches common model
+ * hallucinations without needing a second LLM pass:
+ *   - Line math: qty × unit ≠ extPrice (off > 5%)
+ *   - Subtotal math: sum of extPrices ≠ reported subtotal (off > 5%)
+ *   - Supplier name mismatch: model saw a different supplier than
+ *     the PO claims — happens when the user photographs the wrong
+ *     invoice by accident
+ *   - Quantity outlier: reported > 10× ordered or > 100 when ordered
+ *     was a small number; catches the "3" → "33" misread that
+ *     would otherwise charge you for 33 cases
+ */
+export function sanityCheckParse(
+  result: InvoiceParseResult,
+  poContext: { supplierName: string; lines: InvoicePoLineContext[] }
+): InvoiceSanityFlag[] {
+  const flags: InvoiceSanityFlag[] = [];
+
+  // 1. per-line math
+  for (let i = 0; i < result.lines.length; i++) {
+    const line = result.lines[i];
+    if (
+      line.quantityPacks != null &&
+      line.unitCostCents != null &&
+      line.extPriceCents != null &&
+      line.extPriceCents > 0
+    ) {
+      const expected = line.quantityPacks * line.unitCostCents;
+      const delta = line.extPriceCents - expected;
+      const pct = Math.abs(delta) / Math.max(line.extPriceCents, expected);
+      if (pct > 0.05) {
+        flags.push({ kind: "line_math_mismatch", lineIndex: i, delta });
+      }
+    }
+  }
+
+  // 2. subtotal math
+  if (result.totals?.subtotalCents != null && result.totals.subtotalCents > 0) {
+    let sum = 0;
+    let any = false;
+    for (const line of result.lines) {
+      if (line.extPriceCents != null && line.extPriceCents > 0) {
+        sum += line.extPriceCents;
+        any = true;
+      } else if (line.quantityPacks != null && line.unitCostCents != null) {
+        sum += Math.round(line.quantityPacks * line.unitCostCents);
+        any = true;
+      }
+    }
+    if (any) {
+      const reported = result.totals.subtotalCents;
+      const pct = Math.abs(sum - reported) / Math.max(reported, sum);
+      if (pct > 0.05) {
+        flags.push({ kind: "subtotal_mismatch", reportedCents: reported, sumCents: sum });
+      }
+    }
+  }
+
+  // 3. supplier-name mismatch
+  if (result.supplierName) {
+    const got = result.supplierName.toLowerCase();
+    const expected = poContext.supplierName.toLowerCase();
+    if (!nameLooksSimilar(got, expected)) {
+      flags.push({
+        kind: "supplier_name_mismatch",
+        invoiceName: result.supplierName,
+        expectedName: poContext.supplierName,
+      });
+    }
+  }
+
+  // 4. quantity outlier
+  const poByLineId = new Map(poContext.lines.map((l) => [l.lineId, l]));
+  for (let i = 0; i < result.lines.length; i++) {
+    const line = result.lines[i];
+    if (line.quantityPacks == null || line.lineId == null) continue;
+    const po = poByLineId.get(line.lineId);
+    if (!po || po.quantityOrdered <= 0) continue;
+    const ratio = line.quantityPacks / po.quantityOrdered;
+    // Outlier if reported is >10x ordered. Typos like "3" → "33"
+    // fall in this band; supplier overshipment by 2-3x doesn't.
+    if (ratio > 10) {
+      flags.push({
+        kind: "quantity_outlier",
+        lineIndex: i,
+        ordered: po.quantityOrdered,
+        reported: line.quantityPacks,
+      });
+    }
+  }
+
+  return flags;
+}
+
+/**
+ * Loose name-similarity check. "Sysco Toronto" should match "Sysco"
+ * (the PO's stored supplier name), and "Acme Foods" should match
+ * "Acme Foods Inc." — common bookkeeping normalization. We tokenize
+ * on word boundaries and check for any shared ≥3-char token. False
+ * positives are fine; false negatives trigger a warning, not a
+ * reject, so the user can confirm manually.
+ */
+function nameLooksSimilar(a: string, b: string): boolean {
+  const tokens = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]+/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length >= 3 && !GENERIC_CORP_TOKENS.has(t));
+  const aTokens = new Set(tokens(a));
+  for (const t of tokens(b)) {
+    if (aTokens.has(t)) return true;
+  }
+  return false;
+}
+const GENERIC_CORP_TOKENS = new Set([
+  "inc",
+  "corp",
+  "ltd",
+  "llc",
+  "co",
+  "company",
+  "foods",
+  "food",
+  "supply",
+  "company",
+  "the",
+  "and",
+]);
 
 function coerceNonNegativeInteger(v: unknown): number | null {
   if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;

@@ -25,6 +25,7 @@ const {
   coerceParsedResponse,
   classifyPriceVariance,
   classifyQuantityShortfall,
+  sanityCheckParse,
 } = await import("../src/modules/invoices/parse.ts");
 const { deliverPurchaseOrder } = await import(
   "../src/modules/purchasing/service.ts"
@@ -233,6 +234,192 @@ await scenario("coerceParsedResponse: missing rawDescription → row dropped", (
   const res = coerceParsedResponse(raw, poContext);
   assert(res.lines.length === 1, "row without description dropped");
   assert(res.lines[0].lineId === "line-2", "other row kept");
+});
+
+await scenario("coerceParsedResponse: picks up supplierName + invoiceNumber + extPriceCents", () => {
+  const raw = JSON.stringify({
+    supplierName: "Sysco Toronto",
+    invoiceNumber: "INV-000123",
+    lines: [
+      {
+        lineId: "line-1",
+        rawDescription: "Milk 2% 4L",
+        quantityPacks: 3,
+        unitCostCents: 1200,
+        extPriceCents: 3600,
+        confidence: "high",
+      },
+    ],
+  });
+  const res = coerceParsedResponse(raw, poContext);
+  assert(res.supplierName === "Sysco Toronto", "supplier name captured");
+  assert(res.invoiceNumber === "INV-000123", "invoice number captured");
+  assert(res.lines[0].extPriceCents === 3600, "ext price captured");
+});
+
+// ── sanityCheckParse ────────────────────────────────────────────────
+
+await scenario("sanityCheckParse: clean math → no flags", () => {
+  const res = coerceParsedResponse(
+    JSON.stringify({
+      supplierName: "FreshCo",
+      lines: [
+        {
+          lineId: "line-1",
+          rawDescription: "Milk",
+          quantityPacks: 3,
+          unitCostCents: 1200,
+          extPriceCents: 3600,
+          confidence: "high",
+        },
+      ],
+      totals: { subtotalCents: 3600 },
+    }),
+    poContext
+  );
+  const flags = sanityCheckParse(res, {
+    supplierName: "FreshCo",
+    lines: poContext,
+  });
+  assert(flags.length === 0, `no flags expected, got ${flags.length}`);
+});
+
+await scenario("sanityCheckParse: per-line math mismatch flagged", () => {
+  const res = coerceParsedResponse(
+    JSON.stringify({
+      supplierName: "FreshCo",
+      lines: [
+        {
+          lineId: "line-1",
+          rawDescription: "Milk",
+          quantityPacks: 3,
+          unitCostCents: 1200,
+          extPriceCents: 4800,
+          confidence: "high",
+        },
+      ],
+    }),
+    poContext
+  );
+  const flags = sanityCheckParse(res, {
+    supplierName: "FreshCo",
+    lines: poContext,
+  });
+  const line = flags.find((f) => f.kind === "line_math_mismatch");
+  assert(line != null, "line-math flag present");
+  assert(
+    line?.kind === "line_math_mismatch" && line.delta === 1200,
+    `delta = +1200¢ (row over-priced by $12) — got ${line && line.kind === "line_math_mismatch" ? line.delta : "none"}`
+  );
+});
+
+await scenario("sanityCheckParse: subtotal mismatch flagged when lines don't add up", () => {
+  const res = coerceParsedResponse(
+    JSON.stringify({
+      supplierName: "FreshCo",
+      lines: [
+        {
+          lineId: "line-1",
+          rawDescription: "Milk",
+          quantityPacks: 3,
+          unitCostCents: 1200,
+          extPriceCents: 3600,
+          confidence: "high",
+        },
+      ],
+      totals: { subtotalCents: 5000 },
+    }),
+    poContext
+  );
+  const flags = sanityCheckParse(res, {
+    supplierName: "FreshCo",
+    lines: poContext,
+  });
+  const subtotal = flags.find((f) => f.kind === "subtotal_mismatch");
+  assert(subtotal != null, "subtotal-mismatch flag present");
+});
+
+await scenario("sanityCheckParse: supplier name mismatch flagged", () => {
+  const res = coerceParsedResponse(
+    JSON.stringify({
+      supplierName: "Totally Different Supplier",
+      lines: [],
+    }),
+    poContext
+  );
+  const flags = sanityCheckParse(res, {
+    supplierName: "FreshCo",
+    lines: poContext,
+  });
+  const mismatch = flags.find((f) => f.kind === "supplier_name_mismatch");
+  assert(mismatch != null, "supplier-name mismatch flagged");
+});
+
+await scenario("sanityCheckParse: supplier name fuzzy match OK (shared token)", () => {
+  // Invoice prints "Sysco Toronto"; PO supplier is just "Sysco"
+  const res = coerceParsedResponse(
+    JSON.stringify({
+      supplierName: "Sysco Toronto Distribution",
+      lines: [],
+    }),
+    poContext
+  );
+  const flags = sanityCheckParse(res, { supplierName: "Sysco", lines: [] });
+  const mismatch = flags.find((f) => f.kind === "supplier_name_mismatch");
+  assert(mismatch == null, "shared 'sysco' token → no mismatch flag");
+});
+
+await scenario("sanityCheckParse: quantity outlier flagged", () => {
+  // Ordered 3 cases of milk, model says 33 (typo misread)
+  const res = coerceParsedResponse(
+    JSON.stringify({
+      lines: [
+        {
+          lineId: "line-1",
+          rawDescription: "Milk 2% 4L",
+          quantityPacks: 33,
+          unitCostCents: 1200,
+          confidence: "high",
+        },
+      ],
+    }),
+    poContext
+  );
+  const flags = sanityCheckParse(res, {
+    supplierName: "FreshCo",
+    lines: poContext,
+  });
+  const outlier = flags.find((f) => f.kind === "quantity_outlier");
+  assert(outlier != null, "quantity-outlier flag present");
+  assert(
+    outlier?.kind === "quantity_outlier" &&
+      outlier.reported === 33 &&
+      outlier.ordered === 3,
+    "outlier details correct"
+  );
+});
+
+await scenario("sanityCheckParse: 2× ordered is NOT an outlier (supplier over-deliveries happen)", () => {
+  const res = coerceParsedResponse(
+    JSON.stringify({
+      lines: [
+        {
+          lineId: "line-1",
+          rawDescription: "Milk",
+          quantityPacks: 6,
+          unitCostCents: 1200,
+          confidence: "high",
+        },
+      ],
+    }),
+    poContext
+  );
+  const flags = sanityCheckParse(res, {
+    supplierName: "FreshCo",
+    lines: poContext,
+  });
+  const outlier = flags.find((f) => f.kind === "quantity_outlier");
+  assert(outlier == null, "2× ordered → no flag (normal over-delivery)");
 });
 
 // ── parseInvoiceImage: full wire shape ──────────────────────────────

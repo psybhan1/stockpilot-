@@ -40,9 +40,16 @@ type ParsedLine = {
   rawDescription: string;
   quantityPacks: number | null;
   unitCostCents: number | null;
+  extPriceCents: number | null;
   confidence: "high" | "medium" | "low";
   note: string;
 };
+
+type SanityFlag =
+  | { kind: "line_math_mismatch"; lineIndex: number; delta: number }
+  | { kind: "subtotal_mismatch"; reportedCents: number; sumCents: number }
+  | { kind: "supplier_name_mismatch"; invoiceName: string; expectedName: string }
+  | { kind: "quantity_outlier"; lineIndex: number; ordered: number; reported: number };
 
 type ParseResult = {
   ok: boolean;
@@ -52,8 +59,11 @@ type ParseResult = {
     taxCents?: number | null;
     totalCents?: number | null;
   };
+  supplierName?: string | null;
+  invoiceNumber?: string | null;
   summary?: string;
   reason?: string;
+  sanity?: SanityFlag[];
 };
 
 type LineState = {
@@ -334,6 +344,16 @@ function ParseResultSummary({
           Re-apply
         </Button>
       </div>
+      {result.sanity && result.sanity.length > 0 ? (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-100">
+          <p className="font-medium">Double-check these — our math doesn't quite add up:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {result.sanity.map((f, i) => (
+              <li key={i}>{describeSanityFlag(f, result)}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <details className="text-xs">
         <summary className="cursor-pointer text-emerald-900/80 dark:text-emerald-100/80">
           What the model read
@@ -349,6 +369,9 @@ function ParseResultSummary({
               {l.unitCostCents != null
                 ? `@ $${(l.unitCostCents / 100).toFixed(2)}`
                 : "@ price ?"}{" "}
+              {l.extPriceCents != null
+                ? `= $${(l.extPriceCents / 100).toFixed(2)}`
+                : ""}{" "}
               {l.note ? `(${l.note})` : ""}
               {l.lineId ? "" : "  — unmatched"}
             </li>
@@ -384,6 +407,24 @@ function VarianceBadge({
       </span>
     </div>
   );
+}
+
+function describeSanityFlag(f: SanityFlag, result: ParseResult): string {
+  switch (f.kind) {
+    case "line_math_mismatch": {
+      const line = result.lines[f.lineIndex];
+      const sign = f.delta > 0 ? "over" : "under";
+      return `"${line?.rawDescription ?? "?"}": row total is $${(Math.abs(f.delta) / 100).toFixed(2)} ${sign} (qty × unit price doesn't equal extended price).`;
+    }
+    case "subtotal_mismatch":
+      return `Invoice subtotal printed as $${(f.reportedCents / 100).toFixed(2)} but the line items we read add up to $${(f.sumCents / 100).toFixed(2)}. One or more lines may have been misread.`;
+    case "supplier_name_mismatch":
+      return `Invoice says "${f.invoiceName}", but this PO was sent to "${f.expectedName}". Make sure you uploaded the right invoice.`;
+    case "quantity_outlier": {
+      const line = result.lines[f.lineIndex];
+      return `"${line?.rawDescription ?? "?"}": parsed as ${f.reported} packs but you ordered ${f.ordered}. Verify the quantity column didn't get misread (e.g. "3" → "33").`;
+    }
+  }
 }
 
 function confidenceClass(c: "high" | "medium" | "low") {
