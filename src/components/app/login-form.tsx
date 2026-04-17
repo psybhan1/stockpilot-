@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import Link from "next/link";
 import { ArrowRight, KeyRound } from "lucide-react";
 
 import { loginAction } from "@/app/actions/auth";
@@ -110,6 +111,16 @@ export function LoginForm() {
             )}
           </Button>
         </form>
+
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-border/60 bg-background/30 p-3 text-xs text-muted-foreground">
+          <span>New here?</span>
+          <Link
+            href="/signup"
+            className="font-semibold text-foreground hover:underline"
+          >
+            Create an account →
+          </Link>
+        </div>
 
         <div className="rounded-xl border border-border/60 bg-background/30 p-4">
           <p className="font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
