@@ -26,6 +26,7 @@ import {
 import { startAddItem } from "./workflows/add-item";
 import { startAddSupplier } from "./workflows/add-supplier";
 import { saveWorkflowState } from "./workflows/engine";
+import { nextOrderNumber } from "@/modules/purchasing/service";
 
 export type AgentContext = {
   locationId: string;
@@ -797,7 +798,7 @@ export async function executeTool(
           };
         }
 
-        const orderNumber = `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+        const orderNumber = nextOrderNumber();
         const po = await db.purchaseOrder.create({
           data: {
             locationId: ctx.locationId,

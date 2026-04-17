@@ -24,7 +24,7 @@ import { getSupplierOrderProviderForLocation } from "@/providers/supplier-order-
 import { buildSupplierOrderEmail } from "@/modules/purchasing/email-template";
 import { getGmailCredentials } from "@/modules/channels/service";
 
-function nextOrderNumber() {
+export function nextOrderNumber() {
   // Format: PO-YYYY-<6 base36> — about 2B values per year, plus a
   // millisecond-timestamp prefix so two POs approved in the same
   // second don't share digits. The old format (4 random digits,

@@ -25,6 +25,7 @@ import {
 import { db } from "@/lib/db";
 import { createAuditLogTx } from "@/lib/audit";
 import { approveAndDispatchPurchaseOrder } from "@/modules/operator-bot/service";
+import { nextOrderNumber } from "@/modules/purchasing/service";
 
 export type AlternateMatch = {
   supplier: {
@@ -164,10 +165,6 @@ export type RescueResult =
       dispatchReason?: string;
     }
   | { ok: false; reason: string };
-
-function nextOrderNumber() {
-  return `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
-}
 
 export async function createRescuePurchaseOrder(
   failedPoId: string,
