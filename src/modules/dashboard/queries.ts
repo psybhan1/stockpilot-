@@ -290,6 +290,153 @@ export async function getSupplierDetail(locationId: string, supplierId: string) 
   });
 }
 
+/**
+ * Money-pulse widget for the dashboard. The MarginEdge killer
+ * feature in one card — what did this week cost, what's moving,
+ * what's waiting. Read-only aggregation; cheap enough to run on
+ * every dashboard load (a few indexed queries, no joins beyond
+ * the PO row itself).
+ *
+ * All amounts in cents. Null-safe for brand-new locations with no
+ * orders yet — returns zeros and an empty-state flag the card uses
+ * to show a coaching message instead of fake stats.
+ */
+export async function getMoneyPulse(locationId: string): Promise<{
+  weekSpentCents: number;
+  weekOrderCount: number;
+  autoApprovedCount: number;
+  pendingCount: number;
+  pendingTotalCents: number;
+  priceAlert:
+    | null
+    | {
+        itemName: string;
+        oldCents: number;
+        newCents: number;
+        deltaPct: number;
+      };
+  isEmpty: boolean;
+}> {
+  const now = new Date();
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const [weekPos, pendingPos, autoApprovedLogs, variances] = await Promise.all([
+    // Sent in the last 7 days — what we spent.
+    db.purchaseOrder.findMany({
+      where: {
+        locationId,
+        status: { in: ["SENT", "ACKNOWLEDGED", "DELIVERED"] },
+        sentAt: { gte: weekAgo },
+      },
+      select: {
+        id: true,
+        lines: {
+          select: {
+            quantityOrdered: true,
+            latestCostCents: true,
+            actualUnitCostCents: true,
+          },
+        },
+      },
+    }),
+    // Still waiting for a human tap.
+    db.purchaseOrder.findMany({
+      where: {
+        locationId,
+        status: { in: ["DRAFT", "AWAITING_APPROVAL"] },
+      },
+      select: {
+        id: true,
+        lines: {
+          select: { quantityOrdered: true, latestCostCents: true },
+        },
+      },
+    }),
+    // Audit rows for bot auto-approvals this week.
+    db.auditLog.findMany({
+      where: {
+        locationId,
+        action: "bot.outbound_replied",
+        createdAt: { gte: weekAgo },
+      },
+      select: { details: true },
+      take: 100,
+    }),
+    // Price-jump alerts: look at the most recent variance-review
+    // audit we wrote from deliverPurchaseOrder.
+    db.auditLog.findFirst({
+      where: {
+        locationId,
+        action: "purchaseOrder.priceVariance.review",
+        createdAt: { gte: weekAgo },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { details: true },
+    }),
+  ]);
+
+  const sumLines = (
+    lines: Array<{
+      quantityOrdered: number;
+      latestCostCents?: number | null;
+      actualUnitCostCents?: number | null;
+    }>
+  ) =>
+    lines.reduce((sum, l) => {
+      const unit = l.actualUnitCostCents ?? l.latestCostCents ?? 0;
+      return sum + unit * l.quantityOrdered;
+    }, 0);
+
+  const weekSpentCents = weekPos.reduce((s, po) => s + sumLines(po.lines), 0);
+  const pendingTotalCents = pendingPos.reduce((s, po) => s + sumLines(po.lines), 0);
+
+  // Count auto-approved deliveries this week — the "bot sent it
+  // while I slept" signal.
+  const autoApprovedCount = autoApprovedLogs.filter((row) => {
+    const d = row.details as { replyScenario?: string } | null;
+    return d?.replyScenario === "order_auto_approved";
+  }).length;
+
+  let priceAlert: {
+    itemName: string;
+    oldCents: number;
+    newCents: number;
+    deltaPct: number;
+  } | null = null;
+  if (variances?.details) {
+    const d = variances.details as {
+      description?: string;
+      expectedCents?: number;
+      actualCents?: number;
+      deltaPct?: number;
+    };
+    if (
+      d.description &&
+      typeof d.expectedCents === "number" &&
+      typeof d.actualCents === "number" &&
+      typeof d.deltaPct === "number"
+    ) {
+      priceAlert = {
+        itemName: d.description,
+        oldCents: d.expectedCents,
+        newCents: d.actualCents,
+        deltaPct: d.deltaPct,
+      };
+    }
+  }
+
+  return {
+    weekSpentCents,
+    weekOrderCount: weekPos.length,
+    autoApprovedCount,
+    pendingCount: pendingPos.length,
+    pendingTotalCents,
+    priceAlert,
+    isEmpty:
+      weekPos.length === 0 && pendingPos.length === 0 && priceAlert == null,
+  };
+}
+
 export async function getPurchaseOrdersData(locationId: string) {
   const [recommendations, purchaseOrders] = await Promise.all([
     db.reorderRecommendation.findMany({

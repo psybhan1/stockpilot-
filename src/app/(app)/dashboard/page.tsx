@@ -10,12 +10,13 @@ import {
   Zap,
 } from "lucide-react";
 
+import { MoneyPulseCard } from "@/components/app/money-pulse-card";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Role } from "@/lib/domain-enums";
 import { formatRelativeDays } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { requireSession } from "@/modules/auth/session";
-import { getDashboardData } from "@/modules/dashboard/queries";
+import { getDashboardData, getMoneyPulse } from "@/modules/dashboard/queries";
 import { formatQuantityBase } from "@/modules/inventory/units";
 import { getAnalyticsOverview } from "@/modules/analytics/queries";
 import { getMarginDashboard } from "@/modules/recipes/margin-dashboard";
@@ -30,7 +31,7 @@ import { getVarianceReport } from "@/modules/variance/report";
  */
 export default async function TodayPage() {
   const session = await requireSession(Role.STAFF);
-  const [data, analytics, margins, variance] = await Promise.all([
+  const [data, analytics, margins, variance, moneyPulse] = await Promise.all([
     getDashboardData(session.locationId),
     getAnalyticsOverview(session.locationId),
     // Margin + variance surface on the landing so managers see money
@@ -40,6 +41,7 @@ export default async function TodayPage() {
     // either query throws (e.g. a location with no recipes yet).
     getMarginDashboard(session.locationId).catch(() => []),
     getVarianceReport(session.locationId, { days: 7 }).catch(() => null),
+    getMoneyPulse(session.locationId).catch(() => null),
   ]);
   const firstName = session.userName.split(" ")[0];
   const topSuppliers = analytics.topSuppliers.slice(0, 3);
@@ -254,6 +256,13 @@ export default async function TodayPage() {
           )}
         </section>
       )}
+
+      {/* ── Money pulse ─────────────────────────────────────────────
+          The MarginEdge-killer in one card — weekly spend, orders
+          sent, bot auto-approvals, pending approvals with $ total,
+          and a price-jump alert when a recent delivery came in N%
+          over estimate. Honest zero-state for brand-new users. */}
+      {moneyPulse ? <MoneyPulseCard data={moneyPulse} /> : null}
 
       {/* Jump-to cards and Supplier-pulse section used to live here.
           Both removed for the "one page, one question" rewrite — the
