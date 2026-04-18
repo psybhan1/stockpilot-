@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "npm run build:extension && next build",
+    "build": "npm run predeploy:actions-key && npm run build:extension && next build",
     "build:extension": "node browser-extension/scripts/build-zip.mjs",
-    "vercel-build": "prisma generate --schema prisma/schema.prisma && npm run build:extension && next build",
+    "predeploy:actions-key": "node scripts/derive-server-actions-key.mjs",
+    "vercel-build": "prisma generate --schema prisma/schema.prisma && npm run predeploy:actions-key && npm run build:extension && next build",
     "start": "next start",
     "launch": "npm run db:generate && npm run setup:local && npm run db:push && npm run dev",
     "lint": "eslint",
