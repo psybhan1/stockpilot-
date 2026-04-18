@@ -32,18 +32,21 @@ import { getVarianceReport } from "@/modules/variance/report";
  */
 export default async function TodayPage() {
   const session = await requireSession(Role.STAFF);
-  const [data, analytics, margins, variance, moneyPulse] = await Promise.all([
-    getDashboardData(session.locationId),
-    getAnalyticsOverview(session.locationId),
+  const { getUnmappedPosProducts } = await import("@/modules/pos/unmapped");
+  const [data, analytics, margins, variance, moneyPulse, unmappedPosProducts] =
+    await Promise.all([
+      getDashboardData(session.locationId),
+      getAnalyticsOverview(session.locationId),
     // Margin + variance surface on the landing so managers see money
     // issues without having to know the page exists. Both are fast
     // single-query joins, so adding them to the dashboard load is ~
     // a few ms each. .catch to null keeps the dashboard resilient if
     // either query throws (e.g. a location with no recipes yet).
-    getMarginDashboard(session.locationId).catch(() => []),
-    getVarianceReport(session.locationId, { days: 7 }).catch(() => null),
-    getMoneyPulse(session.locationId).catch(() => null),
-  ]);
+      getMarginDashboard(session.locationId).catch(() => []),
+      getVarianceReport(session.locationId, { days: 7 }).catch(() => null),
+      getMoneyPulse(session.locationId).catch(() => null),
+      getUnmappedPosProducts(session.locationId).catch(() => []),
+    ]);
   const firstName = session.userName.split(" ")[0];
   const topSuppliers = analytics.topSuppliers.slice(0, 3);
 
@@ -257,6 +260,38 @@ export default async function TodayPage() {
           )}
         </section>
       )}
+
+      {/* Unmapped-POS nudge: when the webhook has queued products
+          waiting for a mapping, surface it on the primary screen so
+          the café owner can't miss it. Links straight to the quick-
+          map form on /pos-mapping. Only renders when there's work. */}
+      {unmappedPosProducts.length > 0 ? (
+        <Link
+          href="/pos-mapping"
+          className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm hover:bg-amber-500/15"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <ShoppingCart className="size-5 shrink-0 text-amber-700 dark:text-amber-300" />
+            <div className="min-w-0">
+              <p className="font-semibold">
+                {unmappedPosProducts.length} POS product
+                {unmappedPosProducts.length === 1 ? "" : "s"} waiting for
+                mapping
+              </p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                Your POS keeps selling{" "}
+                {unmappedPosProducts
+                  .slice(0, 3)
+                  .map((p) => p.externalProductName ?? p.externalProductId)
+                  .join(" · ")}
+                {unmappedPosProducts.length > 3 ? " · …" : ""} — wire each
+                to an inventory item and past sales backfill automatically.
+              </p>
+            </div>
+          </div>
+          <span className="font-mono text-xs">map →</span>
+        </Link>
+      ) : null}
 
       {/* ── Money pulse ─────────────────────────────────────────────
           The MarginEdge-killer in one card — weekly spend, orders
