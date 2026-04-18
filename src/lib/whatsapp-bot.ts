@@ -120,14 +120,7 @@ export async function transcribeWhatsAppVoice(
   const audioBuffer = await downloadTwilioMedia(mediaUrl);
   if (!audioBuffer) return null;
 
-  // Determine file extension from content-type
-  const ext = contentType.includes("ogg")
-    ? "ogg"
-    : contentType.includes("mp4") || contentType.includes("mpeg")
-      ? "mp4"
-      : contentType.includes("amr")
-        ? "amr"
-        : "ogg";
+  const ext = contentTypeToWhisperExtension(contentType);
 
   const audioBlob = new Blob([audioBuffer], { type: contentType });
 
@@ -153,7 +146,40 @@ export async function transcribeWhatsAppVoice(
   }
 }
 
-function normalizeWhatsAppAddress(value: string): string {
-  const trimmed = value.trim();
-  return trimmed.toLowerCase().startsWith("whatsapp:") ? trimmed : `whatsapp:${trimmed}`;
+/**
+ * Normalise to the exact `whatsapp:<number>` form Twilio requires.
+ *
+ * Twilio rejects any variant casing ("WhatsApp:", "WHATSAPP:") — it
+ * wants lowercase. We strip whatever prefix is present case-
+ * insensitively, trim internal whitespace, then re-prefix. A previous
+ * version preserved the incoming case, which meant values like
+ * "WhatsApp:+1…" from stale DB rows would go out to Twilio and 400
+ * back.
+ */
+export function normalizeWhatsAppAddress(value: string): string {
+  const stripped = value.trim().replace(/^whatsapp:\s*/i, "");
+  return `whatsapp:${stripped}`;
+}
+
+/**
+ * Map a Twilio media content-type to the best-matching file extension
+ * Groq Whisper accepts. Whisper validates the filename extension, so
+ * using the wrong one (e.g. `.mp4` for an MP3 stream) causes the
+ * request to fail even when the audio itself is fine.
+ *
+ * Supported by Whisper: mp3, mp4, mpeg, mpga, m4a, wav, webm, ogg,
+ * flac. amr is not supported — we pass it through anyway so Groq's
+ * error is clear instead of being masked by a wrong extension.
+ */
+export function contentTypeToWhisperExtension(contentType: string): string {
+  const c = contentType.toLowerCase();
+  if (c.includes("ogg") || c.includes("opus")) return "ogg";
+  if (c.includes("mp3") || c.includes("mpeg") || c.includes("mpga")) return "mp3";
+  if (c.includes("m4a")) return "m4a";
+  if (c.includes("mp4")) return "mp4";
+  if (c.includes("wav")) return "wav";
+  if (c.includes("webm")) return "webm";
+  if (c.includes("flac")) return "flac";
+  if (c.includes("amr")) return "amr";
+  return "ogg";
 }

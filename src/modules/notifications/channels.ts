@@ -84,8 +84,11 @@ export function normalizeExpoRecipient(recipient: string) {
 }
 
 export function normalizeWhatsAppRecipient(recipient: string) {
-  const trimmed = recipient.trim();
-  return trimmed.startsWith("whatsapp:") ? trimmed : `whatsapp:${trimmed}`;
+  // Twilio requires the prefix lowercase; strip any casing variant
+  // then re-add so stored values like "WhatsApp:+1…" don't get
+  // double-prefixed to "whatsapp:WhatsApp:+1…".
+  const stripped = recipient.trim().replace(/^whatsapp:\s*/i, "");
+  return `whatsapp:${stripped}`;
 }
 
 export function isWhatsAppRecipient(recipient: string) {
