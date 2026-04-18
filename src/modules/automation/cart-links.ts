@@ -91,7 +91,7 @@ function detectAmazonHostname(url: string | null | undefined): string | null {
 export function extractAmazonAsin(url: string | null | undefined): string | null {
   if (!url) return null;
   // Standard format: /dp/B005YJZE2I or /gp/product/B005YJZE2I
-  const dpMatch = url.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/i);
+  const dpMatch = url.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?#]|$)/i);
   if (dpMatch) return dpMatch[1].toUpperCase();
   return null;
 }
