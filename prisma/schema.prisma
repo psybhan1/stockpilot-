@@ -105,6 +105,17 @@ enum RecommendationStatus {
 
 enum PosProviderType {
   SQUARE
+  TOAST
+  CLOVER
+  LIGHTSPEED
+  SHOPIFY
+  // Generic webhook — any POS that can POST JSON (directly or via
+  // Zapier, Make, n8n, Pipedream…) to /api/pos/webhook with our
+  // per-tenant HMAC secret. Zapier has native connectors for every
+  // major POS already, so this single provider type unlocks the
+  // whole long tail without us writing a bespoke integration per
+  // vendor.
+  GENERIC_WEBHOOK
   MANUAL
 }
 
@@ -298,6 +309,7 @@ model Location {
   posIntegrations       PosIntegration[]
   posVariationMappings  PosVariationMapping[]
   posSaleEvents         PosSaleEvent[]
+  posSimpleMappings     PosSimpleMapping[]
   alerts                Alert[]
   notifications         Notification[]
   agentTasks            AgentTask[]
@@ -383,6 +395,7 @@ model InventoryItem {
   reorderRecommendations  ReorderRecommendation[]
   purchaseOrderLines      PurchaseOrderLine[]
   alerts                  Alert[]
+  posSimpleMappings       PosSimpleMapping[]
 
   @@unique([locationId, sku])
 }
@@ -658,6 +671,7 @@ model PosIntegration {
   syncRuns              PosSyncRun[]
   catalogItems          PosCatalogItem[]
   saleEvents            PosSaleEvent[]
+  simpleMappings        PosSimpleMapping[]
 }
 
 model PosSyncRun {
@@ -760,6 +774,34 @@ model PosSaleLine {
   menuItemVariant   MenuItemVariant?    @relation(fields: [menuItemVariantId], references: [id], onDelete: SetNull)
 
   @@unique([saleEventId, externalLineId])
+}
+
+/// Simple product → inventory mapping for generic POS webhooks.
+///
+/// Square goes through the rich Recipe / RecipeComponent / Menu chain
+/// because it syncs a full catalog and we can estimate recipes with
+/// AI. For Toast / Clover / Shopify / Zapier-routed sales we don't
+/// have their catalog — we just get "this external product id sold
+/// N times". This table is a direct 1:1 lookup: "external product
+/// `caffe_latte_16oz` → deplete inventory item X by Y base units per
+/// sale". Simpler to set up, works for any POS that can send us a
+/// product id + quantity.
+model PosSimpleMapping {
+  id                  String          @id @default(cuid())
+  locationId          String
+  integrationId       String
+  externalProductId   String
+  externalProductName String?
+  inventoryItemId     String
+  quantityPerSaleBase Int             @default(1)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  location            Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  integration         PosIntegration  @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  inventoryItem       InventoryItem   @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationId, externalProductId])
+  @@index([locationId])
 }
 
 model Alert {

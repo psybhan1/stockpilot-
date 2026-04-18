@@ -1,5 +1,6 @@
 "use server";
 
+import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -94,6 +95,116 @@ function revalidatePurchaseOrderPaths(purchaseOrderId: string, supplierId?: stri
   if (supplierId) {
     revalidatePath(`/suppliers/${supplierId}`);
   }
+}
+
+/**
+ * Creates (or resets) a generic-webhook POS integration for the
+ * current location. The admin picks a POS vendor (Toast, Clover,
+ * Lightspeed, Shopify, or just "Generic / Zapier") and we
+ * immediately mint a 32-byte URL-safe secret, store it inside
+ * PosIntegration.settings.webhookSecret, and redirect back so the
+ * Settings UI can display the webhook URL + secret for copy-paste
+ * into the chosen POS (directly for vendors that support custom
+ * webhooks, or via a Zapier / Make / n8n hop for vendors that
+ * don't). `/api/pos/webhook` then accepts sales and writes
+ * POS_DEPLETION via PosSimpleMapping.
+ */
+export async function connectGenericPosAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const providerRaw = (readStringValue(formData, "provider") ?? "").toUpperCase();
+  const allowed = new Set([
+    "TOAST",
+    "CLOVER",
+    "LIGHTSPEED",
+    "SHOPIFY",
+    "GENERIC_WEBHOOK",
+  ]);
+  if (!allowed.has(providerRaw)) {
+    redirect(
+      `/settings?channelConnect=error&channelType=pos&channelDetail=${encodeURIComponent(
+        "Unknown POS provider."
+      )}`
+    );
+  }
+  const provider = providerRaw as
+    | "TOAST"
+    | "CLOVER"
+    | "LIGHTSPEED"
+    | "SHOPIFY"
+    | "GENERIC_WEBHOOK";
+
+  const secret = `pos_${randomBytes(32).toString("base64url")}`;
+
+  const existing = await db.posIntegration.findFirst({
+    where: { locationId: session.locationId, provider },
+    select: { id: true },
+  });
+
+  if (existing) {
+    await db.posIntegration.update({
+      where: { id: existing.id },
+      data: {
+        status: "CONNECTED",
+        settings: { webhookSecret: secret },
+        lastSyncedAt: new Date(),
+      },
+    });
+  } else {
+    await db.posIntegration.create({
+      data: {
+        locationId: session.locationId,
+        provider,
+        status: "CONNECTED",
+        sandbox: false,
+        settings: { webhookSecret: secret },
+      },
+    });
+  }
+
+  await db.auditLog.create({
+    data: {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "integration.pos.generic_connected",
+      entityType: "posIntegration",
+      entityId: session.locationId,
+      details: { provider },
+    },
+  });
+
+  revalidateOperations();
+  redirect(`/settings?channelConnect=connected&channelType=pos`);
+}
+
+/**
+ * Rotates the webhook secret for a non-Square POS integration. Used
+ * when a key leaks or a tenant wants to reissue. Old secret stops
+ * working immediately.
+ */
+export async function rotatePosWebhookSecretAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const integrationId = (readStringValue(formData, "integrationId") ?? "").trim();
+  if (!integrationId) return;
+
+  const integration = await db.posIntegration.findFirst({
+    where: { id: integrationId, locationId: session.locationId },
+    select: { id: true, provider: true },
+  });
+  if (!integration) return;
+  if (
+    integration.provider === "SQUARE" ||
+    integration.provider === "MANUAL"
+  ) {
+    return;
+  }
+
+  const secret = `pos_${randomBytes(32).toString("base64url")}`;
+  await db.posIntegration.update({
+    where: { id: integration.id },
+    data: { settings: { webhookSecret: secret } },
+  });
+  revalidateOperations();
+  redirect(`/settings?channelConnect=connected&channelType=pos`);
 }
 
 export async function connectSquareAction() {

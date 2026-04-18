@@ -1,10 +1,13 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { Cable, Settings2 } from "lucide-react";
 
 import {
+  connectGenericPosAction,
   connectResendEmailChannelAction,
   connectSquareAction,
   disconnectEmailChannelAction,
+  rotatePosWebhookSecretAction,
   runJobsAction,
   startTelegramBotConnectAction,
   startWhatsAppBotConnectAction,
@@ -41,6 +44,26 @@ export default async function SettingsPage({
   const session = await requireSession(Role.MANAGER);
   const params = await searchParams;
   const { integration, jobs, emailProvider } = await getSettingsData(session.locationId);
+
+  // All POS integrations for this location (Square, Toast, Clover,
+  // Lightspeed, Shopify, Generic). Used to render one connect/status
+  // row per brand in the POS section. Each non-Square row exposes
+  // its webhook secret so the admin can paste it into the POS side.
+  const posIntegrations = await db.posIntegration.findMany({
+    where: { locationId: session.locationId },
+    select: {
+      id: true,
+      provider: true,
+      status: true,
+      settings: true,
+      lastSyncedAt: true,
+      externalMerchantId: true,
+    },
+  });
+  const webhookBaseUrl = `${env.APP_URL?.replace(/\/$/, "") ?? ""}/api/pos/webhook`;
+  const posByProvider = Object.fromEntries(
+    posIntegrations.map((p) => [p.provider, p])
+  );
 
   const [locationChannels, currentManager, locationSettings] = await Promise.all([
     getLocationChannels(session.locationId),
@@ -142,13 +165,18 @@ export default async function SettingsPage({
       )}
 
       {/* ─── POS Integration ─── */}
-      <Section title="POS" description="Point-of-sale connection">
+      <Section
+        title="POS"
+        description="Point-of-sale integration — sales flow in and auto-deplete inventory."
+      >
+        {/* Square: first-class OAuth path (richer — full catalog
+            sync + webhook-backed sale events). */}
         <BrandCard
           logo={<SquareLogo />}
           name="Square"
-          tagline="Sync sales and inventory from your Square register"
+          tagline="OAuth sign-in. We sync your catalog, generate recipes, and auto-deplete inventory on every sale."
           status={integration?.status ?? "DISCONNECTED"}
-          statusTone={integration?.status === "CONNECTED" ? "success" : "warning"}
+          statusTone={integration?.status === "CONNECTED" ? "success" : "info"}
         >
           <form action={connectSquareAction}>
             <Button
@@ -157,10 +185,119 @@ export default async function SettingsPage({
               className="h-9 gap-2 bg-[#3E4348] hover:bg-[#2d3136] text-white text-xs border-0"
             >
               <SquareLogo size={14} />
-              {integration?.status === "CONNECTED" ? "Reconnect Square" : "Connect Square"}
+              {integration?.status === "CONNECTED" ? "Reconnect" : "Connect Square"}
             </Button>
           </form>
         </BrandCard>
+
+        {/* Every other POS (Toast, Clover, Lightspeed, Shopify POS…)
+            plus the generic fallback all use the same per-tenant
+            webhook. Renders one row per brand with a Connect button
+            that generates a secret. Once connected, the row expands
+            to show the webhook URL + secret for copy-paste into the
+            POS (directly when the POS supports custom webhooks, or
+            via Zapier / Make / n8n for ones that don't). */}
+        {[
+          {
+            provider: "TOAST" as const,
+            name: "Toast",
+            tagline: "Route Toast sales through Zapier → StockPilot webhook.",
+            color: "bg-[#FF4C00]",
+          },
+          {
+            provider: "CLOVER" as const,
+            name: "Clover",
+            tagline: "Clover supports webhooks directly, or wire via Zapier.",
+            color: "bg-[#0DB145]",
+          },
+          {
+            provider: "LIGHTSPEED" as const,
+            name: "Lightspeed",
+            tagline: "Lightspeed X-Series or K-Series via Zapier.",
+            color: "bg-[#DA1A5F]",
+          },
+          {
+            provider: "SHOPIFY" as const,
+            name: "Shopify POS",
+            tagline: "Shopify orders → Zapier → StockPilot.",
+            color: "bg-[#96BF48]",
+          },
+          {
+            provider: "GENERIC_WEBHOOK" as const,
+            name: "Other / custom",
+            tagline:
+              "Any POS, any automation platform. POST sales to the webhook URL.",
+            color: "bg-foreground",
+          },
+        ].map((opt) => {
+          const row = posByProvider[opt.provider];
+          const connected = row?.status === "CONNECTED";
+          const storedSecret =
+            connected && row?.settings && typeof row.settings === "object"
+              ? (row.settings as Record<string, unknown>).webhookSecret
+              : null;
+          return (
+            <div key={opt.provider} className="space-y-2">
+              <BrandCard
+                logo={
+                  <div
+                    className={`flex size-5 items-center justify-center rounded ${opt.color} text-[9px] font-bold text-white`}
+                  >
+                    {opt.name.charAt(0)}
+                  </div>
+                }
+                name={opt.name}
+                tagline={opt.tagline}
+                status={connected ? "Connected" : "Not connected"}
+                statusTone={connected ? "success" : "info"}
+              >
+                <form action={connectGenericPosAction}>
+                  <input type="hidden" name="provider" value={opt.provider} />
+                  <Button
+                    type="submit"
+                    size="sm"
+                    className="h-9 gap-2 text-xs"
+                    variant={connected ? "ghost" : "default"}
+                  >
+                    {connected ? "Rotate secret" : `Connect ${opt.name}`}
+                  </Button>
+                </form>
+              </BrandCard>
+              {connected && typeof storedSecret === "string" ? (
+                <div className="rounded-xl border border-border/50 bg-card/60 px-5 py-4 text-sm space-y-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      Webhook URL
+                    </p>
+                    <code className="mt-1 block break-all rounded bg-muted/60 px-2 py-1 font-mono text-[11px]">
+                      {webhookBaseUrl}
+                    </code>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      Authorization header
+                    </p>
+                    <code className="mt-1 block break-all rounded bg-muted/60 px-2 py-1 font-mono text-[11px]">
+                      Bearer {storedSecret}
+                    </code>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Paste these into your POS webhook config (or into a Zapier{" "}
+                    <em>Webhooks by Zapier → POST</em> step). The body should
+                    be JSON with a <code>lineItems</code> array — each item
+                    needs <code>externalProductId</code> and{" "}
+                    <code>quantity</code>. After the first sale lands, map
+                    each POS product to an inventory item from{" "}
+                    <Link href="/pos-mapping" className="underline">
+                      /pos-mapping
+                    </Link>{" "}
+                    — future sales auto-deplete.
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </Section>
 
       {/* ─── Messaging ─── */}
