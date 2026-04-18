@@ -1418,8 +1418,28 @@ export async function addInventoryItemAction(formData: FormData) {
   // Same minimum role as updateInventoryItemAction so supervisors
   // can set up inventory without a manager in the loop.
   const session = await requireSession(Role.SUPERVISOR);
-  const name = readStringValue(formData, "name");
+  const rawName = readStringValue(formData, "name");
+  const name = rawName?.trim();
   if (!name) return; // form has required inputs; defensive guard
+
+  // Duplicate guard: the bot's quick_add path already does a
+  // case-insensitive lookup before creating, but the manual form
+  // did not. Users re-submitting or mis-typing would quietly end
+  // up with two inventory rows for the same product, splitting
+  // depletion history. Mirror the bot's behavior: if the item
+  // already exists at this location, no-op and let the list
+  // redisplay the existing row.
+  const existing = await db.inventoryItem.findFirst({
+    where: {
+      locationId: session.locationId,
+      name: { equals: name, mode: "insensitive" },
+    },
+    select: { id: true },
+  });
+  if (existing) {
+    revalidateOperations();
+    return;
+  }
 
   const category = readStringValue(formData, "category") ?? "SUPPLY";
   const baseUnit = readStringValue(formData, "baseUnit") ?? "COUNT";
@@ -2541,6 +2561,21 @@ export async function importInventoryCsvAction(formData: FormData) {
         }
         supplierCache.set(supplierName.toLowerCase(), supplierId);
       }
+    }
+
+    // Dedup by name (case-insensitive) — re-running an import shouldn't
+    // create parallel rows for the same product. Matches bot's quick_add
+    // behavior.
+    const dup = await db.inventoryItem.findFirst({
+      where: {
+        locationId: session.locationId,
+        name: { equals: name, mode: "insensitive" },
+      },
+      select: { id: true },
+    });
+    if (dup) {
+      skipped += 1;
+      continue;
     }
 
     try {

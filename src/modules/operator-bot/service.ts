@@ -2052,7 +2052,7 @@ async function handleWebsiteOrderWithoutCredentials(input: {
         purchaseOrderId: input.purchaseOrderId,
         channel: SupplierOrderingMode.WEBSITE,
         direction: CommunicationDirection.OUTBOUND,
-        subject: `PO ${input.orderNumber} — deep-link handoff`,
+        subject: `PO ${input.orderNumber} — handed off via deep link`,
         body: deepLink
           ? `${deepLink.kind} link sent: ${deepLink.primary.url}`
           : "Handed off to manager — no public cart-add URL for this supplier.",
