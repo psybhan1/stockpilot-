@@ -11,6 +11,7 @@ import {
   runJobsAction,
   sendTestEmailAction,
   sendTestPosSaleAction,
+  sendTestTelegramAction,
   startTelegramBotConnectAction,
   startWhatsAppBotConnectAction,
   syncSalesAction,
@@ -527,12 +528,26 @@ export default async function SettingsPage({
           status={currentManager.telegramChatId ? "Connected" : "Not connected"}
           statusTone={currentManager.telegramChatId ? "success" : "info"}
         >
-          <form action={startTelegramBotConnectAction}>
-            <Button type="submit" size="sm" className="h-9 gap-2 bg-[#2CA5E0] hover:bg-[#1d96d3] text-white text-xs border-0">
-              <TelegramLogo size={14} />
-              {currentManager.telegramChatId ? "Reconnect" : "Connect Telegram"}
-            </Button>
-          </form>
+          <div className="flex items-center gap-2">
+            {currentManager.telegramChatId ? (
+              <form action={sendTestTelegramAction}>
+                <Button
+                  type="submit"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 text-xs"
+                >
+                  Send test
+                </Button>
+              </form>
+            ) : null}
+            <form action={startTelegramBotConnectAction}>
+              <Button type="submit" size="sm" className="h-9 gap-2 bg-[#2CA5E0] hover:bg-[#1d96d3] text-white text-xs border-0">
+                <TelegramLogo size={14} />
+                {currentManager.telegramChatId ? "Reconnect" : "Connect Telegram"}
+              </Button>
+            </form>
+          </div>
         </BrandCard>
 
         <BrandCard

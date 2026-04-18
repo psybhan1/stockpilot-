@@ -181,6 +181,40 @@ export default async function PosMappingPage() {
         </section>
       ) : null}
 
+      {/* Empty state — when the tenant has no Square mappings AND no
+          webhook sales at all, give them a clear next action. The
+          page is a desert otherwise: an intimidating PageHero with
+          zero content underneath. */}
+      {mappings.length === 0 &&
+      simpleMappings.length === 0 &&
+      unmappedProducts.length === 0 ? (
+        <section className="rounded-[28px] border border-dashed border-border/60 bg-card/50 p-8 text-center">
+          <p className="mx-auto max-w-md text-balance text-lg font-semibold">
+            No POS mappings yet
+          </p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+            Connect Square (one-click) or bridge any other POS via a Zapier
+            webhook, and every sale will land here. Products you haven&apos;t
+            wired yet show up above as one-click mapping forms.
+          </p>
+          <div className="mt-5 flex items-center justify-center gap-2">
+            <Link
+              href="/settings"
+              className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background hover:bg-foreground/90"
+            >
+              Connect a POS
+              <ArrowRight className="size-4" />
+            </Link>
+            <Link
+              href="/docs/pos-quickstart"
+              className="inline-flex items-center rounded-full border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+            >
+              Zapier walkthrough
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
       {/* Mapping list */}
       <section className="grid gap-3 lg:grid-cols-2">
         {mappings.map((mapping) => (

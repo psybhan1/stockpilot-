@@ -347,6 +347,64 @@ export async function saveSimpleMappingAction(formData: FormData) {
 }
 
 /**
+ * Fires a short hello message at the admin's own Telegram chat so
+ * they can verify end-to-end pairing works (bot token is live,
+ * chat id is linked, message actually lands on their phone). Zero
+ * side-effects — pure send-and-forget.
+ */
+export async function sendTestTelegramAction() {
+  const session = await requireSession(Role.MANAGER);
+
+  const user = await db.user.findUniqueOrThrow({
+    where: { id: session.userId },
+    select: { telegramChatId: true, name: true },
+  });
+  if (!user.telegramChatId) {
+    redirect(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
+        "No Telegram chat id stored — pair Telegram first."
+      )}`
+    );
+  }
+
+  try {
+    const { sendTelegramMessage } = await import("@/lib/telegram-bot");
+    const first = user.name.split(" ")[0] ?? "there";
+    const result = await sendTelegramMessage(
+      user.telegramChatId,
+      `👋 Hey ${first} — this is a Telegram test from StockPilot.\n\n` +
+        `If you're reading this on your phone, the full bot loop works:\n` +
+        `• Message from app to you (what you're looking at)\n` +
+        `• Reply from you to bot (try typing "what's low")\n` +
+        `• Bot responds with real data from your inventory\n\n` +
+        `That's the whole channel — nothing else to set up.`
+    );
+    if ("skipped" in result && result.skipped) {
+      redirect(
+        `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
+          `Telegram not configured: ${"reason" in result ? result.reason : "missing bot token"}`
+        )}`
+      );
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("NEXT_REDIRECT")) throw err;
+    redirect(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
+        `Telegram send failed: ${message.slice(0, 200)}`
+      )}`
+    );
+  }
+
+  revalidateOperations();
+  redirect(
+    `/settings?channelConnect=connected&channelType=telegram&channelDetail=${encodeURIComponent(
+      "Test message sent to Telegram. Check your phone."
+    )}`
+  );
+}
+
+/**
  * Send a short "StockPilot test email" to the admin's own email
  * using whichever outbound provider is configured. Zero-setup
  * tenants get the mailto fallback (opens their own mail client).
