@@ -211,6 +211,17 @@ export default async function SettingsPage({
           that hasn't fired anything lately is the worst kind of
           silent failure; this strip surfaces that by showing a live
           activity stat beside each channel. */}
+      <div className="flex items-baseline justify-between">
+        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+          Integration health
+        </p>
+        <Link
+          href="/settings/activity"
+          className="text-[11px] font-medium text-muted-foreground hover:text-foreground"
+        >
+          Activity log →
+        </Link>
+      </div>
       <section className="grid gap-2 rounded-2xl border border-border/50 bg-card/60 p-4 sm:grid-cols-2 md:grid-cols-4">
         <HealthChip
           label="Square"
