@@ -128,6 +128,8 @@
     "src/providers/email/mailto.ts",
     "src/providers/email/mailto.test.ts",
     "src/modules/operator-bot/receipts-metadata.ts",
-    "src/modules/operator-bot/receipts-metadata.test.ts"
+    "src/modules/operator-bot/receipts-metadata.test.ts",
+    "src/modules/purchasing/supplier-reply-primitives.ts",
+    "src/modules/purchasing/supplier-reply-primitives.test.ts"
   ]
 }
