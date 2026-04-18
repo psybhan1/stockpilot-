@@ -178,24 +178,26 @@ export function SquareConnectButton({
 
   return (
     <div className="flex flex-col items-end gap-1.5">
-      <Button
-        type="button"
-        onClick={handleClick}
-        disabled={disabled}
-        className={className}
-      >
-        {buttonLabel}
-      </Button>
-      {connected ? (
-        <button
+      <div className="flex items-center gap-2">
+        {connected ? (
+          <Button
+            type="button"
+            onClick={handleDisconnect}
+            disabled={disabled}
+            className="h-9 gap-2 bg-transparent border border-red-500/40 text-red-400 hover:bg-red-500/10 hover:text-red-300 hover:border-red-500/70 text-xs"
+          >
+            {phase === "disconnecting" ? "Disconnecting…" : "Disconnect"}
+          </Button>
+        ) : null}
+        <Button
           type="button"
-          onClick={handleDisconnect}
+          onClick={handleClick}
           disabled={disabled}
-          className="text-[11px] text-muted-foreground hover:text-red-400 transition disabled:opacity-50"
+          className={className}
         >
-          Disconnect
-        </button>
-      ) : null}
+          {buttonLabel}
+        </Button>
+      </div>
       {errorMessage ? (
         <p className="max-w-xs text-right text-xs text-red-400">
           {errorMessage}
