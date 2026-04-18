@@ -26,18 +26,28 @@ export default async function InventoryItemPage({
   const session = await requireSession(Role.SUPERVISOR);
   const { itemId } = await params;
   const item = await getInventoryItemDetail(session.locationId, itemId).catch(() => null);
-  const suppliers = await db.supplier.findMany({
-    where: {
-      locationId: session.locationId,
-    },
-    orderBy: {
-      name: "asc",
-    },
-    select: {
-      id: true,
-      name: true,
-    },
-  });
+  const [suppliers, posMappings] = await Promise.all([
+    db.supplier.findMany({
+      where: {
+        locationId: session.locationId,
+      },
+      orderBy: {
+        name: "asc",
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    }),
+    // Which POS integrations currently deplete this item? A latte
+    // might be split across multiple POS sources; showing the list
+    // lets the owner audit and confirm the math.
+    db.posSimpleMapping.findMany({
+      where: { locationId: session.locationId, inventoryItemId: itemId },
+      include: { integration: { select: { provider: true } } },
+      orderBy: { updatedAt: "desc" },
+    }),
+  ]);
 
   if (!item) {
     notFound();
@@ -98,6 +108,51 @@ export default async function InventoryItemPage({
           </div>
         </CardContent>
       </Card>
+
+      {/* POS depletion sources — which POS integrations/products
+          currently deplete this item on every sale. Multi-POS cafés
+          or split-mapping setups (latte drops both beans AND milk
+          AND a cup) can see the full math at a glance. Renders
+          nothing when empty so items not tied to a POS flow stay
+          visually clean. */}
+      {posMappings.length > 0 ? (
+        <section className="rounded-2xl border border-border/50 bg-card/60 p-5">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">POS depletion sources</h2>
+            <Link
+              href="/pos-mapping"
+              className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Manage mappings →
+            </Link>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Every sale of these POS products deplete this item. Change qty
+            per sale from /pos-mapping.
+          </p>
+          <ul className="mt-4 divide-y divide-border/40">
+            {posMappings.map((m) => (
+              <li
+                key={m.id}
+                className="flex items-center justify-between gap-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {m.externalProductName ?? m.externalProductId}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                    {m.integration.provider} · id: {m.externalProductId}
+                  </p>
+                </div>
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  −{m.quantityPerSaleBase}{" "}
+                  {item.displayUnit.toLowerCase()} / sale
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="space-y-6">
