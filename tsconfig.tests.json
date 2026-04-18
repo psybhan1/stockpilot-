@@ -110,6 +110,8 @@
     "src/providers/notification/expo-ticket-parse.ts",
     "src/providers/notification/expo-ticket-parse.test.ts",
     "src/modules/inventory/ledger-primitives.ts",
-    "src/modules/inventory/ledger-primitives.test.ts"
+    "src/modules/inventory/ledger-primitives.test.ts",
+    "src/modules/onboarding/starter-pack-data.ts",
+    "src/modules/onboarding/starter-pack-data.test.ts"
   ]
 }
