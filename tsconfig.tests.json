@@ -112,6 +112,10 @@
     "src/modules/inventory/ledger-primitives.ts",
     "src/modules/inventory/ledger-primitives.test.ts",
     "src/modules/onboarding/starter-pack-data.ts",
-    "src/modules/onboarding/starter-pack-data.test.ts"
+    "src/modules/onboarding/starter-pack-data.test.ts",
+    "src/modules/operator-bot/agent-helpers.ts",
+    "src/modules/operator-bot/agent.test.ts",
+    "src/modules/operator-bot/channel-auth.ts",
+    "src/modules/operator-bot/channel-auth.test.ts"
   ]
 }

@@ -13,15 +13,13 @@ import {
   readConnectTokenFromText,
 } from "@/modules/operator-bot/connect";
 import { completeWhatsAppChannelPairing } from "@/modules/channels/service";
+import {
+  pairingReplyText,
+  readLocationPairingCode,
+} from "@/modules/operator-bot/channel-auth";
 import { handleInboundManagerBotMessage } from "@/modules/operator-bot/service";
 
 const XML_HEADERS = { "Content-Type": "text/xml; charset=utf-8" };
-
-/** Detects a StockPilot location pairing code like "SB-AB1234" */
-function readLocationPairingCode(text: string): string | null {
-  const match = text.trim().match(/^(SB-[A-Z0-9]{6})$/i);
-  return match ? match[1].toUpperCase() : null;
-}
 
 export async function POST(request: Request) {
   // ── Parse form fields ───────────────────────────────────────────────────────
@@ -87,13 +85,10 @@ export async function POST(request: Request) {
       senderDisplayName: profileName,
     });
 
-    const reply = result.ok
-      ? `✅ This WhatsApp number is now connected to *${result.locationName}* on StockPilot.\n\nStock alerts and order approvals will be sent here automatically.`
-      : result.reason === "Code expired"
-        ? "⏱ That code has expired. Open StockPilot → Settings → Channels → WhatsApp and generate a new code."
-        : "❌ Pairing code not recognised. Open StockPilot → Settings → Channels → WhatsApp and copy the current code.";
-
-    return new NextResponse(buildTwimlMessageResponse(reply), { headers: XML_HEADERS });
+    return new NextResponse(
+      buildTwimlMessageResponse(pairingReplyText(result, "WhatsApp")),
+      { headers: XML_HEADERS },
+    );
   }
 
   // ── Personal bot connect token ──────────────────────────────────────────────
@@ -127,8 +122,21 @@ export async function POST(request: Request) {
     },
   });
 
+  // WhatsApp via Twilio SMS-style TwiML doesn't support inline buttons
+  // (those require a pre-approved Meta Message Template). When the
+  // bot just drafted a PO, append a short one-liner that tells the
+  // user how to confirm — the LLM already handles 'y'/'n'/'approve'/
+  // 'cancel' as shortcuts, but users don't know that without being
+  // told. No trailer when the bot already decided (SENT, cancelled).
+  const replyText =
+    result.skipSend || !result.reply
+      ? null
+      : result.purchaseOrderId && !/approved|sent|auto-sent|cancelled|delivered/i.test(result.reply)
+        ? `${result.reply}\n\n_Reply *y* to approve · *n* to cancel_`
+        : result.reply;
+
   return new NextResponse(
-    result.skipSend ? buildTwimlEmptyResponse() : buildTwimlMessageResponse(result.reply),
+    result.skipSend || !replyText ? buildTwimlEmptyResponse() : buildTwimlMessageResponse(replyText),
     { headers: XML_HEADERS }
   );
 }

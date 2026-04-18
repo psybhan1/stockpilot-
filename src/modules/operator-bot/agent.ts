@@ -37,6 +37,37 @@ export type AgentContext = {
   conversation: Array<{ role: "user" | "assistant"; content: string }>;
 };
 
+// ── Tuning knobs ────────────────────────────────────────────────────────────
+// One place for every "why is this number what it is?" value. env overrides
+// are honored for runtime tuning without a redeploy — the default is the
+// baseline we ship and what tests run against.
+
+const num = (envKey: string, fallback: number): number => {
+  const raw = process.env[envKey];
+  if (raw == null) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+/** Fraction of par that triggers the low-stock alert. 0.3 = 30%. */
+const PAR_LOW_THRESHOLD_PCT = num("BOT_PAR_LOW_THRESHOLD_PCT", 0.3);
+/** Safety-stock fraction of par. 0.15 = 15%. */
+const PAR_SAFETY_PCT = num("BOT_PAR_SAFETY_PCT", 0.15);
+/** Timeout (ms) for og:title metadata fetch on quick-add URLs. */
+const METADATA_FETCH_TIMEOUT_MS = num("BOT_METADATA_TIMEOUT_MS", 5000);
+/** Max items surfaced to the LLM in LIVE DATA per turn (cost cap). */
+const INVENTORY_CONTEXT_LIMIT = num("BOT_INVENTORY_CONTEXT_LIMIT", 30);
+/** Max suppliers surfaced to the LLM in LIVE DATA per turn. */
+const SUPPLIER_CONTEXT_LIMIT = num("BOT_SUPPLIER_CONTEXT_LIMIT", 30);
+/** Groq sampling temperature — lower = more deterministic tool calls. */
+const LLM_TEMPERATURE = num("BOT_LLM_TEMPERATURE", 0.3);
+/** Groq reply cap — bot replies are 1–3 sentences; 512 is plenty. */
+const LLM_MAX_TOKENS = num("BOT_LLM_MAX_TOKENS", 512);
+/** Max agent loop round-trips before forcing a reply. */
+const AGENT_MAX_ROUNDTRIPS = num("BOT_MAX_ROUNDTRIPS", 3);
+/** Hard timeout (ms) per Groq round-trip. */
+const LLM_REQUEST_TIMEOUT_MS = num("BOT_LLM_TIMEOUT_MS", 30000);
+
 // ── URL helpers ──────────────────────────────────────────────────────────
 // `normalizeProductUrl` lives in sniffer-helpers.ts so the unit-test
 // build can import it without pulling in the agent's DB/env imports.
@@ -206,6 +237,16 @@ export function lookupKnownSupplierWebsite(supplierName: string): string | null 
 
   return null;
 }
+
+// ── Pure helpers (fuzzy match, urgency rank, sanitiser) live in
+// agent-helpers.ts so the node --test build can exercise them without
+// pulling Prisma / env into the test bundle.
+import {
+  findFuzzyMatches,
+  rankItemsByUrgency,
+  sanitiseReply,
+} from "./agent-helpers";
+export { findFuzzyMatches, rankItemsByUrgency, sanitiseReply };
 
 // ── Tool schemas (OpenAI-compatible, Groq understands this format) ───────────
 type ToolSchema = {
@@ -453,6 +494,109 @@ const TOOLS: ToolSchema[] = [
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "check_margins",
+      description:
+        "Show the menu-engineering / margin dashboard: for every active menu variant, return COGS, sell price, margin %, severity (healthy/watch/review/unpriced). Use when user asks 'how are my margins?', 'which drinks lose money?', 'menu engineering', 'what's my latte cost?'. If `query` is set, return only variants matching that name (fuzzy). If empty, return the worst 10 by severity.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Fuzzy match on menu item / variant name (e.g. 'latte', 'vanilla'). Empty string = worst 10 across the menu.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_variance",
+      description:
+        "Report theoretical-vs-actual variance (shrinkage + tracked waste) for the location over the last N days. Use when user asks 'how much are we losing?', 'show me waste', 'any shrinkage?', 'variance report'. Returns total loss, shrinkage dollars, top flagged items.",
+      parameters: {
+        type: "object",
+        properties: {
+          days: {
+            type: "string",
+            description: "Window in days. Default '7'. Common values: '7', '14', '30'.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_pricing_trends",
+      description:
+        "Show which ingredients had the biggest price swings. Use when user asks 'what's getting more expensive?', 'price trends', 'where are costs going up?', 'biggest movers'. Returns top items with delta % + supplier.",
+      parameters: {
+        type: "object",
+        properties: {
+          days: {
+            type: "string",
+            description: "Window in days. Default '90'. Common: '30', '90', '180'.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "item_price_history",
+      description:
+        "Show the full price history for a single ingredient (every actual invoice cost, newest first). Use when user asks 'how has milk changed?', 'what did we pay for X last month?', 'milk price history'.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Fuzzy match on item name (e.g. 'milk', 'oat', 'ground coffee').",
+          },
+          days: {
+            type: "string",
+            description: "Window in days. Default '90'.",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "analytics_overview",
+      description:
+        "Rolling 30-day ops snapshot: POs sent/confirmed/failed, total spend, avg supplier reply time, top suppliers + items. Use when user asks 'how are we doing this month?', 'show me stats', 'analytics', 'report'.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "forecast_runout",
+      description:
+        "Tell the user when an item is projected to run out based on recent usage (days-left forecast). Use when user asks 'when do I run out of X?', 'how long will the milk last?', 'any critical items?'. If `query` is empty, lists the nearest runouts across all items.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Fuzzy item name. Empty = top 5 nearest runouts across the location.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
@@ -650,7 +794,7 @@ export async function executeTool(
         const { fetchProductMetadata } = await import(
           "@/modules/automation/product-metadata"
         );
-        const meta = await fetchProductMetadata(websiteUrl, { timeoutMs: 5000 });
+        const meta = await fetchProductMetadata(websiteUrl, { timeoutMs: METADATA_FETCH_TIMEOUT_MS });
         if (meta?.title && meta.title.length >= 3) {
           itemName = meta.title;
         }
@@ -927,14 +1071,22 @@ export async function executeTool(
           snapshot: { select: { urgency: true, daysLeft: true } },
         },
       });
-      const match =
-        candidates.find((c) => c.name.toLowerCase() === query) ??
-        candidates.find((c) => c.name.toLowerCase().includes(query)) ??
-        candidates.find((c) => query.includes(c.name.toLowerCase())) ??
-        null;
-      if (!match) {
+      const matches = findFuzzyMatches(candidates, query);
+      if (matches.length === 0) {
         return { content: `No item matching "${query}".` };
       }
+      // >1 plausible match → surface them all so the model asks. Following
+      // system-prompt Rule A: "MULTIPLE ITEM MATCHES → ASK".
+      if (matches.length > 1) {
+        const list = matches
+          .slice(0, 5)
+          .map((m) => `- id=${m.id} "${m.name}"`)
+          .join("\n");
+        return {
+          content: `AMBIGUOUS: "${query}" matched ${matches.length} items. Ask the user which one:\n${list}`,
+        };
+      }
+      const match = matches[0];
       const stock = formatQuantityBase(match.stockOnHandBase, match.displayUnit, match.packSizeBase);
       const par = formatQuantityBase(match.parLevelBase, match.displayUnit, match.packSizeBase);
       const days = match.snapshot?.daysLeft != null ? `${Math.round(match.snapshot.daysLeft)} days left` : "no forecast";
@@ -1138,8 +1290,8 @@ export async function executeTool(
         select: { id: true, name: true, displayUnit: true, packSizeBase: true, parLevelBase: true },
       });
       if (!item) return { content: "ERROR: item not found at this location." };
-      const lowStockThresholdBase = Math.max(1, Math.floor(newPar * 0.3));
-      const safetyStockBase = Math.max(1, Math.floor(newPar * 0.15));
+      const lowStockThresholdBase = Math.max(1, Math.floor(newPar * PAR_LOW_THRESHOLD_PCT));
+      const safetyStockBase = Math.max(1, Math.floor(newPar * PAR_SAFETY_PCT));
       await db.inventoryItem.update({
         where: { id: item.id },
         data: {
@@ -1154,6 +1306,174 @@ export async function executeTool(
         content: `Par for "${item.name}" is now ${newLabel} (was ${oldLabel}). Low-stock alert at ${lowStockThresholdBase}.`,
         finalReply: `✅ Par updated for *${item.name}*: ${oldLabel} → ${newLabel}`,
       };
+    }
+
+    case "check_margins": {
+      const query = String(args.query ?? "").toLowerCase().trim();
+      const { getMarginDashboard } = await import("@/modules/recipes/margin-dashboard");
+      const rows = await getMarginDashboard(ctx.locationId);
+      const filtered = query
+        ? rows.filter(
+            (r) =>
+              r.menuItemName.toLowerCase().includes(query) ||
+              (r.variantName?.toLowerCase().includes(query) ?? false),
+          )
+        : // Worst first: severity review > watch > unpriced > healthy.
+          [...rows].sort((a, b) => {
+            const rank = (s: string) =>
+              s === "review" ? 0 : s === "watch" ? 1 : s === "unpriced" ? 2 : 3;
+            return rank(a.severity) - rank(b.severity);
+          }).slice(0, 10);
+      if (filtered.length === 0) {
+        return { content: query ? `No menu variants matching "${query}".` : "No menu variants on file yet." };
+      }
+      const fmt = (c: number | null) => (c == null ? "—" : `$${(c / 100).toFixed(2)}`);
+      const fmtPct = (p: number | null) => (p == null ? "—" : `${Math.round(p * 100)}%`);
+      const lines = filtered.map((r) => {
+        const variantLabel = r.variantName ? ` / ${r.variantName}` : "";
+        return `- ${r.menuItemName}${variantLabel}: sell ${fmt(r.sellPriceCents)} · cogs ${fmt(r.cogsCents)} · margin ${fmtPct(r.marginPct)} [${r.severity}]`;
+      });
+      return { content: lines.join("\n") };
+    }
+
+    case "check_variance": {
+      const days = Math.max(1, Math.min(90, Number(args.days ?? 7) || 7));
+      const { getVarianceReport } = await import("@/modules/variance/report");
+      const report = await getVarianceReport(ctx.locationId, { days });
+      const money = (c: number) => `$${(c / 100).toFixed(2)}`;
+      if (report.itemCount === 0) {
+        return { content: `No movement data in the last ${days} days — variance report is empty.` };
+      }
+      const header = `Variance last ${days}d: total loss ${money(report.totalLossCents)} (shrinkage ${money(report.shrinkageCents)} + tracked waste ${money(report.trackedWasteCents)}) across ${report.itemCount} items, ${report.flaggedCount} flagged.`;
+      const worst = report.rows
+        .filter((r) => r.severity !== "clean")
+        .slice(0, 5)
+        .map((r) => `- ${r.itemName}: shrinkage ${money(r.shrinkageCents ?? 0)} (${((r.shrinkagePct ?? 0) * 100).toFixed(1)}%) [${r.severity}]`);
+      return {
+        content: worst.length ? `${header}\n${worst.join("\n")}` : header,
+      };
+    }
+
+    case "check_pricing_trends": {
+      const days = Math.max(7, Math.min(365, Number(args.days ?? 90) || 90));
+      const { getPricingDashboard } = await import("@/modules/pricing/history");
+      const dash = await getPricingDashboard(ctx.locationId, { days });
+      if (dash.rows.length === 0) {
+        return { content: `No price-history data in the last ${days} days — need delivered POs with actual costs stamped.` };
+      }
+      const top = dash.rows.slice(0, 7).map((r) => {
+        const pct = r.summary.deltaPct == null ? "—" : `${r.summary.deltaPct > 0 ? "+" : ""}${Math.round(r.summary.deltaPct * 100)}%`;
+        const supplier = r.currentSupplierName ? ` · ${r.currentSupplierName}` : "";
+        return `- ${r.itemName}: ${pct} over ${r.summary.points} data points [${r.summary.severity}]${supplier}`;
+      });
+      return {
+        content: `Biggest price swings over ${days}d (${dash.reviewCount} review · ${dash.watchCount} watch):\n${top.join("\n")}`,
+      };
+    }
+
+    case "item_price_history": {
+      const query = String(args.query ?? "").toLowerCase().trim();
+      const days = Math.max(7, Math.min(365, Number(args.days ?? 90) || 90));
+      if (!query) return { content: "ERROR: query required." };
+      const candidates = await db.inventoryItem.findMany({
+        where: { locationId: ctx.locationId },
+        select: { id: true, name: true, displayUnit: true },
+      });
+      const matches = findFuzzyMatches(candidates, query);
+      if (matches.length === 0) return { content: `No item matching "${query}".` };
+      if (matches.length > 1) {
+        const list = matches.slice(0, 5).map((m) => `- id=${m.id} "${m.name}"`).join("\n");
+        return {
+          content: `AMBIGUOUS: "${query}" matched ${matches.length} items. Ask the user which one:\n${list}`,
+        };
+      }
+      const match = matches[0];
+      const { getPriceHistory, summarizePriceChange } = await import("@/modules/pricing/history");
+      const history = await getPriceHistory(ctx.locationId, match.id, { days });
+      if (history.points.length === 0) {
+        return { content: `${match.name}: no delivered-PO price data in the last ${days} days.` };
+      }
+      const summary = summarizePriceChange(history.points);
+      const pct = summary.deltaPct == null ? "—" : `${summary.deltaPct > 0 ? "+" : ""}${Math.round(summary.deltaPct * 100)}%`;
+      const recent = history.points.slice(-5).map((p) => {
+        const date = p.at.slice(0, 10);
+        return `- ${date}: $${(p.unitCostCents / 100).toFixed(2)} · ${p.supplierName} (${p.orderNumber})`;
+      });
+      return {
+        content: `${match.name} — ${summary.points} data points, ${pct} over window [${summary.severity}].\nLatest:\n${recent.join("\n")}`,
+      };
+    }
+
+    case "analytics_overview": {
+      const { getAnalyticsOverview } = await import("@/modules/analytics/queries");
+      const a = await getAnalyticsOverview(ctx.locationId);
+      const money = (c: number) => `$${(c / 100).toFixed(2)}`;
+      const suppliers = a.topSuppliers.slice(0, 3).map((s) => `${s.name} (${s.totalOrders})`);
+      const items = a.topItems.slice(0, 3).map((i) => `${i.name} (${i.orderCount})`);
+      const reply = [
+        `Last ${a.windowDays}d:`,
+        `- POs: ${a.ordersSent} sent · ${a.ordersConfirmed} confirmed · ${a.ordersFailed} failed · ${a.ordersOutOfStock} out-of-stock`,
+        `- Spend: ${money(a.totalSpendCents)}`,
+        a.averageReplyHours != null ? `- Avg supplier reply: ${a.averageReplyHours.toFixed(1)}h` : "- Avg supplier reply: —",
+        `- Rescue orders: ${a.rescueOrders}`,
+        suppliers.length ? `- Top suppliers: ${suppliers.join(", ")}` : "",
+        items.length ? `- Top items: ${items.join(", ")}` : "",
+      ].filter(Boolean).join("\n");
+      return { content: reply };
+    }
+
+    case "forecast_runout": {
+      const query = String(args.query ?? "").toLowerCase().trim();
+      const items = await db.inventoryItem.findMany({
+        where: { locationId: ctx.locationId },
+        select: {
+          id: true,
+          name: true,
+          displayUnit: true,
+          packSizeBase: true,
+          stockOnHandBase: true,
+          parLevelBase: true,
+          snapshot: { select: { daysLeft: true, urgency: true } },
+        },
+      });
+      if (query) {
+        const matches = findFuzzyMatches(items, query);
+        if (matches.length === 0) return { content: `No item matching "${query}".` };
+        if (matches.length > 1) {
+          const list = matches.slice(0, 5).map((m) => `- "${m.name}"`).join("\n");
+          return {
+            content: `AMBIGUOUS: "${query}" matched ${matches.length} items. Ask the user which one:\n${list}`,
+          };
+        }
+        const match = matches[0];
+        const days = match.snapshot?.daysLeft;
+        const stock = formatQuantityBase(match.stockOnHandBase, match.displayUnit, match.packSizeBase);
+        if (days == null) {
+          return { content: `${match.name}: ${stock} on hand. No recent usage data — can't forecast a runout date yet.` };
+        }
+        const verdict =
+          match.snapshot?.urgency === "CRITICAL"
+            ? "🚨 critical"
+            : match.snapshot?.urgency === "WARNING"
+              ? "⚠ low"
+              : "on track";
+        return { content: `${match.name}: ${stock} on hand · ~${Math.round(days)} days left · ${verdict}.` };
+      }
+      // No query → nearest runouts across the location.
+      const withDays = items
+        .map((i) => ({
+          name: i.name,
+          days: i.snapshot?.daysLeft ?? null,
+          urgency: i.snapshot?.urgency ?? null,
+        }))
+        .filter((r) => r.days != null && (r.urgency === "CRITICAL" || r.urgency === "WARNING"))
+        .sort((a, b) => (a.days ?? Infinity) - (b.days ?? Infinity))
+        .slice(0, 5);
+      if (withDays.length === 0) {
+        return { content: "No runouts projected — every tracked item is on track." };
+      }
+      const lines = withDays.map((r) => `- ${r.name}: ~${Math.round(r.days ?? 0)}d left [${r.urgency}]`);
+      return { content: `Nearest runouts:\n${lines.join("\n")}` };
     }
 
     default:
@@ -1203,6 +1523,14 @@ E. MISSING QUANTITY when the intent is an order (not a count/approve/cancel).
 
 DEFAULT BIAS: when in doubt, ask. One good clarifying question beats five wrong commits.
 
+## AMBIGUOUS TOOL RESULTS
+If a tool response begins with "AMBIGUOUS:", the query matched multiple items and the tool refused to pick. DO NOT call another tool with one of the candidate ids — instead, read the candidate names back to the user in plain English and ask which one. Example tool response:
+  "AMBIGUOUS: "milk" matched 3 items. Ask the user which one:
+   - id=abc "Whole Milk"
+   - id=def "Oat Milk"
+   - id=ghi "Milk 2%""
+Your reply should be: "Which milk — Whole Milk, Oat Milk, or Milk 2%?"
+
 ## BAD EXAMPLES — DO NOT DO THESE
 
 User: "we need more milk"  (LIVE DATA has Milk 2%, Oat Milk, Whole Milk)
@@ -1236,7 +1564,13 @@ User: "get me 3 of these https://www.costco.com/oat-milk.html" (item already exi
 User: "add 5 bottles of jp wisers and 3 box of bella terra in my cart in lcbo website" → call quick_add_and_order TWICE: (1) item_name="JP Wisers", category="SUPPLY", quantity="5", supplier_name="LCBO", website_url=""  (2) item_name="Bella Terra", category="SUPPLY", quantity="3", supplier_name="LCBO", website_url="". Reply: "📋 Drafted 2 POs from LCBO — 5 JP Wisers + 3 Bella Terra. Approve to send."
 User: "order from amazon: 2 cans of cleaner" → quick_add_and_order(item_name="Cleaner", category="CLEANING", quantity="2", supplier_name="Amazon", website_url=""). NEVER refuse with "I can't access websites".
 User: "what do I need" → list below-par items from LIVE DATA, offer to draft all.
-User: "nvm" → cancel_recent_order, reply: "Cancelled."`;
+User: "nvm" → cancel_recent_order, reply: "Cancelled."
+User: "how are my margins?" / "which drinks lose money?" → check_margins. Reply with the worst offenders.
+User: "how much am I losing to waste?" / "show me shrinkage" → check_variance (default 7 days).
+User: "what's getting more expensive?" / "biggest price movers" → check_pricing_trends.
+User: "how has milk changed?" → item_price_history(query="milk").
+User: "how's the month?" / "stats" → analytics_overview.
+User: "when do I run out of oat milk?" → forecast_runout(query="oat milk"). "any critical items?" → forecast_runout with empty query.`;
 
 // ── Groq client ───────────────────────────────────────────────────────────────
 type GroqToolCall = {
@@ -1275,14 +1609,14 @@ async function callGroq(messages: GroqMessage[]): Promise<{
     },
     body: JSON.stringify({
       model,
-      temperature: 0.3,
+      temperature: LLM_TEMPERATURE,
       top_p: 0.95,
-      max_tokens: 512,
+      max_tokens: LLM_MAX_TOKENS,
       messages,
       tools: TOOLS,
       tool_choice: "auto",
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
   });
 
   if (!res.ok) {
@@ -1314,8 +1648,8 @@ async function callGroq(messages: GroqMessage[]): Promise<{
 // items are hidden so it can tell the user "I don't have that one in
 // my view, ask me to look it up" instead of confidently denying.
 
-const INVENTORY_LIMIT = 30;
-const SUPPLIER_LIMIT = 30;
+const INVENTORY_LIMIT = INVENTORY_CONTEXT_LIMIT;
+const SUPPLIER_LIMIT = SUPPLIER_CONTEXT_LIMIT;
 
 export type LiveDataItem = {
   id: string;
@@ -1328,23 +1662,60 @@ export type LiveDataItem = {
   snapshot: { urgency: string | null } | null;
 };
 
-/**
- * Pure function — exported for testing. Sorts items so urgent ones
- * surface first when truncating, then falls back to alphabetical so
- * runs are deterministic. CRITICAL > WARNING > anything else.
- */
-export function rankItemsByUrgency<T extends LiveDataItem>(items: T[]): T[] {
-  const rank = (urgency: string | null | undefined) => {
-    if (urgency === "CRITICAL") return 0;
-    if (urgency === "WARNING") return 1;
-    return 2;
-  };
-  return [...items].sort((a, b) => {
-    const ar = rank(a.snapshot?.urgency);
-    const br = rank(b.snapshot?.urgency);
-    if (ar !== br) return ar - br;
-    return a.name.localeCompare(b.name);
-  });
+// rankItemsByUrgency is imported from ./agent-helpers (pure module).
+
+// ── Live-data cache ────────────────────────────────────────────────────────
+// Rapid-fire messages from the same user (three "order this https://…" in a
+// row) used to re-query Prisma for every turn — ~6 DB round-trips × 3 bot
+// turns = wasteful. In-memory cache with short TTL flattens that to one
+// round-trip as long as nothing in the location's inventory changed fast.
+//
+// Invalidation strategy: TTL only. Cache is *stale-tolerant* — a write from
+// one bot turn that lands in the same 30s window as the next read shows the
+// pre-write snapshot. That's fine for LLM grounding (the tool's own
+// response is authoritative), and avoids sprinkling invalidate() calls
+// across every mutation path in the service layer.
+//
+// In prod we run one Node process per request lane, so this is per-process
+// and *not* shared across workers — which is exactly the behavior we want.
+// Writes never need to invalidate the *other* worker's cache; each one
+// will refresh on its next miss.
+
+const LIVE_DATA_TTL_MS = num("BOT_LIVE_DATA_TTL_MS", 30_000);
+const liveDataCache = new Map<string, { at: number; block: string }>();
+
+/** Exposed so tests can assert cache behavior without waiting 30s. */
+export function clearLiveDataCache(): void {
+  liveDataCache.clear();
+}
+
+/** Exposed so mutation paths can nuke stale snapshots on demand. */
+export function invalidateLiveDataCache(locationId: string): void {
+  liveDataCache.delete(locationId);
+}
+
+/** Tools whose success changes inventory/PO state — their turn invalidates
+ *  the cached LIVE DATA so the NEXT turn builds a fresh snapshot. */
+const MUTATING_TOOLS: ReadonlySet<string> = new Set([
+  "place_restock_order",
+  "update_stock_count",
+  "link_supplier_to_item",
+  "quick_add_and_order",
+  "approve_recent_order",
+  "cancel_recent_order",
+  "adjust_par_level",
+  "mark_order_delivered",
+]);
+
+async function buildLiveDataBlockCached(ctx: AgentContext): Promise<string> {
+  const cached = liveDataCache.get(ctx.locationId);
+  const now = Date.now();
+  if (cached && now - cached.at < LIVE_DATA_TTL_MS) {
+    return cached.block;
+  }
+  const block = await buildLiveDataBlock(ctx);
+  liveDataCache.set(ctx.locationId, { at: now, block });
+  return block;
 }
 
 async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
@@ -1471,61 +1842,11 @@ async function buildLiveDataBlock(ctx: AgentContext): Promise<string> {
   ].join("\n");
 }
 
-// ── Output sanitiser ───────────────────────────────────────────────────────
-// Last-line-of-defence: even with the strongest prompt the model sometimes
-// slips and mentions tool names, leaves empty placeholders, or narrates
-// "I'll now call list_inventory for you". Strip those before the user
-// sees them.
-
-const TOOL_NAME_PATTERN = /\b(place_restock_order|update_stock_count|list_inventory|list_low_stock|list_suppliers|link_supplier_to_item|adjust_par_level|approve_recent_order|cancel_recent_order|start_add_item_flow|start_add_supplier_flow|check_item_stock)\b/gi;
-
-export function sanitiseReply(raw: string | null, fallback: string): string {
-  if (!raw) return fallback;
-  let text = raw;
-
-  // Empty inline-code placeholders ("the order is ``", "PO-PO-XXXX").
-  text = text.replace(/``/g, "");
-  text = text.replace(/PO-PO-\w+/g, "");
-  text = text.replace(/\bPO-\d{4}-XXXX\b/gi, "");
-
-  // Tool names bleeding into user text.
-  if (TOOL_NAME_PATTERN.test(text)) {
-    // Rewrite the phrase rather than delete it — readers should still get
-    // SOME signal. Replace the tool name with a neutral verb.
-    text = text.replace(TOOL_NAME_PATTERN, (match) => {
-      const lookup: Record<string, string> = {
-        place_restock_order: "draft an order",
-        update_stock_count: "update the stock",
-        list_inventory: "check your items",
-        list_low_stock: "check what's low",
-        list_suppliers: "check your suppliers",
-        link_supplier_to_item: "link the supplier",
-        adjust_par_level: "change the par",
-        approve_recent_order: "approve the order",
-        cancel_recent_order: "cancel the order",
-        start_add_item_flow: "add an item",
-        start_add_supplier_flow: "add a supplier",
-        check_item_stock: "check the item",
-      };
-      return lookup[match.toLowerCase()] ?? match;
-    });
-  }
-
-  // Narration patterns: "I'll call X to...", "Let me check X for you"
-  text = text.replace(/I'll (call |use |run )(the |a )?[a-z_]+ (tool|function)(\.|,)?/gi, "");
-  text = text.replace(/Let me (call |use |run )(the |a )?[a-z_]+ (tool|function)(\.|,)?/gi, "");
-
-  // Collapse double spaces and trim.
-  text = text.replace(/ {2,}/g, " ").trim();
-
-  // If after sanitisation we have nothing useful, fall back.
-  if (text.length < 2) return fallback;
-  return text;
-}
+// sanitiseReply is imported from ./agent-helpers (pure module).
 
 // ── Public entry point ────────────────────────────────────────────────────────
 export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult> {
-  const liveData = await buildLiveDataBlock(ctx);
+  const liveData = await buildLiveDataBlockCached(ctx);
   const systemPrompt = `${SYSTEM_PROMPT_BASE}\n\n${liveData}`;
 
   const messages: GroqMessage[] = [
@@ -1556,8 +1877,8 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
   }> = [];
   let llmRoundtrips = 0;
 
-  // Tool call loop — up to 3 turns. Most interactions need 1-2.
-  for (let i = 0; i < 3; i++) {
+  // Tool call loop — up to AGENT_MAX_ROUNDTRIPS turns. Most interactions need 1-2.
+  for (let i = 0; i < AGENT_MAX_ROUNDTRIPS; i++) {
     const response = await callGroq(messages);
     llmRoundtrips += 1;
 
@@ -1591,6 +1912,9 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
       let toolError: string | null = null;
       try {
         result = await executeTool(call.function.name, parsedArgs, ctx);
+        if (MUTATING_TOOLS.has(call.function.name)) {
+          invalidateLiveDataCache(ctx.locationId);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         toolError = message.slice(0, 200);
