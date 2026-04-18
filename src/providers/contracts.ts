@@ -225,6 +225,12 @@ export interface SupplierOrderProvider {
     body: string;
     /** Optional rich HTML body — providers that support it (e.g. Gmail) send multipart/alternative. */
     html?: string;
+    /** Optional Reply-To override. When set, supplier replies go to
+     * this address instead of the user's connected mailbox. We set
+     * it to `reply+<purchaseOrderId>@<REPLY_DOMAIN>` so the inbound
+     * webhook can re-attach the reply to the PO — this replaces the
+     * gmail.readonly thread-poller path. */
+    replyTo?: string;
   }): Promise<{
     providerMessageId?: string;
     /** Provider-specific metadata (e.g. Gmail threadId) — persisted

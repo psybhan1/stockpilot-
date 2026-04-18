@@ -20,7 +20,7 @@ export default function GoogleVerificationDocs() {
 
         <ol className="mt-10 list-decimal space-y-6 pl-5 text-[15px] leading-relaxed marker:text-muted-foreground">
           <li>
-            <strong>Confirm the scopes we request are the narrow two.</strong>{" "}
+            <strong>Confirm only sensitive scopes are requested — no restricted scopes.</strong>{" "}
             Open{" "}
             <Link className="underline" href="https://console.cloud.google.com/apis/credentials/consent" target="_blank">
               console.cloud.google.com/apis/credentials/consent
@@ -31,13 +31,10 @@ export default function GoogleVerificationDocs() {
                 <code>https://www.googleapis.com/auth/gmail.send</code>
               </li>
               <li>
-                <code>https://www.googleapis.com/auth/gmail.readonly</code>
-              </li>
-              <li>
                 <code>https://www.googleapis.com/auth/userinfo.email</code>
               </li>
             </ul>
-            If any extra scopes are listed (e.g. <code>mail.google.com/</code> restricted scope), remove them first — restricted scopes require a much harder CASA security assessment.
+            Any restricted scope — including <code>gmail.readonly</code>, <code>gmail.modify</code>, or <code>mail.google.com/</code> — triggers Google&apos;s CASA tier-2 security assessment (~$4–15k and months of paperwork). StockPilot deliberately avoids all of them. Supplier replies are handled by our inbound-email webhook instead, so we don&apos;t need any read access to user mailboxes.
           </li>
           <li>
             <strong>Fill in the OAuth consent screen app details.</strong>
@@ -71,14 +68,6 @@ export default function GoogleVerificationDocs() {
                 </p>
                 <p className="mt-1 text-sm">
                   StockPilot sends purchase-order emails on behalf of the signed-in café owner to their suppliers. The owner approves each order in the app, and the email is sent from their own Gmail account so the supplier sees a normal, personal email.
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                  gmail.readonly
-                </p>
-                <p className="mt-1 text-sm">
-                  After a purchase-order email is sent, StockPilot polls the specific thread IDs it generated to detect supplier replies (confirmed / delayed / out-of-stock). We read only threads that StockPilot itself created; we never scan the user&apos;s inbox broadly.
                 </p>
               </div>
               <div>

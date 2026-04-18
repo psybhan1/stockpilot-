@@ -52,6 +52,7 @@ export class ConsoleEmailProvider implements NotificationProvider, SupplierOrder
     subject: string;
     body: string;
     html?: string;
+    replyTo?: string;
   }) {
     console.warn(
       "[ConsoleEmailProvider] TEST MODE — NO EMAIL WAS ACTUALLY SENT.\n" +

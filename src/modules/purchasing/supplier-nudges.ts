@@ -126,12 +126,17 @@ async function sendStuckReplyNudges(): Promise<number> {
     </body></html>`;
 
     try {
+      const { buildSupplierReplyAddress } = await import(
+        "@/modules/purchasing/reply-address"
+      );
       const provider = new GmailEmailProvider(comm.purchaseOrder.locationId);
       const sent = await provider.sendApprovedOrder({
         recipient,
         subject,
         body: text,
         html,
+        replyTo:
+          buildSupplierReplyAddress(comm.purchaseOrder.id) ?? undefined,
       });
       await db.supplierCommunication.create({
         data: {

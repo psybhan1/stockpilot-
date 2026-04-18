@@ -58,6 +58,15 @@ export const env = {
   RESEND_API_KEY: process.env.RESEND_API_KEY,
   RESEND_FROM_EMAIL:
     process.env.RESEND_FROM_EMAIL ?? "StockPilot <onboarding@resend.dev>",
+  // Domain that accepts inbound supplier replies on our behalf. When
+  // set (e.g. "reply.stockpilot.app"), outbound POs are sent with
+  // Reply-To: reply+<poId>@<REPLY_DOMAIN>; your inbound email
+  // service (Resend/Postmark/SendGrid) forwards messages hitting
+  // that domain to /api/inbound/email. Required once gmail.readonly
+  // is dropped — otherwise supplier replies land in the user's
+  // Gmail inbox and the bot can't auto-classify them.
+  REPLY_DOMAIN: process.env.REPLY_DOMAIN ?? null,
+  INBOUND_EMAIL_SECRET: process.env.INBOUND_EMAIL_SECRET ?? null,
   EXPO_ACCESS_TOKEN: process.env.EXPO_ACCESS_TOKEN,
   EXPO_TEST_PUSH_TOKEN: process.env.EXPO_TEST_PUSH_TOKEN,
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,

@@ -25,7 +25,7 @@ import { getGmailCredentials } from "@/modules/channels/service";
 import { GmailEmailProvider } from "@/providers/email/gmail-email";
 import { sendTelegramMessage } from "@/lib/telegram-bot";
 
-type SupplierReplyIntent =
+export type SupplierReplyIntent =
   | "CONFIRMED"
   | "OUT_OF_STOCK"
   | "DELAYED"
@@ -129,6 +129,18 @@ async function pollOneThread(ctx: {
     // Cheaper option: reload creds (the provider refreshes lazily).
     // Easiest: skip this thread for this cycle; next cycle will catch up.
     void provider;
+    return 0;
+  }
+  if (res.status === 403) {
+    // Expected for accounts that connected AFTER gmail.readonly was
+    // dropped from GMAIL_SCOPES — their token has send-only access.
+    // Those users rely on the inbound-email webhook for reply
+    // detection instead of this poller. Log once per location/cycle
+    // and bail quietly so the worker keeps running for legacy users
+    // who still have readonly consent.
+    botTelemetry.event("supplier-reply-poller.readonly_scope_unavailable", {
+      locationId: ctx.locationId,
+    });
     return 0;
   }
   if (!res.ok) return 0;
@@ -261,13 +273,13 @@ function extractBodyText(msg: {
   return (msg.snippet ?? "").trim();
 }
 
-type PriceSignal = {
+export type PriceSignal = {
   amount: number;
   currency: string;
   perUnit: string | null;
 };
 
-async function extractPriceSignal(body: string): Promise<PriceSignal | null> {
+export async function extractPriceSignal(body: string): Promise<PriceSignal | null> {
   const groqKey = process.env.GROQ_API_KEY;
   if (!groqKey) return null;
   // Cheap prefilter — only call the model if the body mentions a
@@ -355,7 +367,7 @@ function wrapSupplierBodyAsUserMessage(body: string, maxLen: number): string {
   );
 }
 
-async function classifyReplyIntent(body: string): Promise<SupplierReplyIntent> {
+export async function classifyReplyIntent(body: string): Promise<SupplierReplyIntent> {
   const groqKey = process.env.GROQ_API_KEY;
   if (!groqKey) return "OTHER";
 
@@ -403,7 +415,7 @@ async function classifyReplyIntent(body: string): Promise<SupplierReplyIntent> {
   }
 }
 
-async function notifyManagerOfReply(input: {
+export async function notifyManagerOfReply(input: {
   locationId: string;
   orderNumber: string;
   supplierName: string;

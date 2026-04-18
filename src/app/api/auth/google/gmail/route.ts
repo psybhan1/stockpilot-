@@ -4,15 +4,18 @@ import { requireSession } from "@/modules/auth/session";
 import { Role } from "@/lib/domain-enums";
 import { env } from "@/lib/env";
 
-// Use the narrow sensitive scopes (send + readonly) instead of the
-// full-mailbox restricted scope `https://mail.google.com/`. The
-// restricted scope is silently downgraded for unverified apps,
-// which causes 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT on send.
+// Only request `gmail.send` (sensitive) — we deliberately do NOT
+// request `gmail.readonly` anymore. readonly is a RESTRICTED scope,
+// which would force Google's CASA security assessment (~$4-15k +
+// months) before we could publish the OAuth consent screen to any
+// user outside our test-user list. Supplier reply detection moved
+// from the Gmail thread poller to the inbound-email webhook
+// (src/app/api/inbound/email/route.ts) — same behavior, no need to
+// read the user's mailbox.
 //   - gmail.send      → users.messages.send (PO emails out)
-//   - gmail.readonly  → threads.get          (supplier reply poller)
+//   - userinfo.email  → identify which Gmail address we connected
 const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.send",
-  "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/userinfo.email",
 ].join(" ");
 

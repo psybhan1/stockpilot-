@@ -122,12 +122,19 @@ export class GmailEmailProvider
     body: string;
     /** Optional HTML body — when present, sent as multipart/alternative. */
     html?: string;
+    /** Optional Reply-To override. When our inbound-email webhook is
+     * configured (REPLY_DOMAIN set) the caller passes
+     * `reply+<poId>@<REPLY_DOMAIN>` so supplier replies flow into
+     * the webhook instead of requiring gmail.readonly to poll the
+     * user's mailbox. */
+    replyTo?: string;
   }) {
     const sent = await this.deliverFull({
       to: input.recipient,
       subject: input.subject,
       body: input.body,
       html: input.html,
+      replyTo: input.replyTo,
     });
     return {
       providerMessageId: sent.id,
@@ -180,13 +187,19 @@ export class GmailEmailProvider
     subject: string;
     body: string;
     html?: string;
+    replyTo?: string;
   }): Promise<{ id: string; threadId: string }> {
     const creds = await this.ensureFreshToken();
+
+    // Use the caller-supplied Reply-To if present (inbound-email
+    // webhook address); fall back to the user's own mailbox so the
+    // legacy Gmail-readonly poller still sees replies on the thread.
+    const replyTo = sanitizeHeader(input.replyTo ?? creds.email);
 
     const headers =
       `From: ${creds.email}\r\n` +
       `To: ${input.to}\r\n` +
-      `Reply-To: ${creds.email}\r\n` +
+      `Reply-To: ${replyTo}\r\n` +
       `Subject: ${sanitizeHeader(input.subject)}\r\n` +
       `MIME-Version: 1.0\r\n`;
 

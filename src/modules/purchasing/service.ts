@@ -197,11 +197,15 @@ export async function approveRecommendation(
 
   if (recommendation.supplier.orderingMode === "EMAIL") {
     try {
+      const { buildSupplierReplyAddress } = await import(
+        "@/modules/purchasing/reply-address"
+      );
       const sendResult = await supplierOrderProvider.sendApprovedOrder({
         recipient: recommendation.supplier.email ?? "orders@example.com",
         subject: draft?.subject ?? `PO ${orderNumber} from StockPilot`,
         body: draft?.body ?? recommendation.rationale,
         html: draft?.html,
+        replyTo: buildSupplierReplyAddress(purchaseOrder.id) ?? undefined,
       });
 
       await db.$transaction(async (tx) => {

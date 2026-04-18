@@ -71,6 +71,7 @@ export class ResendEmailProvider
     subject: string;
     body: string;
     html?: string;
+    replyTo?: string;
   }) {
     return this.sendEmail(input);
   }
@@ -139,6 +140,7 @@ export class ResendEmailProvider
     subject: string;
     body: string;
     html?: string;
+    replyTo?: string;
   }) {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -154,6 +156,9 @@ export class ResendEmailProvider
         subject: input.subject,
         text: input.body,
         ...(input.html ? { html: input.html } : {}),
+        // Resend accepts `reply_to`; without it, replies go to the
+        // verified `from` domain which a café owner may not own yet.
+        ...(input.replyTo ? { reply_to: input.replyTo } : {}),
       }),
     });
 

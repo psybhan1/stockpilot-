@@ -44,24 +44,22 @@ export default function PrivacyPage() {
 
           <Section title="Gmail access is narrow">
             <p>
-              When you connect Gmail, StockPilot requests the two narrowest
-              scopes that do the job:
+              When you connect Gmail, StockPilot requests a single, narrow
+              scope — the minimum needed to do the job:
             </p>
             <ul className="mt-3 list-disc space-y-1 pl-6">
               <li>
                 <code>gmail.send</code> — to send the purchase-order emails you
                 approve, from your own address.
               </li>
-              <li>
-                <code>gmail.readonly</code> — to poll the specific threads we
-                started (by <code>threadId</code>), so we can detect supplier
-                replies and surface them to you.
-              </li>
             </ul>
             <p className="mt-3">
-              We never read any other mail in your inbox. You can revoke access
-              at any time from your Google account, or disconnect from Settings
-              → Channels → Gmail.
+              We do not read your inbox at all. Supplier replies come back to
+              a dedicated address StockPilot owns (set as Reply-To on the
+              emails we send) and are routed back to the matching purchase
+              order on our servers. You can revoke Gmail access at any time
+              from your Google account, or disconnect from Settings → Channels
+              → Gmail.
             </p>
           </Section>
 

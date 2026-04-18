@@ -1683,6 +1683,12 @@ async function dispatchBotPurchaseOrder(input: {
         throw new Error("Supplier email is missing for this order.");
       }
 
+      const { buildSupplierReplyAddress } = await import(
+        "@/modules/purchasing/reply-address"
+      );
+      const supplierReplyTo =
+        buildSupplierReplyAddress(currentPurchaseOrder.id) ?? undefined;
+
       // Retry transient email-send failures with exponential backoff.
       // Most provider flakiness is rate-limit or DNS blips that clear
       // in a few hundred ms. 3 attempts total: 0ms, 400ms, 1200ms.
@@ -1696,6 +1702,7 @@ async function dispatchBotPurchaseOrder(input: {
               draft?.body ??
               `Please confirm ${line.quantity} ${line.unit} of ${line.description}.`,
             html: draft?.html,
+            replyTo: supplierReplyTo,
           }),
         { attempts: 3, baseDelayMs: 400 }
       );
