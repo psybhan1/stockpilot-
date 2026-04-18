@@ -3,21 +3,19 @@ import { createHash, randomBytes } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 import { env } from "@/lib/env";
+import {
+  extractTelegramUserId,
+  parseTelegramOidcCookie,
+  type TelegramOidcCookiePayload,
+} from "./telegram-oidc-parse";
 
 const TELEGRAM_OIDC_ISSUER = "https://oauth.telegram.org";
 const TELEGRAM_OIDC_COOKIE_NAME = "stockpilot_telegram_oidc";
 const TELEGRAM_OIDC_SCOPES = "openid profile telegram:bot_access";
-const TELEGRAM_OIDC_TTL_SECONDS = 15 * 60;
 
 const telegramJwks = createRemoteJWKSet(
   new URL(`${TELEGRAM_OIDC_ISSUER}/.well-known/jwks.json`)
 );
-
-type TelegramOidcCookiePayload = {
-  state: string;
-  codeVerifier: string;
-  issuedAt: number;
-};
 
 type TelegramIdTokenPayload = {
   id: string;
@@ -56,31 +54,10 @@ export function createTelegramOidcSession(state: string) {
   };
 }
 
-export function readTelegramOidcSession(value: string | undefined) {
-  if (!value) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as TelegramOidcCookiePayload;
-
-    if (
-      !parsed ||
-      typeof parsed.state !== "string" ||
-      typeof parsed.codeVerifier !== "string" ||
-      typeof parsed.issuedAt !== "number"
-    ) {
-      return null;
-    }
-
-    if (Date.now() - parsed.issuedAt > TELEGRAM_OIDC_TTL_SECONDS * 1000) {
-      return null;
-    }
-
-    return parsed;
-  } catch {
-    return null;
-  }
+export function readTelegramOidcSession(
+  value: string | undefined
+): TelegramOidcCookiePayload | null {
+  return parseTelegramOidcCookie(value, Date.now());
 }
 
 export function buildTelegramOidcAuthorizationUrl(input: {
@@ -160,7 +137,7 @@ export async function verifyTelegramOidcIdToken(idToken: string) {
     audience: env.TELEGRAM_LOGIN_CLIENT_ID,
   });
 
-  const id = getTelegramUserIdFromPayload(payload);
+  const id = extractTelegramUserId(payload);
 
   if (!id) {
     throw new Error("Telegram login payload did not include a user identifier.");
@@ -174,15 +151,4 @@ export async function verifyTelegramOidcIdToken(idToken: string) {
   } satisfies TelegramIdTokenPayload;
 }
 
-function getTelegramUserIdFromPayload(payload: Record<string, unknown>) {
-  if (typeof payload.id === "string" || typeof payload.id === "number") {
-    return String(payload.id);
-  }
-
-  if (typeof payload.sub === "string" || typeof payload.sub === "number") {
-    return String(payload.sub);
-  }
-
-  return null;
-}
 

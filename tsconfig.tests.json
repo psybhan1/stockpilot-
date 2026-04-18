@@ -118,6 +118,8 @@
     "src/modules/purchasing/supplier-nudges-primitives.ts",
     "src/modules/purchasing/supplier-nudges-primitives.test.ts",
     "src/lib/env-helpers.ts",
-    "src/lib/env-helpers.test.ts"
+    "src/lib/env-helpers.test.ts",
+    "src/modules/operator-bot/telegram-oidc-parse.ts",
+    "src/modules/operator-bot/telegram-oidc-parse.test.ts"
   ]
 }
