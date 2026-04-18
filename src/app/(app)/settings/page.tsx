@@ -239,107 +239,89 @@ export default async function SettingsPage({
           ) : null}
         </BrandCard>
 
-        {!gmailConnected && !tenantResendConnected ? (
-          <div className="rounded-xl border border-border/50 bg-card/60 p-5 space-y-4">
-            <div>
-              <p className="text-sm font-semibold">One-click Gmail connect</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Sign in once with Google and every future PO sends from your
-                own Gmail automatically — no tapping, no paste forms, no
-                supplier-side branding. We only request{" "}
-                <code>gmail.send</code> — we never read your mailbox.
-              </p>
-            </div>
-            <a href="/api/auth/google/gmail" className="inline-block">
+        <BrandCard
+          logo={<GmailLogo />}
+          name="Gmail"
+          tagline={
+            gmailConnected
+              ? `Connected as ${locationChannels.email?.address ?? "your Gmail"}`
+              : "One-click connect — POs send from your own Gmail automatically"
+          }
+          status={gmailConnected ? "Connected" : "Not connected"}
+          statusTone={gmailConnected ? "success" : "info"}
+        >
+          {gmailConnected ? (
+            <form action={disconnectEmailChannelAction}>
+              <input type="hidden" name="provider" value="gmail" />
+              <Button
+                type="submit"
+                variant="ghost"
+                size="sm"
+                className="h-9 text-xs text-muted-foreground"
+              >
+                Disconnect
+              </Button>
+            </form>
+          ) : (
+            <a href="/api/auth/google/gmail">
               <Button
                 size="sm"
-                className="h-10 gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs shadow-sm"
+                className="h-9 gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs shadow-sm"
               >
-                <GoogleLogo size={16} />
+                <GoogleLogo size={14} />
                 Connect Gmail
               </Button>
             </a>
+          )}
+        </BrandCard>
 
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">
-              <p className="font-semibold text-amber-900 dark:text-amber-200">
-                If the button shows &ldquo;Access blocked: has not completed
-                the Google verification process&rdquo;, the app owner needs
-                to publish the OAuth consent screen — one click, 30 seconds:
+        {!gmailConnected && !tenantResendConnected ? (
+          <details className="rounded-xl border border-border/50 bg-card/60 px-5 py-3 text-sm">
+            <summary className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground">
+              Alternative · auto-send via Resend API key
+            </summary>
+            <form
+              action={connectResendEmailChannelAction}
+              className="mt-3 space-y-3 text-muted-foreground"
+            >
+              <p className="text-[11px]">
+                Free at 100 emails/day. Create a key at{" "}
+                <a
+                  href="https://resend.com/api-keys"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  resend.com/api-keys
+                </a>{" "}
+                and paste it here.
               </p>
-              <ol className="mt-2 list-decimal space-y-1 pl-5 text-amber-900/90 dark:text-amber-100/90">
-                <li>
-                  Open{" "}
-                  <a
-                    href="https://console.cloud.google.com/apis/credentials/consent"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline font-medium"
-                  >
-                    console.cloud.google.com/apis/credentials/consent
-                  </a>
-                  .
-                </li>
-                <li>
-                  Under &ldquo;Publishing status&rdquo; click{" "}
-                  <span className="font-medium">Publish app</span> → confirm.
-                </li>
-                <li>
-                  Done. Any user can connect Gmail in one click — Google will
-                  show a small &ldquo;unverified app&rdquo; screen until
-                  Google&apos;s standard review clears it (1–2 weeks, free),
-                  but <em>Advanced → Go to StockPilot</em> already works right
-                  now.
-                </li>
-              </ol>
-            </div>
-
-            <details className="pt-2">
-              <summary className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground">
-                Alternative · auto-send via Resend (no Google OAuth needed)
-              </summary>
-              <form
-                action={connectResendEmailChannelAction}
-                className="mt-3 rounded-lg border border-border/50 bg-card/50 p-4 space-y-3 text-sm text-muted-foreground"
-              >
-                <p className="text-[11px]">
-                  Free at 100 emails/day. Create a key at{" "}
-                  <a
-                    href="https://resend.com/api-keys"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline"
-                  >
-                    resend.com/api-keys
-                  </a>{" "}
-                  and paste it here.
+              <div className="grid gap-2 sm:grid-cols-2">
+                <input
+                  type="password"
+                  name="apiKey"
+                  required
+                  placeholder="re_XXXXXXXX"
+                  className="h-9 rounded-md border border-border/50 bg-background px-3 text-xs"
+                />
+                <input
+                  type="email"
+                  name="fromEmail"
+                  required
+                  placeholder="orders@yourcafe.com"
+                  className="h-9 rounded-md border border-border/50 bg-background px-3 text-xs"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <p className="text-[10px]">
+                  Encrypted before storage. Never logged.
                 </p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <input
-                    type="password"
-                    name="apiKey"
-                    required
-                    placeholder="re_XXXXXXXX"
-                    className="h-9 rounded-md border border-border/50 bg-background px-3 text-xs"
-                  />
-                  <input
-                    type="email"
-                    name="fromEmail"
-                    required
-                    placeholder="orders@yourcafe.com"
-                    className="h-9 rounded-md border border-border/50 bg-background px-3 text-xs"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px]">
-                    Encrypted before storage. Never logged.
-                  </p>
-                  <Button type="submit" size="sm" className="h-8 text-xs">
-                    Save
-                  </Button>
-                </div>
-              </form>
-            </details>
-          </div>
+                <Button type="submit" size="sm" className="h-8 text-xs">
+                  Save
+                </Button>
+              </div>
+            </form>
+          </details>
         ) : null}
       </Section>
 
