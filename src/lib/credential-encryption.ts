@@ -7,7 +7,7 @@
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { env } from "@/lib/env";
+import { env } from "./env";
 
 const PREFIX = "enc:v1:";
 const ALGO = "aes-256-gcm" as const;

@@ -1,4 +1,4 @@
-import { Role } from "@/lib/domain-enums";
+import { Role } from "./domain-enums";
 
 export const roleRank: Record<Role, number> = {
   STAFF: 1,

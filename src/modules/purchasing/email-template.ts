@@ -210,8 +210,11 @@ export function buildSupplierOrderEmail(
 
 function humanizeSupplierName(name: string): string {
   // "FreshCo Produce LLC" → "FreshCo Produce" team
+  // "Acme Inc." → "Acme" team  (the \b lives BEFORE the optional dot
+  // so the dot is consumed as part of the match — without it the
+  // period was left dangling as "Acme .").
   const trimmed = name
-    .replace(/\b(LLC|Inc\.?|Ltd\.?|Pty|GmbH|Corp\.?|Co\.?)\b/gi, "")
+    .replace(/\b(?:LLC|Inc|Ltd|Pty|GmbH|Corp|Co)\b\.?/gi, "")
     .replace(/\s+/g, " ")
     .trim();
   return trimmed ? `${trimmed} team` : "team";
