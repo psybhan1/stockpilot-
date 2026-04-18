@@ -1,4 +1,4 @@
-import { BaseUnit, InventoryCategory, MeasurementUnit, SupplierOrderingMode } from "@/lib/prisma";
+import { BaseUnit, InventoryCategory, MeasurementUnit, SupplierOrderingMode } from "../../../lib/domain-enums";
 
 // ── Category parsing ──────────────────────────────────────────────────────────
 
@@ -8,9 +8,10 @@ const CATEGORY_MAP: Array<[RegExp, InventoryCategory]> = [
   // land in SYRUP instead of ALT_DAIRY (coconut) or DAIRY (vanilla-cream).
   [/syrup|sauce|caramel|pump(?:kin)?\s+spice/i, InventoryCategory.SYRUP],
   [/(?:hazelnut|vanilla|caramel|coconut|almond|maple)\s+(?:syrup|sauce|flavou?r|shot)/i, InventoryCategory.SYRUP],
-  [/dairy|milk(?! alt)|cream|butter|cheese|yogurt/i, InventoryCategory.DAIRY],
-  // Alt-dairy — only matches when followed by milk/cream/yoghurt, so "coconut syrup" won't match here.
+  // Alt-dairy — MUST come before DAIRY, otherwise DAIRY's "milk|cream" swallows
+  // "oat milk", "soy cream", "almond milk" etc. before the alt-dairy rule sees them.
   [/(?:oat|almond|soy|coconut|cashew|rice|hemp)\s+(?:milk|cream|yogh?urt)|alt.?dairy|plant.?based|non.?dairy/i, InventoryCategory.ALT_DAIRY],
+  [/dairy|milk(?! alt)|cream|butter|cheese|yogurt/i, InventoryCategory.DAIRY],
   // Bakery / ingredient — nuts, seeds, grains treated as baking ingredients
   [/bakel?y|flour|sugar|egg|bread|muffin|pastry|ingredi|nut|seed|grain|hazelnut|walnut|almond\s+flour|pecan|cashew|pistachio/i, InventoryCategory.BAKERY_INGREDIENT],
   [/packag|cup|lid|straw|bag|box|wrap|foil|napkin|sleeve/i, InventoryCategory.PACKAGING],
@@ -102,8 +103,8 @@ export function parsePackSize(text: string, baseUnit: BaseUnit): PackSizeResult 
     return { packSizeBase: parseInt(caseMatch[1]), purchaseUnit: MeasurementUnit.CASE };
   }
 
-  // volume: NL / Nml
-  const literMatch = lower.match(/(\d+(?:\.\d+)?)\s*l(?:ite?r?)?(?:\s|s|$)/);
+  // volume: NL / Nml — accept "L", "liter(s)", "litre(s)" (British spelling)
+  const literMatch = lower.match(/(\d+(?:\.\d+)?)\s*l(?:it(?:er|re))?s?(?:\s|$)/);
   if (literMatch && baseUnit === BaseUnit.MILLILITER) {
     return { packSizeBase: Math.round(parseFloat(literMatch[1]) * 1000), purchaseUnit: MeasurementUnit.BOTTLE };
   }

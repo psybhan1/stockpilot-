@@ -84,3 +84,20 @@ export const SupplierOrderingMode = {
 
 export type SupplierOrderingMode =
   (typeof SupplierOrderingMode)[keyof typeof SupplierOrderingMode];
+
+export const InventoryCategory = {
+  COFFEE: "COFFEE",
+  DAIRY: "DAIRY",
+  ALT_DAIRY: "ALT_DAIRY",
+  SYRUP: "SYRUP",
+  BAKERY_INGREDIENT: "BAKERY_INGREDIENT",
+  PACKAGING: "PACKAGING",
+  CLEANING: "CLEANING",
+  PAPER_GOODS: "PAPER_GOODS",
+  RETAIL: "RETAIL",
+  SEASONAL: "SEASONAL",
+  SUPPLY: "SUPPLY",
+} as const;
+
+export type InventoryCategory =
+  (typeof InventoryCategory)[keyof typeof InventoryCategory];
