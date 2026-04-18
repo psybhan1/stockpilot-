@@ -9,28 +9,19 @@
  * + InventoryItem. Only webhook-backed lines (not Square's mapping
  * chain) show up here — Square sales already surface through the
  * Money Pulse + Running Low paths.
+ *
+ * The row-shaping logic lives in ./parsing so the edge cases
+ * (null rawData, whitespace-only names, missing integrationId)
+ * can be exercised without a DB.
  */
 
 import { db } from "@/lib/db";
+import {
+  buildRecentPosSaleRows,
+  type RecentPosSaleRow,
+} from "./parsing";
 
-export type RecentPosSale = {
-  id: string;
-  saleEventId: string;
-  provider: string;
-  occurredAt: Date;
-  externalProductId: string;
-  externalProductName: string | null;
-  quantity: number;
-  inventoryItemName: string | null;
-  inventoryDeltaBase: number | null;
-  inventoryDeltaUnit: string | null;
-  mapped: boolean;
-};
-
-type RawLineBlob = {
-  externalProductId?: unknown;
-  externalProductName?: unknown;
-};
+export type RecentPosSale = RecentPosSaleRow;
 
 export async function getRecentPosSales(
   locationId: string,
@@ -84,37 +75,5 @@ export async function getRecentPosSales(
     }),
   ]);
 
-  const mapByKey = new Map(
-    mappings.map((m) => [`${m.integrationId}:${m.externalProductId}`, m])
-  );
-
-  return lines.map((line) => {
-    const raw = (line.rawData ?? null) as RawLineBlob | null;
-    const externalProductId =
-      typeof raw?.externalProductId === "string"
-        ? raw.externalProductId.trim()
-        : "";
-    const externalProductName =
-      typeof raw?.externalProductName === "string" && raw.externalProductName.trim()
-        ? raw.externalProductName.trim()
-        : null;
-    const integrationId = line.saleEvent.integrationId ?? "";
-    const mapping = mapByKey.get(`${integrationId}:${externalProductId}`);
-
-    return {
-      id: line.id,
-      saleEventId: line.saleEvent.id,
-      provider: line.saleEvent.integration?.provider ?? "UNKNOWN",
-      occurredAt: line.saleEvent.occurredAt,
-      externalProductId,
-      externalProductName,
-      quantity: line.quantity,
-      inventoryItemName: mapping?.inventoryItem.name ?? null,
-      inventoryDeltaBase: mapping
-        ? mapping.quantityPerSaleBase * line.quantity
-        : null,
-      inventoryDeltaUnit: mapping?.inventoryItem.displayUnit ?? null,
-      mapped: Boolean(mapping),
-    };
-  });
+  return buildRecentPosSaleRows(lines, mappings);
 }

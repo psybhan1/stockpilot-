@@ -98,6 +98,8 @@
     "src/modules/automation/sites/amazon-errors.ts",
     "src/modules/automation/sites/amazon-errors.test.ts",
     "src/modules/automation/sites/age-gate.ts",
-    "src/modules/automation/sites/age-gate.test.ts"
+    "src/modules/automation/sites/age-gate.test.ts",
+    "src/modules/pos/parsing.ts",
+    "src/modules/pos/parsing.test.ts"
   ]
 }
