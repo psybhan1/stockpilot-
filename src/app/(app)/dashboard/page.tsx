@@ -32,21 +32,32 @@ import { getVarianceReport } from "@/modules/variance/report";
  */
 export default async function TodayPage() {
   const session = await requireSession(Role.STAFF);
-  const { getUnmappedPosProducts } = await import("@/modules/pos/unmapped");
-  const [data, analytics, margins, variance, moneyPulse, unmappedPosProducts] =
-    await Promise.all([
-      getDashboardData(session.locationId),
-      getAnalyticsOverview(session.locationId),
+  const [{ getUnmappedPosProducts }, { getRecentPosSales }] = await Promise.all([
+    import("@/modules/pos/unmapped"),
+    import("@/modules/pos/recent-activity"),
+  ]);
+  const [
+    data,
+    analytics,
+    margins,
+    variance,
+    moneyPulse,
+    unmappedPosProducts,
+    recentPosSales,
+  ] = await Promise.all([
+    getDashboardData(session.locationId),
+    getAnalyticsOverview(session.locationId),
     // Margin + variance surface on the landing so managers see money
     // issues without having to know the page exists. Both are fast
     // single-query joins, so adding them to the dashboard load is ~
     // a few ms each. .catch to null keeps the dashboard resilient if
     // either query throws (e.g. a location with no recipes yet).
-      getMarginDashboard(session.locationId).catch(() => []),
-      getVarianceReport(session.locationId, { days: 7 }).catch(() => null),
-      getMoneyPulse(session.locationId).catch(() => null),
-      getUnmappedPosProducts(session.locationId).catch(() => []),
-    ]);
+    getMarginDashboard(session.locationId).catch(() => []),
+    getVarianceReport(session.locationId, { days: 7 }).catch(() => null),
+    getMoneyPulse(session.locationId).catch(() => null),
+    getUnmappedPosProducts(session.locationId).catch(() => []),
+    getRecentPosSales(session.locationId, 6).catch(() => []),
+  ]);
   const firstName = session.userName.split(" ")[0];
   const topSuppliers = analytics.topSuppliers.slice(0, 3);
 
@@ -291,6 +302,63 @@ export default async function TodayPage() {
           </div>
           <span className="font-mono text-xs">map →</span>
         </Link>
+      ) : null}
+
+      {/* Recent POS sales — live activity from the generic webhook
+          path so the owner visibly sees their POS is firing. Silent
+          failure mode (connected but nothing coming through) becomes
+          immediately obvious by the absence of this card. */}
+      {recentPosSales.length > 0 ? (
+        <section className="notif-card p-5 sm:p-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Recent POS sales · last 7 days
+              </p>
+              <p className="mt-1 text-lg font-semibold leading-tight">
+                {recentPosSales.length} sale
+                {recentPosSales.length === 1 ? "" : "s"} flowing in
+              </p>
+            </div>
+            <Link
+              href="/pos-mapping"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-border/60 bg-background/50 px-3 py-2 text-xs font-semibold"
+            >
+              <span className="text-muted-foreground">Manage mappings</span>
+              <ArrowRight className="size-3 text-muted-foreground" />
+            </Link>
+          </div>
+          <ul className="mt-4 divide-y divide-border/40">
+            {recentPosSales.map((sale) => (
+              <li
+                key={sale.id}
+                className="flex items-center justify-between gap-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {sale.externalProductName ?? sale.externalProductId}{" "}
+                    <span className="font-mono text-xs text-muted-foreground">
+                      ×{sale.quantity}
+                    </span>
+                  </p>
+                  <p className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                    {sale.provider} · {sale.occurredAt.toLocaleString()}
+                  </p>
+                </div>
+                {sale.mapped ? (
+                  <span className="shrink-0 font-mono text-[10px] text-emerald-700 dark:text-emerald-300">
+                    −{sale.inventoryDeltaBase}{" "}
+                    {sale.inventoryDeltaUnit?.toLowerCase()} · {sale.inventoryItemName}
+                  </span>
+                ) : (
+                  <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-900 dark:text-amber-200">
+                    UNMAPPED
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       {/* ── Money pulse ─────────────────────────────────────────────
