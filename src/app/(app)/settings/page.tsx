@@ -161,9 +161,12 @@ export default async function SettingsPage({
                 : "border-border/50 bg-muted/30 text-muted-foreground"
           }`}
         >
-          {channelBanner.type === "connected" && `${channelBanner.channel} connected successfully.`}
-          {channelBanner.type === "disconnected" && `${channelBanner.channel} disconnected.`}
-          {channelBanner.type === "error" && (channelBanner.detail || "Connection failed.")}
+          {channelBanner.type === "connected" &&
+            (channelBanner.detail || `${channelBanner.channel} connected successfully.`)}
+          {channelBanner.type === "disconnected" &&
+            (channelBanner.detail || `${channelBanner.channel} disconnected.`)}
+          {channelBanner.type === "error" &&
+            (channelBanner.detail || "Connection failed.")}
         </div>
       )}
 
@@ -394,21 +397,45 @@ export default async function SettingsPage({
                         </Link>
                         .
                       </p>
-                      <form action={sendTestPosSaleAction} className="pt-1">
-                        <input
-                          type="hidden"
-                          name="integrationId"
-                          value={row.id}
-                        />
-                        <Button
-                          type="submit"
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-[10px]"
-                        >
-                          Send test sale
-                        </Button>
-                      </form>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <form action={sendTestPosSaleAction}>
+                          <input
+                            type="hidden"
+                            name="integrationId"
+                            value={row.id}
+                          />
+                          <Button
+                            type="submit"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[10px]"
+                          >
+                            Send test sale
+                          </Button>
+                        </form>
+                        {(() => {
+                          const zapierUrl =
+                            provider === "TOAST"
+                              ? "https://zapier.com/apps/toast/integrations/webhook"
+                              : provider === "CLOVER"
+                                ? "https://zapier.com/apps/clover/integrations/webhook"
+                                : provider === "LIGHTSPEED"
+                                  ? "https://zapier.com/apps/lightspeed-retail/integrations/webhook"
+                                  : provider === "SHOPIFY"
+                                    ? "https://zapier.com/apps/shopify/integrations/webhook"
+                                    : "https://zapier.com/app-directory";
+                          return (
+                            <a
+                              href={zapierUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex h-7 items-center rounded-md border border-border/50 bg-background/50 px-2 text-[10px] font-medium hover:bg-muted"
+                            >
+                              Open Zapier →
+                            </a>
+                          );
+                        })()}
+                      </div>
                     </div>
                   );
                 })}
