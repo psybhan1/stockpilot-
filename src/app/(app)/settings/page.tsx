@@ -240,27 +240,69 @@ export default async function SettingsPage({
         </BrandCard>
 
         {!gmailConnected && !tenantResendConnected ? (
-          <details className="rounded-xl border border-border/50 bg-card/60 px-5 py-3 text-sm">
-            <summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">
-              Advanced · skip the tap — auto-send orders in the background
-            </summary>
-            <div className="mt-3 space-y-4 text-muted-foreground">
-              <p>
-                By default the bot hands you a tap-to-send button in Telegram
-                — your own mail app opens with the order filled in and the
-                supplier sees a personal email from your address. Zero setup.
+          <div className="rounded-xl border border-border/50 bg-card/60 p-5 space-y-4">
+            <div>
+              <p className="text-sm font-semibold">One-click Gmail connect</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Sign in once with Google and every future PO sends from your
+                own Gmail automatically — no tapping, no paste forms, no
+                supplier-side branding. We only request{" "}
+                <code>gmail.send</code> — we never read your mailbox.
               </p>
-              <p>
-                If you&apos;d rather have StockPilot send orders automatically
-                so you don&apos;t have to tap anything, paste a Resend API key
-                below — free at 100 emails/day, 30 seconds to set up.
+            </div>
+            <a href="/api/auth/google/gmail" className="inline-block">
+              <Button
+                size="sm"
+                className="h-10 gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs shadow-sm"
+              >
+                <GoogleLogo size={16} />
+                Connect Gmail
+              </Button>
+            </a>
+
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">
+              <p className="font-semibold text-amber-900 dark:text-amber-200">
+                If the button shows &ldquo;Access blocked: has not completed
+                the Google verification process&rdquo;, the app owner needs
+                to publish the OAuth consent screen — one click, 30 seconds:
               </p>
+              <ol className="mt-2 list-decimal space-y-1 pl-5 text-amber-900/90 dark:text-amber-100/90">
+                <li>
+                  Open{" "}
+                  <a
+                    href="https://console.cloud.google.com/apis/credentials/consent"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline font-medium"
+                  >
+                    console.cloud.google.com/apis/credentials/consent
+                  </a>
+                  .
+                </li>
+                <li>
+                  Under &ldquo;Publishing status&rdquo; click{" "}
+                  <span className="font-medium">Publish app</span> → confirm.
+                </li>
+                <li>
+                  Done. Any user can connect Gmail in one click — Google will
+                  show a small &ldquo;unverified app&rdquo; screen until
+                  Google&apos;s standard review clears it (1–2 weeks, free),
+                  but <em>Advanced → Go to StockPilot</em> already works right
+                  now.
+                </li>
+              </ol>
+            </div>
+
+            <details className="pt-2">
+              <summary className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground">
+                Alternative · auto-send via Resend (no Google OAuth needed)
+              </summary>
               <form
                 action={connectResendEmailChannelAction}
-                className="rounded-lg border border-border/50 bg-card/50 p-4 space-y-3"
+                className="mt-3 rounded-lg border border-border/50 bg-card/50 p-4 space-y-3 text-sm text-muted-foreground"
               >
                 <p className="text-[11px]">
-                  Create a key at{" "}
+                  Free at 100 emails/day. Create a key at{" "}
                   <a
                     href="https://resend.com/api-keys"
                     target="_blank"
@@ -296,8 +338,8 @@ export default async function SettingsPage({
                   </Button>
                 </div>
               </form>
-            </div>
-          </details>
+            </details>
+          </div>
         ) : null}
       </Section>
 
