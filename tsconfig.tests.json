@@ -61,6 +61,8 @@
     "src/lib/extension-cors.ts",
     "src/lib/extension-cors.test.ts",
     "src/lib/env.ts",
+    "src/lib/stripe-plans.ts",
+    "src/lib/stripe-plans.test.ts",
     "src/lib/permissions.ts",
     "src/lib/permissions.test.ts",
     "src/lib/domain-enums.ts",

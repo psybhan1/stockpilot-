@@ -102,16 +102,25 @@ export function planHasFeature(
 
 /**
  * Resolves the Stripe price ID for a given plan from env. Returns null
- * if the env var isn't set (i.e. Stripe hasn't been configured yet —
- * surface this as a "set up billing" CTA instead of a 500).
+ * if the env var isn't set OR is blank (i.e. Stripe hasn't been
+ * configured yet — surface this as a "set up billing" CTA instead of
+ * a 500). Treating empty / whitespace-only values as "not set" guards
+ * against a deploy where the var was pushed blank: Stripe checkout
+ * would otherwise 400 with "Invalid price ID" at the moment a user
+ * clicks upgrade.
  */
 export function stripePriceIdForPlan(plan: PlanKey): string | null {
-  return process.env[PLANS[plan].stripePriceEnvVar] ?? null;
+  const raw = process.env[PLANS[plan].stripePriceEnvVar];
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed : null;
 }
 
 export function isStripeConfigured(): boolean {
+  // Same "blank = not set" rule as stripePriceIdForPlan — an env var
+  // pushed as "" or "   " should not trick us into thinking Stripe is
+  // wired up.
   return (
-    !!process.env.STRIPE_SECRET_KEY &&
-    !!process.env.STRIPE_WEBHOOK_SECRET
+    !!process.env.STRIPE_SECRET_KEY?.trim() &&
+    !!process.env.STRIPE_WEBHOOK_SECRET?.trim()
   );
 }
