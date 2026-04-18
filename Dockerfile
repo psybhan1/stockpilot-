@@ -11,7 +11,7 @@ COPY package.json package-lock.json ./
 RUN npm install --legacy-peer-deps --ignore-scripts && \
     npm rebuild better-sqlite3 --ignore-scripts=false
 
-# Cache bust 2026-04-12-v5 - Frame.io animations, blobs, gradient cards
+# Cache bust 2026-04-18-v6 - Square OAuth authorize URL (connect.) fix
 COPY . .
 
 # Generate both Prisma clients (sqlite client needed at compile time for type imports)
