@@ -21,7 +21,7 @@ import {
   decryptCredential,
   encryptCredential,
   isEncrypted,
-} from "@/lib/credential-encryption";
+} from "../../lib/credential-encryption";
 
 export type SupplierWebsiteCookie = {
   name: string;

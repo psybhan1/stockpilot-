@@ -80,6 +80,10 @@
     "src/modules/inventory/image-resolver.ts",
     "src/modules/inventory/image-resolver.test.ts",
     "src/modules/purchasing/reply-address.ts",
-    "src/modules/purchasing/reply-address.test.ts"
+    "src/modules/purchasing/reply-address.test.ts",
+    "src/modules/suppliers/extension-cookies.ts",
+    "src/modules/suppliers/extension-cookies.test.ts",
+    "src/modules/suppliers/website-credentials.ts",
+    "src/modules/suppliers/website-credentials.test.ts"
   ]
 }
