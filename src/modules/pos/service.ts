@@ -24,11 +24,19 @@ function getSquareCallbackUrl() {
 }
 
 function getStoredAccessToken(accessTokenEncrypted?: string | null) {
+  // When SQUARE_ACCESS_TOKEN is set in the env, we're in PAT mode —
+  // the env value is authoritative and lets an admin rotate the token
+  // by editing the env var alone (no DB cleanup needed). Only fall
+  // back to the DB-stored token for OAuth mode, where env has no
+  // token and each tenant's per-merchant token lives in the DB.
+  if (env.SQUARE_ACCESS_TOKEN) {
+    return env.SQUARE_ACCESS_TOKEN;
+  }
   if (accessTokenEncrypted) {
     return decryptSecret(accessTokenEncrypted);
   }
 
-  return env.SQUARE_ACCESS_TOKEN ?? null;
+  return null;
 }
 
 export async function ensureSquareIntegration(locationId: string, userId: string) {
