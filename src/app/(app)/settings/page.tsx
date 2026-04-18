@@ -18,6 +18,7 @@ import {
 import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/ui/copy-button";
 import { Role } from "@/lib/domain-enums";
 import { env } from "@/lib/env";
 import { formatDateTime } from "@/lib/format";
@@ -85,6 +86,20 @@ export default async function SettingsPage({
   // never misses the work their POS has queued for them.
   const { getUnmappedPosProducts } = await import("@/modules/pos/unmapped");
   const unmappedPosProducts = await getUnmappedPosProducts(session.locationId);
+
+  // Live Square token health — 3s timeout so Settings never hangs.
+  // Surfaces on the Square row so "Connected but token's dead" is
+  // visible; without this the row stays a happy green even as every
+  // actual sync 401s.
+  const { checkSquareHealth } = await import("@/modules/pos/health");
+  const squareHealth = await checkSquareHealth(session.locationId).catch(
+    () =>
+      ({
+        status: "unreachable" as const,
+        reason: "health-check failed",
+        checkedAt: new Date(),
+      })
+  );
 
   const [locationChannels, currentManager, locationSettings] = await Promise.all([
     getLocationChannels(session.locationId),
@@ -273,15 +288,33 @@ export default async function SettingsPage({
             if (sqStatus !== "CONNECTED") {
               return "One-click OAuth — catalog syncs, sales auto-deplete inventory.";
             }
+            if (squareHealth.status === "token_dead") {
+              return `Token rejected by Square (HTTP ${squareHealth.httpStatus}). Click Reconnect to re-auth.`;
+            }
+            if (squareHealth.status === "unreachable") {
+              return `Couldn't reach Square's API (${squareHealth.reason}). Try again in a minute.`;
+            }
             const count =
               salesByIntegration[posByProvider.SQUARE?.id ?? ""] ?? 0;
             return count > 0
-              ? `Connected — ${count} sale${count === 1 ? "" : "s"} processed this week.`
-              : "Connected — waiting for your first sale (or run 'Import sample sale').";
+              ? `Token live — ${count} sale${count === 1 ? "" : "s"} processed this week.`
+              : "Token live — waiting for your first sale (or run 'Import sample sale').";
           })()}
-          status={posByProvider.SQUARE?.status ?? "Not connected"}
+          status={
+            posByProvider.SQUARE?.status !== "CONNECTED"
+              ? "Not connected"
+              : squareHealth.status === "healthy"
+                ? "Live"
+                : squareHealth.status === "token_dead"
+                  ? "Reconnect needed"
+                  : "Checking…"
+          }
           statusTone={
-            posByProvider.SQUARE?.status === "CONNECTED" ? "success" : "info"
+            posByProvider.SQUARE?.status !== "CONNECTED"
+              ? "info"
+              : squareHealth.status === "healthy"
+                ? "success"
+                : "warning"
           }
         >
           <form action={connectSquareAction}>
@@ -333,6 +366,12 @@ export default async function SettingsPage({
                   with the same end result: real sales land on your
                   dashboard, inventory depletes automatically.
                 </p>
+                <Link
+                  href="/docs/pos-quickstart"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground hover:underline"
+                >
+                  Step-by-step Zapier walkthrough →
+                </Link>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {otherProviders.map((provider) => {
                     const row = posByProvider[provider];
@@ -381,12 +420,21 @@ export default async function SettingsPage({
                       <p className="font-semibold text-foreground">
                         {provider.replace("_", " ")} webhook
                       </p>
-                      <code className="block break-all rounded bg-muted/70 px-2 py-1 font-mono text-[10px]">
-                        {webhookBaseUrl}
-                      </code>
-                      <code className="block break-all rounded bg-muted/70 px-2 py-1 font-mono text-[10px]">
-                        Bearer {storedSecret}
-                      </code>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 break-all rounded bg-muted/70 px-2 py-1 font-mono text-[10px]">
+                          {webhookBaseUrl}
+                        </code>
+                        <CopyButton value={webhookBaseUrl} label="URL" />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 break-all rounded bg-muted/70 px-2 py-1 font-mono text-[10px]">
+                          Bearer {storedSecret}
+                        </code>
+                        <CopyButton
+                          value={`Bearer ${storedSecret}`}
+                          label="Header"
+                        />
+                      </div>
                       <p className="text-[10px]">
                         Zapier trigger → <em>Webhooks by Zapier → POST</em>.
                         JSON body with <code>lineItems[]</code> ·
