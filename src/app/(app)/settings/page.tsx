@@ -9,6 +9,7 @@ import {
   disconnectEmailChannelAction,
   rotatePosWebhookSecretAction,
   runJobsAction,
+  sendTestEmailAction,
   sendTestPosSaleAction,
   startTelegramBotConnectAction,
   startWhatsAppBotConnectAction,
@@ -552,21 +553,33 @@ export default async function SettingsPage({
           }
         >
           {gmailConnected || tenantResendConnected ? (
-            <form action={disconnectEmailChannelAction}>
-              <input
-                type="hidden"
-                name="provider"
-                value={locationChannels.email!.provider}
-              />
-              <Button
-                type="submit"
-                variant="ghost"
-                size="sm"
-                className="h-9 text-xs text-muted-foreground"
-              >
-                Disconnect
-              </Button>
-            </form>
+            <div className="flex items-center gap-2">
+              <form action={sendTestEmailAction}>
+                <Button
+                  type="submit"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 text-xs"
+                >
+                  Send test
+                </Button>
+              </form>
+              <form action={disconnectEmailChannelAction}>
+                <input
+                  type="hidden"
+                  name="provider"
+                  value={locationChannels.email!.provider}
+                />
+                <Button
+                  type="submit"
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 text-xs text-muted-foreground"
+                >
+                  Disconnect
+                </Button>
+              </form>
+            </div>
           ) : (
             <a href="/api/auth/google/gmail">
               <Button

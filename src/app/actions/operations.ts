@@ -347,6 +347,68 @@ export async function saveSimpleMappingAction(formData: FormData) {
 }
 
 /**
+ * Send a short "StockPilot test email" to the admin's own email
+ * using whichever outbound provider is configured. Zero-setup
+ * tenants get the mailto fallback (opens their own mail client).
+ * Gmail-connected tenants send via Gmail. Resend-connected tenants
+ * send via Resend. Tells the admin immediately whether their
+ * outbound pipeline is actually live, instead of them having to
+ * create a real PO to find out.
+ */
+export async function sendTestEmailAction() {
+  const session = await requireSession(Role.MANAGER);
+
+  const user = await db.user.findUniqueOrThrow({
+    where: { id: session.userId },
+    select: { email: true, name: true },
+  });
+
+  const { getSupplierOrderProviderForLocation, describeSupplierOrderProvider } =
+    await import("@/providers/supplier-order-provider");
+  const provider = await getSupplierOrderProviderForLocation(session.locationId);
+  const describe = await describeSupplierOrderProvider(session.locationId);
+
+  try {
+    const result = await provider.sendApprovedOrder({
+      recipient: user.email,
+      subject: "StockPilot · test email",
+      body:
+        `Hi ${user.name.split(" ")[0] ?? "there"},\n\n` +
+        `This is a test email from StockPilot sent through your configured provider ` +
+        `(${describe.name}). If you're reading this, your outbound email pipeline works end-to-end ` +
+        `— real purchase orders will go out the same way.\n\n` +
+        `— StockPilot`,
+    });
+
+    if (result.simulated && result.mailto) {
+      // Zero-config tap-to-send path: we can't silently self-send;
+      // surface the mailto: in the banner so the admin can still
+      // verify by tapping it.
+      redirect(
+        `/settings?channelConnect=connected&channelType=email&channelDetail=${encodeURIComponent(
+          "Tap-to-send path confirmed. To really verify, open your phone's mail app via any Telegram PO — that path does open the mailto: automatically."
+        )}`
+      );
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("NEXT_REDIRECT")) throw err;
+    redirect(
+      `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+        `Test email failed via ${describe.name}: ${message.slice(0, 200)}`
+      )}`
+    );
+  }
+
+  revalidateOperations();
+  redirect(
+    `/settings?channelConnect=connected&channelType=email&channelDetail=${encodeURIComponent(
+      `Test email sent via ${describe.name} to ${user.email}. Check your inbox.`
+    )}`
+  );
+}
+
+/**
  * Fires a synthetic test sale against our own /api/pos/webhook for
  * a specific integration, using the stored secret. Lets the admin
  * verify the webhook is wired end-to-end (alert → unmapped → mapping
