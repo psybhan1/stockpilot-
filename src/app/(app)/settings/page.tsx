@@ -9,6 +9,7 @@ import {
   disconnectEmailChannelAction,
   rotatePosWebhookSecretAction,
   runJobsAction,
+  sendTestPosSaleAction,
   startTelegramBotConnectAction,
   startWhatsAppBotConnectAction,
   syncSalesAction,
@@ -64,6 +65,26 @@ export default async function SettingsPage({
   const posByProvider = Object.fromEntries(
     posIntegrations.map((p) => [p.provider, p])
   );
+
+  // Per-integration "sales received" counts over the last 7 days so
+  // the Settings UI can show a live health indicator next to each
+  // POS row — a Zapier bridge that says "Connected" but hasn't
+  // received anything is silently broken, and this tells the user.
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const recentSaleCounts = await db.posSaleEvent.groupBy({
+    by: ["integrationId"],
+    where: { locationId: session.locationId, occurredAt: { gte: sevenDaysAgo } },
+    _count: { _all: true },
+  });
+  const salesByIntegration = Object.fromEntries(
+    recentSaleCounts.map((r) => [r.integrationId ?? "", r._count._all])
+  );
+
+  // Headline nudge: any unmapped webhook products waiting for a
+  // mapping. Shows up once near the top of Settings so the user
+  // never misses the work their POS has queued for them.
+  const { getUnmappedPosProducts } = await import("@/modules/pos/unmapped");
+  const unmappedPosProducts = await getUnmappedPosProducts(session.locationId);
 
   const [locationChannels, currentManager, locationSettings] = await Promise.all([
     getLocationChannels(session.locationId),
@@ -164,6 +185,28 @@ export default async function SettingsPage({
         </div>
       )}
 
+      {/* Unmapped-POS nudge — only renders when the webhook has
+          queued products waiting for a mapping. Makes that work
+          impossible to miss and is a click away from /pos-mapping. */}
+      {unmappedPosProducts.length > 0 ? (
+        <Link
+          href="/pos-mapping"
+          className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm hover:bg-amber-500/10"
+        >
+          <div>
+            <p className="font-medium text-amber-900 dark:text-amber-200">
+              {unmappedPosProducts.length} POS product
+              {unmappedPosProducts.length === 1 ? "" : "s"} need mapping
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Your POS is sending sales for SKUs we can&apos;t yet deplete —
+              one-click wire each in /pos-mapping.
+            </p>
+          </div>
+          <span className="font-mono text-xs">→ map now</span>
+        </Link>
+      ) : null}
+
       {/* ─── POS Integration ─── */}
       <Section
         title="POS"
@@ -178,11 +221,17 @@ export default async function SettingsPage({
         <BrandCard
           logo={<SquareLogo />}
           name="Square"
-          tagline={
-            posByProvider.SQUARE?.status === "CONNECTED"
-              ? "Connected — catalog synced, sales auto-depleting."
-              : "One-click OAuth — catalog syncs, sales auto-deplete inventory."
-          }
+          tagline={(() => {
+            const sqStatus = posByProvider.SQUARE?.status;
+            if (sqStatus !== "CONNECTED") {
+              return "One-click OAuth — catalog syncs, sales auto-deplete inventory.";
+            }
+            const count =
+              salesByIntegration[posByProvider.SQUARE?.id ?? ""] ?? 0;
+            return count > 0
+              ? `Connected — ${count} sale${count === 1 ? "" : "s"} processed this week.`
+              : "Connected — waiting for your first sale (or run 'Import sample sale').";
+          })()}
           status={posByProvider.SQUARE?.status ?? "Not connected"}
           statusTone={
             posByProvider.SQUARE?.status === "CONNECTED" ? "success" : "info"
@@ -301,6 +350,21 @@ export default async function SettingsPage({
                         </Link>
                         .
                       </p>
+                      <form action={sendTestPosSaleAction} className="pt-1">
+                        <input
+                          type="hidden"
+                          name="integrationId"
+                          value={row.id}
+                        />
+                        <Button
+                          type="submit"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-[10px]"
+                        >
+                          Send test sale
+                        </Button>
+                      </form>
                     </div>
                   );
                 })}

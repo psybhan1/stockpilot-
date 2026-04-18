@@ -177,6 +177,188 @@ export async function connectGenericPosAction(formData: FormData) {
 }
 
 /**
+ * Wires an external POS product id to an inventory item. Used from
+ * /pos-mapping's "Unmapped POS products" section: admin sees every
+ * product id the webhook has received sales for, picks an inventory
+ * item from a dropdown + qty per sale, hits Save. Future webhook
+ * sales for that external product auto-deplete.
+ *
+ * Tenant-scoped: we verify both the integration and the inventory
+ * item belong to the caller's location before writing.
+ */
+export async function saveSimpleMappingAction(formData: FormData) {
+  const session = await requireSession(Role.SUPERVISOR);
+  const integrationId = (readStringValue(formData, "integrationId") ?? "").trim();
+  const externalProductId = (
+    readStringValue(formData, "externalProductId") ?? ""
+  ).trim();
+  const externalProductName = readNullableStringValue(
+    formData,
+    "externalProductName"
+  );
+  const inventoryItemId = (readStringValue(formData, "inventoryItemId") ?? "").trim();
+  const quantityPerSaleBase = Math.max(
+    1,
+    readIntegerValue(formData, "quantityPerSaleBase", 1)
+  );
+
+  if (!integrationId || !externalProductId || !inventoryItemId) {
+    redirect(
+      `/pos-mapping?channelConnect=error&channelDetail=${encodeURIComponent(
+        "Missing integration, external product, or inventory item."
+      )}`
+    );
+  }
+
+  const [integration, inventoryItem] = await Promise.all([
+    db.posIntegration.findFirst({
+      where: { id: integrationId, locationId: session.locationId },
+      select: { id: true },
+    }),
+    db.inventoryItem.findFirst({
+      where: { id: inventoryItemId, locationId: session.locationId },
+      select: { id: true, name: true },
+    }),
+  ]);
+  if (!integration || !inventoryItem) {
+    redirect(
+      `/pos-mapping?channelConnect=error&channelDetail=${encodeURIComponent(
+        "Integration or inventory item belongs to another location."
+      )}`
+    );
+  }
+
+  await db.posSimpleMapping.upsert({
+    where: {
+      integrationId_externalProductId: {
+        integrationId,
+        externalProductId,
+      },
+    },
+    update: {
+      inventoryItemId,
+      quantityPerSaleBase,
+      externalProductName: externalProductName ?? undefined,
+    },
+    create: {
+      locationId: session.locationId,
+      integrationId,
+      externalProductId,
+      externalProductName: externalProductName ?? null,
+      inventoryItemId,
+      quantityPerSaleBase,
+    },
+  });
+
+  // Resolve the alert if one was open for this product so it doesn't
+  // keep nagging the owner.
+  await db.alert.updateMany({
+    where: {
+      locationId: session.locationId,
+      id: `pos-unmapped-${integrationId}-${externalProductId}`,
+    },
+    data: { status: "RESOLVED", resolvedAt: new Date() },
+  });
+
+  await db.auditLog.create({
+    data: {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "pos.simple_mapping_saved",
+      entityType: "posSimpleMapping",
+      entityId: `${integrationId}:${externalProductId}`,
+      details: {
+        externalProductId,
+        externalProductName,
+        inventoryItemId,
+        quantityPerSaleBase,
+      },
+    },
+  });
+
+  revalidateOperations();
+  redirect("/pos-mapping");
+}
+
+/**
+ * Fires a synthetic test sale against our own /api/pos/webhook for
+ * a specific integration, using the stored secret. Lets the admin
+ * verify the webhook is wired end-to-end (alert → unmapped → mapping
+ * → deplete) *before* they go configure Zapier. Result is surfaced
+ * via the channelConnect banner.
+ */
+export async function sendTestPosSaleAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const integrationId = (readStringValue(formData, "integrationId") ?? "").trim();
+  if (!integrationId) return;
+
+  const integration = await db.posIntegration.findFirst({
+    where: { id: integrationId, locationId: session.locationId },
+    select: { id: true, provider: true, settings: true },
+  });
+  if (!integration) return;
+
+  const storedSecret =
+    integration.settings && typeof integration.settings === "object"
+      ? (integration.settings as Record<string, unknown>).webhookSecret
+      : null;
+  if (typeof storedSecret !== "string") {
+    redirect(
+      `/settings?channelConnect=error&channelType=pos&channelDetail=${encodeURIComponent(
+        "No webhook secret stored — click Connect first."
+      )}`
+    );
+  }
+
+  const appUrl = env.APP_URL?.replace(/\/$/, "") ?? "";
+  try {
+    const res = await fetch(`${appUrl}/api/pos/webhook`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${storedSecret}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        externalOrderId: `test-${Date.now()}`,
+        occurredAt: new Date().toISOString(),
+        lineItems: [
+          {
+            externalProductId: "stockpilot-test-product",
+            externalProductName: "StockPilot test sale",
+            quantity: 1,
+            unitPriceCents: 100,
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      redirect(
+        `/settings?channelConnect=error&channelType=pos&channelDetail=${encodeURIComponent(
+          `Test webhook failed: ${res.status}. ${msg.slice(0, 200)}`
+        )}`
+      );
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("NEXT_REDIRECT")) throw err;
+    redirect(
+      `/settings?channelConnect=error&channelType=pos&channelDetail=${encodeURIComponent(
+        `Test webhook couldn't reach itself: ${message.slice(0, 200)}`
+      )}`
+    );
+  }
+
+  revalidateOperations();
+  redirect(
+    `/settings?channelConnect=connected&channelType=pos&channelDetail=${encodeURIComponent(
+      "Test sale accepted — check /pos-mapping for the new 'StockPilot test sale' unmapped product."
+    )}`
+  );
+}
+
+/**
  * Rotates the webhook secret for a non-Square POS integration. Used
  * when a key leaks or a tenant wants to reissue. Old secret stops
  * working immediately.
