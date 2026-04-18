@@ -185,6 +185,50 @@ export default async function SettingsPage({
         </div>
       )}
 
+      {/* Integration health strip — at-a-glance view of every wire
+          connecting the app to the outside world. A connected chip
+          that hasn't fired anything lately is the worst kind of
+          silent failure; this strip surfaces that by showing a live
+          activity stat beside each channel. */}
+      <section className="grid gap-2 rounded-2xl border border-border/50 bg-card/60 p-4 sm:grid-cols-2 md:grid-cols-4">
+        <HealthChip
+          label="Square"
+          connected={posByProvider.SQUARE?.status === "CONNECTED"}
+          activity={(() => {
+            const c =
+              salesByIntegration[posByProvider.SQUARE?.id ?? ""] ?? 0;
+            return c > 0 ? `${c} sale${c === 1 ? "" : "s"} · 7d` : "no sales";
+          })()}
+        />
+        <HealthChip
+          label="Telegram"
+          connected={Boolean(currentManager.telegramChatId)}
+          activity={
+            currentManager.telegramUsername
+              ? currentManager.telegramUsername
+              : currentManager.telegramChatId
+                ? "paired"
+                : "not paired"
+          }
+        />
+        <HealthChip
+          label="WhatsApp"
+          connected={Boolean(currentManager.phoneNumber)}
+          activity={currentManager.phoneNumber ?? "not paired"}
+        />
+        <HealthChip
+          label="Email"
+          connected={emailProvider.name !== "console"}
+          activity={
+            emailProvider.name === "gmail"
+              ? "gmail auto-send"
+              : emailProvider.name === "resend"
+                ? "resend auto-send"
+                : "tap-to-send"
+          }
+        />
+      </section>
+
       {/* Unmapped-POS nudge — only renders when the webhook has
           queued products waiting for a mapping. Makes that work
           impossible to miss and is a click away from /pos-mapping. */}
@@ -597,6 +641,39 @@ export default async function SettingsPage({
 }
 
 /* ─── Layout helpers ─── */
+
+function HealthChip({
+  label,
+  connected,
+  activity,
+}: {
+  label: string;
+  connected: boolean;
+  activity: string;
+}) {
+  return (
+    <div
+      className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 ${
+        connected
+          ? "border-emerald-500/20 bg-emerald-500/5"
+          : "border-border/50 bg-background/30"
+      }`}
+    >
+      <div className="min-w-0">
+        <p className="text-xs font-semibold">{label}</p>
+        <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+          {activity}
+        </p>
+      </div>
+      <span
+        className={`size-2 shrink-0 rounded-full ${
+          connected ? "bg-emerald-500" : "bg-muted-foreground/40"
+        }`}
+        aria-hidden
+      />
+    </div>
+  );
+}
 
 function Section({
   title,

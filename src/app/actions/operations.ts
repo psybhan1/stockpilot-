@@ -250,6 +250,72 @@ export async function saveSimpleMappingAction(formData: FormData) {
     },
   });
 
+  // Backfill: replay every past webhook sale line for this product
+  // that came in before the mapping was saved. Otherwise "I sold 25
+  // lattes before I got around to mapping it" silently eats the
+  // depletion. Dedup by external line id via postStockMovementTx's
+  // sourceId — any lines that already depleted through a different
+  // path (shouldn't happen, but belt + braces) get a no-op.
+  const pastLines = await db.posSaleLine.findMany({
+    where: {
+      saleEvent: {
+        locationId: session.locationId,
+        integrationId,
+      },
+      // Filter on the JSON column by rawData.externalProductId. Prisma
+      // supports this via the path syntax on Postgres JSON fields.
+      rawData: {
+        path: ["externalProductId"],
+        equals: externalProductId,
+      },
+    },
+    select: {
+      id: true,
+      externalLineId: true,
+      quantity: true,
+      saleEventId: true,
+      saleEvent: { select: { id: true, occurredAt: true } },
+    },
+  });
+
+  // Dedup against movements we already posted for these lines so
+  // hitting Save twice doesn't double-deplete.
+  const alreadyPosted = await db.stockMovement.findMany({
+    where: {
+      locationId: session.locationId,
+      movementType: MovementType.POS_DEPLETION,
+      sourceType: "pos_webhook",
+      sourceId: { in: pastLines.map((l) => l.externalLineId) },
+    },
+    select: { sourceId: true },
+  });
+  const postedLineIds = new Set(alreadyPosted.map((m) => m.sourceId));
+
+  let backfilled = 0;
+  for (const line of pastLines) {
+    if (postedLineIds.has(line.externalLineId)) continue;
+    await db.$transaction(async (tx) => {
+      const { postStockMovementTx } = await import(
+        "@/modules/inventory/ledger"
+      );
+      await postStockMovementTx(tx, {
+        locationId: session.locationId,
+        inventoryItemId,
+        quantityDeltaBase: -1 * quantityPerSaleBase * line.quantity,
+        movementType: MovementType.POS_DEPLETION,
+        sourceType: "pos_webhook",
+        sourceId: line.externalLineId,
+        metadata: {
+          saleEventId: line.saleEventId,
+          externalProductId,
+          externalProductName,
+          backfilled: true,
+        },
+      });
+    });
+    backfilled += 1;
+  }
+
   // Resolve the alert if one was open for this product so it doesn't
   // keep nagging the owner.
   await db.alert.updateMany({
