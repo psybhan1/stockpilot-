@@ -163,6 +163,17 @@ export async function signupAction(
         role: "MANAGER",
       },
     });
+
+    // Seed a typical café starter pack (~16 items) so the new user
+    // lands on a dashboard that already has data flowing through it.
+    // Blank tables are the #1 reason a first-time user bounces; this
+    // gets them from "logged in" to "adjusting real stock levels" in
+    // one step. Items they don't need are a tap to delete.
+    const { seedStarterPackTx } = await import(
+      "@/modules/onboarding/starter-pack"
+    );
+    await seedStarterPackTx(tx, location.id);
+
     return created;
   });
 

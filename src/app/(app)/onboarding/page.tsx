@@ -33,46 +33,46 @@ export default async function OnboardingPage() {
 
   const steps = [
     {
-      key: "gmail",
-      title: "Connect Gmail",
-      detail:
-        "Your café's orders go out from your own Gmail. Suppliers see a normal email, and replies land in your real inbox. Free forever — uses your Google account's quota, not ours.",
-      done: !!gmailChannel,
-      href: "/settings",
-      cta: gmailChannel ? "Connected" : "Connect with Google",
-    },
-    {
       key: "telegram",
-      title: "Pair Telegram",
+      title: "Pair Telegram (the fastest way to use the bot)",
       detail:
-        "The fastest interface for operators. Talk to the bot in plain English, approve / cancel orders from notifications, and get morning briefs on your phone.",
+        "Talk to the bot in plain English or voice notes. Approve orders from notifications, get morning briefs, mark deliveries — all from your phone. 30-second pair.",
       done: !!telegramUser,
       href: "/settings",
       cta: telegramUser ? "Paired" : "Pair your Telegram",
     },
     {
+      key: "items",
+      title: "Tune your inventory",
+      detail:
+        "We pre-loaded a typical café starter kit (milk, oat milk, beans, cups…). Adjust quantities and par levels, delete anything you don't carry, or paste a full list via Bulk CSV import.",
+      done: itemsCount >= 5,
+      href: "/inventory",
+      cta: itemsCount > 0 ? `${itemsCount} items` : "Add items",
+    },
+    {
       key: "suppliers",
       title: "Add at least one supplier",
       detail:
-        "Who you order from. Add name, email, and ordering mode (email or website). You can link multiple suppliers per item later to enable auto-rescue on OUT_OF_STOCK.",
+        "Who you order from. Name + email is enough to get started; ordering mode is email by default, and the bot can tap-to-open an email on your phone with the order pre-filled — no Gmail connection required.",
       done: suppliersCount > 0,
       href: "/suppliers",
       cta: suppliersCount > 0 ? `${suppliersCount} added` : "Add a supplier",
     },
     {
-      key: "items",
-      title: "Add inventory items & par levels",
+      key: "gmail",
+      title: "(Optional) Auto-send via Gmail",
       detail:
-        "Each item needs a par level (the minimum you want on hand) and a primary supplier. StockPilot's forecast uses this to draft restocks before you run out.",
-      done: itemsCount > 0,
-      href: "/inventory",
-      cta: itemsCount > 0 ? `${itemsCount} items` : "Add items",
+        "By default, the bot hands you a tap-to-send email button in Telegram. If you'd rather have StockPilot send orders automatically so you don't have to tap, connect your Gmail from Settings — takes one click.",
+      done: !!gmailChannel,
+      href: "/settings",
+      cta: gmailChannel ? "Connected" : "Skip or connect",
     },
     {
       key: "firstOrder",
       title: "Send your first order",
       detail:
-        "Tell the Telegram bot something like \u201Corder 5 bags of ground coffee\u201D or flag a low-stock item from the app. You'll get a one-tap approve button, and after that, StockPilot keeps running.",
+        "Tell the Telegram bot \u201Cwe need milk\u201D or flag a low-stock item from the app. You'll get a one-tap approve button, then an email-send button. That's the whole loop.",
       done: poCount > 0,
       href: "/purchase-orders",
       cta: poCount > 0 ? `${poCount} sent` : "Go to orders",
@@ -99,8 +99,8 @@ export default async function OnboardingPage() {
             </h1>
             <p className="mt-2 max-w-xl text-white/70">
               {allDone
-                ? "StockPilot is watching your stock, emailing suppliers, and polling replies in the background. You can close the tab — your Telegram will buzz when there's a decision to make."
-                : "Finish these five steps and StockPilot starts running your inventory in the background."}
+                ? "StockPilot is watching your stock, handing you one-tap order emails on Telegram, and auto-classifying supplier replies. You can close the tab — your phone will buzz when there's a decision to make."
+                : "Finish these steps and StockPilot starts running your inventory in the background. Item list is already pre-seeded — you can tune it from step 2."}
             </p>
           </div>
           <div>
