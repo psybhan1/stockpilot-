@@ -2,6 +2,28 @@ import type { NotificationProvider, SupplierOrderProvider } from "@/providers/co
 import { NotificationChannel } from "@/lib/prisma";
 import { buildWebsiteOrderPlaywrightTemplate } from "@/modules/automation/playwright-template";
 
+// Build a tap-to-open mailto: URL. Used by the no-config fallback
+// so the Telegram bot can hand the user a button that opens their
+// native email app with everything pre-filled — no API key, no
+// OAuth, no domain setup. Trims the body to 1.8k chars so we stay
+// well under the ~2k URL-length limit most mobile email apps
+// enforce; beyond that the "Send" button silently fails.
+export function buildMailtoUrl(input: {
+  to: string;
+  subject: string;
+  body: string;
+}): string {
+  const trimmedBody =
+    input.body.length > 1800
+      ? input.body.slice(0, 1790) + "\n…"
+      : input.body;
+  const params = new URLSearchParams({
+    subject: input.subject,
+    body: trimmedBody,
+  });
+  return `mailto:${encodeURIComponent(input.to)}?${params.toString()}`;
+}
+
 export class ConsoleEmailProvider implements NotificationProvider, SupplierOrderProvider {
   async sendNotification(input: {
     notificationId?: string;
@@ -54,17 +76,22 @@ export class ConsoleEmailProvider implements NotificationProvider, SupplierOrder
     html?: string;
     replyTo?: string;
   }) {
-    console.warn(
-      "[ConsoleEmailProvider] TEST MODE — NO EMAIL WAS ACTUALLY SENT.\n" +
-        "Configure a real email provider:\n" +
-        "  DEFAULT_EMAIL_PROVIDER=resend + RESEND_API_KEY=re_..."
-    );
-    console.info("[ConsoleEmailProvider] supplier-order", input);
+    // No provider is configured, so we don't actually send an email.
+    // Instead we hand the caller a mailto: URL pre-filled with
+    // recipient/subject/body — the Telegram bot turns this into a
+    // single tap-to-open button and the user's native email app
+    // sends from their own account. That's the zero-config path:
+    // supplier sees a personal email from the café owner, we do
+    // nothing on the wire.
+    const mailto = buildMailtoUrl({
+      to: input.recipient,
+      subject: input.subject,
+      body: input.body,
+    });
     return {
-      providerMessageId: `console-order-${Date.now()}`,
-      // Signal to callers that this is a simulated send so UIs can be
-      // honest with the user (see isRealEmailProviderConfigured()).
+      providerMessageId: `mailto-${Date.now()}`,
       simulated: true as const,
+      mailto,
     };
   }
 

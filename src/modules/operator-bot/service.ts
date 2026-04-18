@@ -1751,9 +1751,53 @@ async function dispatchBotPurchaseOrder(input: {
           details: {
             supplierOrderingMode: input.supplier.orderingMode,
             providerMessageId: sendResult.providerMessageId ?? null,
+            simulated: Boolean(sendResult.simulated),
           },
         });
       });
+
+      // Zero-config path: no email provider was set up, so the
+      // provider returned a mailto: URL instead of sending. Push a
+      // Telegram button to the manager — their native email app
+      // opens pre-filled and they tap Send. Supplier sees a personal
+      // email from the café owner's own account.
+      if (sendResult.simulated && sendResult.mailto) {
+        try {
+          const { sendTelegramMessage } = await import("@/lib/telegram-bot");
+          const managers = await db.user.findMany({
+            where: {
+              telegramChatId: { not: null },
+              roles: { some: { locationId: input.locationId } },
+            },
+            select: { telegramChatId: true },
+            take: 3,
+          });
+
+          const bodyLines = [
+            `📧 *${currentPurchaseOrder.orderNumber}* is ready to send to *${input.supplier.name}*.`,
+            "",
+            "Tap below — your email app opens with everything already filled in. Just hit Send.",
+          ];
+          const keyboard = [
+            [
+              {
+                text: `📧 Send order to ${input.supplier.name}`,
+                url: sendResult.mailto,
+              },
+            ],
+          ];
+
+          for (const m of managers) {
+            if (!m.telegramChatId) continue;
+            await sendTelegramMessage(m.telegramChatId, bodyLines.join("\n"), {
+              parseMode: "Markdown",
+              replyMarkup: keyboard,
+            }).catch(() => null);
+          }
+        } catch {
+          /* notification best-effort — PO is SENT regardless */
+        }
+      }
     } catch (error) {
       await db.$transaction(async (tx) => {
         await tx.purchaseOrder.update({

@@ -210,15 +210,15 @@ export default async function SettingsPage({
           name="Email"
           tagline={
             gmailConnected
-              ? `PO emails send from your Gmail${emailSendingAs ? `: ${emailSendingAs}` : ""}.`
+              ? `Auto-send via your Gmail${emailSendingAs ? ` (${emailSendingAs})` : ""}.`
               : tenantResendConnected && emailSendingAs
-                ? `Ready — POs send from ${emailSendingAs} via Resend. Paste a new key below to rotate or change the From address.`
+                ? `Auto-send via Resend (${emailSendingAs}).`
                 : emailReady && emailSendingAs
-                  ? `Ready — POs send from ${emailSendingAs}. Suppliers reply to a StockPilot address that routes back to the matching order.`
-                  : "One-time setup needed — paste a Resend API key below (free 100 emails/day)."
+                  ? `Auto-send via ${emailSendingAs}.`
+                  : "Ready — your PO email opens pre-filled in your phone's mail app. Just tap Send."
           }
-          status={emailReady ? "Ready" : "Setup needed"}
-          statusTone={emailReady ? "success" : "warning"}
+          status="Ready"
+          statusTone="success"
         >
           {gmailConnected || tenantResendConnected ? (
             <form action={disconnectEmailChannelAction}>
@@ -239,107 +239,89 @@ export default async function SettingsPage({
           ) : null}
         </BrandCard>
 
-        {!emailReady ? (
-          <form
-            action={connectResendEmailChannelAction}
-            className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5 space-y-4"
-          >
-            <div>
-              <p className="text-sm font-semibold">Set up email in 60 seconds</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Sign up free at{" "}
-                <a
-                  href="https://resend.com/signup"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline"
-                >
-                  resend.com
-                </a>{" "}
-                (100 emails/day is plenty for one café). Create an API key at{" "}
-                <a
-                  href="https://resend.com/api-keys"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline"
-                >
-                  resend.com/api-keys
-                </a>
-                , then paste it below. The app validates it live and starts
-                sending immediately — no Railway restart required.
-              </p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block text-xs font-medium">
-                Resend API key
-                <input
-                  type="password"
-                  name="apiKey"
-                  required
-                  placeholder="re_XXXXXXXXXXXXXXXX"
-                  className="mt-1 w-full h-9 rounded-md border border-border/50 bg-background px-3 text-sm"
-                />
-              </label>
-              <label className="block text-xs font-medium">
-                From address
-                <input
-                  type="email"
-                  name="fromEmail"
-                  required
-                  placeholder="orders@yourcafe.com"
-                  className="mt-1 w-full h-9 rounded-md border border-border/50 bg-background px-3 text-sm"
-                />
-              </label>
-            </div>
-            <label className="block text-xs font-medium">
-              Display name (optional — defaults to your business name)
-              <input
-                type="text"
-                name="displayName"
-                placeholder="Sunny's Café"
-                className="mt-1 w-full h-9 rounded-md border border-border/50 bg-background px-3 text-sm"
-              />
-            </label>
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] text-muted-foreground">
-                Your key is encrypted (AES-256-GCM) before touching the
-                database. Never written to logs.
-              </p>
-              <Button type="submit" size="sm" className="h-9 text-xs">
-                Save &amp; verify
-              </Button>
-            </div>
-          </form>
-        ) : null}
-
-        {!gmailConnected ? (
+        {!gmailConnected && !tenantResendConnected ? (
           <details className="rounded-xl border border-border/50 bg-card/60 px-5 py-3 text-sm">
             <summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">
-              Advanced · send POs from your own Gmail address
+              Advanced · skip the tap — auto-send orders in the background
             </summary>
-            <div className="mt-3 space-y-3 text-muted-foreground">
+            <div className="mt-3 space-y-4 text-muted-foreground">
               <p>
-                Google may show an{" "}
-                <span className="font-medium text-foreground">
-                  &ldquo;unverified app&rdquo;
-                </span>{" "}
-                warning until we finish Google&apos;s verification process —
-                click{" "}
-                <span className="font-medium text-foreground">
-                  Advanced → Go to StockPilot (unsafe)
-                </span>{" "}
-                to continue. We only request <code>gmail.send</code> — we
-                never read your inbox.
+                By default the bot hands you a tap-to-send button in Telegram
+                — your own mail app opens with the order filled in and the
+                supplier sees a personal email from your address. Zero setup.
               </p>
-              <a href="/api/auth/google/gmail" className="inline-block">
-                <Button
-                  size="sm"
-                  className="h-9 gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs shadow-sm"
+              <p>
+                If you&apos;d rather have StockPilot send orders automatically
+                so you don&apos;t have to tap anything, pick one of these:
+              </p>
+              <div className="space-y-3">
+                <form
+                  action={connectResendEmailChannelAction}
+                  className="rounded-lg border border-border/50 bg-card/50 p-4 space-y-3"
                 >
-                  <GoogleLogo size={16} />
-                  Connect Gmail
-                </Button>
-              </a>
+                  <div>
+                    <p className="text-xs font-semibold text-foreground">
+                      Option A · Resend (free 100/day, 30 sec to set up)
+                    </p>
+                    <p className="mt-1 text-[11px]">
+                      Create an API key at{" "}
+                      <a
+                        href="https://resend.com/api-keys"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                      >
+                        resend.com/api-keys
+                      </a>{" "}
+                      and paste it here.
+                    </p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <input
+                      type="password"
+                      name="apiKey"
+                      required
+                      placeholder="re_XXXXXXXX"
+                      className="h-9 rounded-md border border-border/50 bg-background px-3 text-xs"
+                    />
+                    <input
+                      type="email"
+                      name="fromEmail"
+                      required
+                      placeholder="orders@yourcafe.com"
+                      className="h-9 rounded-md border border-border/50 bg-background px-3 text-xs"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px]">
+                      Encrypted before storage. Never logged.
+                    </p>
+                    <Button type="submit" size="sm" className="h-8 text-xs">
+                      Save
+                    </Button>
+                  </div>
+                </form>
+
+                <div className="rounded-lg border border-border/50 bg-card/50 p-4 space-y-2">
+                  <p className="text-xs font-semibold text-foreground">
+                    Option B · Gmail (sends from your own address)
+                  </p>
+                  <p className="text-[11px]">
+                    Google may show an &ldquo;unverified app&rdquo; warning
+                    until verification finishes — click Advanced → Go to
+                    StockPilot (unsafe) to continue.
+                  </p>
+                  <a href="/api/auth/google/gmail" className="inline-block">
+                    <Button
+                      size="sm"
+                      className="h-8 gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs shadow-sm"
+                    >
+                      <GoogleLogo size={14} />
+                      Connect Gmail
+                    </Button>
+                  </a>
+                </div>
+              </div>
             </div>
           </details>
         ) : null}

@@ -237,6 +237,15 @@ export interface SupplierOrderProvider {
      * on the SupplierCommunication row so downstream workers can
      * find the conversation later. */
     metadata?: Record<string, unknown>;
+    /** Set by the no-config fallback (ConsoleEmailProvider) to signal
+     * the caller that nothing actually went over the wire — the
+     * user still needs to hit Send in their own email app. */
+    simulated?: boolean;
+    /** mailto: URL pre-filled with the PO subject/body/recipient, so
+     * the Telegram message can expose a tap-to-open button that
+     * opens the user's native email app. Only provided when
+     * simulated === true. */
+    mailto?: string;
   }>;
   prepareWebsiteTask(input: {
     supplierName: string;
