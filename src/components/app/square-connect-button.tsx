@@ -8,6 +8,7 @@ import {
   startSquareConnectAction,
 } from "@/app/actions/operations";
 import { Button } from "@/components/ui/button";
+import { DisconnectConfirmDialog } from "@/components/app/disconnect-confirm-dialog";
 
 type Outcome = "connected" | "error";
 
@@ -46,10 +47,9 @@ export function SquareConnectButton({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [phase, setPhase] = useState<"idle" | "opening" | "waiting" | "disconnecting">(
-    "idle"
-  );
+  const [phase, setPhase] = useState<"idle" | "opening" | "waiting">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
   const popupRef = useRef<Window | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -145,25 +145,12 @@ export function SquareConnectButton({
     });
   }, [clearPoll, router]);
 
-  const handleDisconnect = useCallback(() => {
-    if (
-      !window.confirm(
-        "Disconnect Square? Sales will stop syncing until you reconnect. Your inventory and sale history are kept."
-      )
-    ) {
-      return;
-    }
-    setErrorMessage(null);
-    setPhase("disconnecting");
-    startTransition(async () => {
-      const result = await disconnectPosIntegrationAction("SQUARE");
-      setPhase("idle");
-      if (!result.ok) {
-        setErrorMessage(result.reason);
-        return;
-      }
+  const handleDisconnectConfirm = useCallback(async () => {
+    const result = await disconnectPosIntegrationAction("SQUARE");
+    if (result.ok) {
       router.refresh();
-    });
+    }
+    return result;
   }, [router]);
 
   const disabled = isPending || phase !== "idle";
@@ -172,9 +159,7 @@ export function SquareConnectButton({
       ? "Opening Square…"
       : phase === "waiting"
         ? "Waiting for Square…"
-        : phase === "disconnecting"
-          ? "Disconnecting…"
-          : label;
+        : label;
 
   return (
     <div className="flex flex-col items-end gap-1.5">
@@ -182,11 +167,11 @@ export function SquareConnectButton({
         {connected ? (
           <Button
             type="button"
-            onClick={handleDisconnect}
+            onClick={() => setDisconnectOpen(true)}
             disabled={disabled}
             className="h-9 gap-2 bg-transparent border border-red-500/40 text-red-400 hover:bg-red-500/10 hover:text-red-300 hover:border-red-500/70 text-xs"
           >
-            {phase === "disconnecting" ? "Disconnecting…" : "Disconnect"}
+            Disconnect
           </Button>
         ) : null}
         <Button
@@ -203,6 +188,12 @@ export function SquareConnectButton({
           {errorMessage}
         </p>
       ) : null}
+      <DisconnectConfirmDialog
+        open={disconnectOpen}
+        onOpenChange={setDisconnectOpen}
+        providerLabel="Square"
+        onConfirm={handleDisconnectConfirm}
+      />
     </div>
   );
 }
