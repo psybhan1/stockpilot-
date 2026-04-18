@@ -444,6 +444,10 @@ model StockMovement {
   createdAt         DateTime      @default(now())
   location          Location      @relation(fields: [locationId], references: [id], onDelete: Cascade)
   inventoryItem     InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@index([locationId, performedAt])
+  @@index([inventoryItemId, performedAt])
+  @@index([locationId, movementType, sourceType, sourceId])
 }
 
 model StockCountSession {

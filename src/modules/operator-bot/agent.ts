@@ -474,6 +474,24 @@ const TOOLS: ToolSchema[] = [
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_variance_report",
+      description:
+        "Theoretical-vs-actual variance: tracked waste ($ logged as WASTE/BREAKAGE/TRANSFER) and shrinkage ($ mystery delta from CORRECTION + MANUAL_COUNT_ADJUSTMENT). Use when the user asks 'where am I losing money', 'how much shrinkage last week', 'variance report', 'am I getting robbed', 'what's costing me'. Returns totals + top-5 worst-offender items.",
+      parameters: {
+        type: "object",
+        properties: {
+          days: {
+            type: "number",
+            description: "Lookback window in days. Default 7. Max 90.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
@@ -1175,6 +1193,34 @@ export async function executeTool(
         content: `Par for "${item.name}" is now ${newLabel} (was ${oldLabel}). Low-stock alert at ${lowStockThresholdBase}.`,
         finalReply: `✅ Par updated for *${item.name}*: ${oldLabel} → ${newLabel}`,
       };
+    }
+
+    case "get_variance_report": {
+      const rawDays = Number(args.days ?? 7);
+      const days = Number.isFinite(rawDays) ? Math.min(Math.max(1, Math.trunc(rawDays)), 90) : 7;
+      const { getVarianceReport } = await import("@/modules/variance/report");
+      const report = await getVarianceReport(ctx.locationId, { days });
+      if (report.itemCount === 0) {
+        return {
+          content: `No stock movements in the last ${days}d — nothing to report.`,
+          finalReply: `📉 No movement in the last ${days}d — can't compute variance yet.`,
+        };
+      }
+      const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+      const top = report.rows
+        .filter((r) => (r.shrinkageCents ?? 0) > 0 || (r.trackedWasteCents ?? 0) > 0)
+        .slice(0, 5)
+        .map((r) => {
+          const s = dollars(r.shrinkageCents ?? 0);
+          const w = dollars(r.trackedWasteCents ?? 0);
+          return `- ${r.itemName} · shrink ${s} · waste ${w} · ${r.severity}`;
+        });
+      const header =
+        `Variance ${days}d: total loss ${dollars(report.totalLossCents)} ` +
+        `(shrinkage ${dollars(report.shrinkageCents)}, tracked waste ${dollars(report.trackedWasteCents)}) ` +
+        `across ${report.itemCount} items, ${report.flaggedCount} flagged.`;
+      const content = top.length > 0 ? `${header}\n${top.join("\n")}` : header;
+      return { content };
     }
 
     default:
