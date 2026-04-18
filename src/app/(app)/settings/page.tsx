@@ -252,76 +252,50 @@ export default async function SettingsPage({
               </p>
               <p>
                 If you&apos;d rather have StockPilot send orders automatically
-                so you don&apos;t have to tap anything, pick one of these:
+                so you don&apos;t have to tap anything, paste a Resend API key
+                below — free at 100 emails/day, 30 seconds to set up.
               </p>
-              <div className="space-y-3">
-                <form
-                  action={connectResendEmailChannelAction}
-                  className="rounded-lg border border-border/50 bg-card/50 p-4 space-y-3"
-                >
-                  <div>
-                    <p className="text-xs font-semibold text-foreground">
-                      Option A · Resend (free 100/day, 30 sec to set up)
-                    </p>
-                    <p className="mt-1 text-[11px]">
-                      Create an API key at{" "}
-                      <a
-                        href="https://resend.com/api-keys"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="underline"
-                      >
-                        resend.com/api-keys
-                      </a>{" "}
-                      and paste it here.
-                    </p>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <input
-                      type="password"
-                      name="apiKey"
-                      required
-                      placeholder="re_XXXXXXXX"
-                      className="h-9 rounded-md border border-border/50 bg-background px-3 text-xs"
-                    />
-                    <input
-                      type="email"
-                      name="fromEmail"
-                      required
-                      placeholder="orders@yourcafe.com"
-                      className="h-9 rounded-md border border-border/50 bg-background px-3 text-xs"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10px]">
-                      Encrypted before storage. Never logged.
-                    </p>
-                    <Button type="submit" size="sm" className="h-8 text-xs">
-                      Save
-                    </Button>
-                  </div>
-                </form>
-
-                <div className="rounded-lg border border-border/50 bg-card/50 p-4 space-y-2">
-                  <p className="text-xs font-semibold text-foreground">
-                    Option B · Gmail (sends from your own address)
-                  </p>
-                  <p className="text-[11px]">
-                    Google may show an &ldquo;unverified app&rdquo; warning
-                    until verification finishes — click Advanced → Go to
-                    StockPilot (unsafe) to continue.
-                  </p>
-                  <a href="/api/auth/google/gmail" className="inline-block">
-                    <Button
-                      size="sm"
-                      className="h-8 gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs shadow-sm"
-                    >
-                      <GoogleLogo size={14} />
-                      Connect Gmail
-                    </Button>
-                  </a>
+              <form
+                action={connectResendEmailChannelAction}
+                className="rounded-lg border border-border/50 bg-card/50 p-4 space-y-3"
+              >
+                <p className="text-[11px]">
+                  Create a key at{" "}
+                  <a
+                    href="https://resend.com/api-keys"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline"
+                  >
+                    resend.com/api-keys
+                  </a>{" "}
+                  and paste it here.
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input
+                    type="password"
+                    name="apiKey"
+                    required
+                    placeholder="re_XXXXXXXX"
+                    className="h-9 rounded-md border border-border/50 bg-background px-3 text-xs"
+                  />
+                  <input
+                    type="email"
+                    name="fromEmail"
+                    required
+                    placeholder="orders@yourcafe.com"
+                    className="h-9 rounded-md border border-border/50 bg-background px-3 text-xs"
+                  />
                 </div>
-              </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px]">
+                    Encrypted before storage. Never logged.
+                  </p>
+                  <Button type="submit" size="sm" className="h-8 text-xs">
+                    Save
+                  </Button>
+                </div>
+              </form>
             </div>
           </details>
         ) : null}
