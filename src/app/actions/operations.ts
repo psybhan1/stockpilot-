@@ -640,6 +640,48 @@ export async function rotatePosWebhookSecretAction(formData: FormData) {
   redirect(`/settings?channelConnect=connected&channelType=pos`);
 }
 
+/**
+ * Popup-friendly variant of connectSquareAction. Returns the authUrl
+ * (or a connected status) instead of server-side redirecting, so the
+ * client can window.open() it in a popup and post-message back on
+ * completion. The classic connectSquareAction still exists for the
+ * degraded full-redirect fallback and for non-JS clients.
+ */
+export async function startSquareConnectAction(): Promise<
+  | { ok: true; status: "redirect"; authUrl: string }
+  | { ok: true; status: "connected" }
+  | { ok: false; reason: string }
+> {
+  const session = await requireSession(Role.MANAGER);
+
+  const { hasRealSquareCredentials } = await import(
+    "@/providers/pos-provider"
+  );
+  if (!hasRealSquareCredentials()) {
+    return {
+      ok: false,
+      reason:
+        "Square OAuth isn't configured yet. Ask the admin to register a Square OAuth app and set SQUARE_CLIENT_ID, SQUARE_CLIENT_SECRET, and SQUARE_WEBHOOK_SIGNATURE_KEY on Railway.",
+    };
+  }
+
+  const result = await ensureSquareIntegration(
+    session.locationId,
+    session.userId
+  );
+
+  if (result.requiresRedirect && result.authUrl) {
+    return { ok: true, status: "redirect", authUrl: result.authUrl };
+  }
+
+  void runPendingJobs(10).catch((err) => {
+    console.error("[startSquareConnectAction] job drain failed:", err);
+  });
+  revalidateOperations();
+
+  return { ok: true, status: "connected" };
+}
+
 export async function connectSquareAction() {
   const session = await requireSession(Role.MANAGER);
 

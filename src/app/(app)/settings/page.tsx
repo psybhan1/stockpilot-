@@ -5,7 +5,6 @@ import { Cable, Settings2 } from "lucide-react";
 import {
   connectGenericPosAction,
   connectResendEmailChannelAction,
-  connectSquareAction,
   disconnectEmailChannelAction,
   rotatePosWebhookSecretAction,
   runJobsAction,
@@ -19,6 +18,7 @@ import {
   updateAutoApproveThresholdAction,
 } from "@/app/actions/operations";
 import { PageHero } from "@/components/app/page-hero";
+import { SquareConnectButton } from "@/components/app/square-connect-button";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -338,18 +338,14 @@ export default async function SettingsPage({
             >
               Setup guide →
             </Link>
-            <form action={connectSquareAction}>
-              <Button
-                type="submit"
-                size="sm"
-                className="h-9 gap-2 bg-[#3E4348] hover:bg-[#2d3136] text-white text-xs border-0"
-              >
-                <SquareLogo size={14} />
-                {posByProvider.SQUARE?.status === "CONNECTED"
+            <SquareConnectButton
+              label={
+                posByProvider.SQUARE?.status === "CONNECTED"
                   ? "Reconnect"
-                  : "Connect Square"}
-              </Button>
-            </form>
+                  : "Connect Square"
+              }
+              className="h-9 gap-2 bg-[#3E4348] hover:bg-[#2d3136] text-white text-xs border-0"
+            />
           </div>
         </BrandCard>
 

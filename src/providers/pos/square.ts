@@ -77,7 +77,6 @@ export class SquareProvider implements PosProvider {
       const params = new URLSearchParams({
         client_id: env.SQUARE_CLIENT_ID!,
         scope: env.SQUARE_SCOPES,
-        session: this.isSandbox() ? "true" : "false",
         state: input.state,
         redirect_uri: input.callbackUrl,
       });
