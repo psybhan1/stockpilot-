@@ -112,6 +112,8 @@
     "src/modules/inventory/ledger-primitives.ts",
     "src/modules/inventory/ledger-primitives.test.ts",
     "src/modules/onboarding/starter-pack-data.ts",
-    "src/modules/onboarding/starter-pack-data.test.ts"
+    "src/modules/onboarding/starter-pack-data.test.ts",
+    "src/modules/automation/signin-session-helpers.ts",
+    "src/modules/automation/signin-session-helpers.test.ts"
   ]
 }

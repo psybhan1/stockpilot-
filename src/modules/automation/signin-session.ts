@@ -18,6 +18,13 @@
 import type { Browser, Page } from "puppeteer-core";
 
 import { findOrDownloadChrome, standardLaunchArgs } from "@/modules/automation/chrome-launcher";
+import {
+  SIGNIN_MAX_TOTAL_MS,
+  clampScrollDelta,
+  isSigninSessionExpired,
+  normalizeSigninCookie,
+  pickAllowedSigninKey,
+} from "./signin-session-helpers";
 
 export type SigninSession = {
   id: string;
@@ -36,12 +43,6 @@ export type SigninSession = {
 };
 
 const SESSIONS = new Map<string, SigninSession>();
-// Phone users routinely take >5 min — pause to read a 2FA text, switch
-// apps, deal with CAPTCHAs, etc. 12 min idle is a better fit; the
-// screenshot poll also bumps activity now, so someone actively
-// watching the page stays alive indefinitely up to the hard cap.
-const IDLE_TIMEOUT_MS = 12 * 60 * 1000;
-const MAX_TOTAL_MS = 20 * 60 * 1000;
 const MAX_CONCURRENT = 5;
 
 /**
@@ -119,7 +120,7 @@ export async function startSigninSession(input: {
 export function getSession(sessionId: string): SigninSession | null {
   const session = SESSIONS.get(sessionId);
   if (!session) return null;
-  if (Date.now() - session.createdAt > MAX_TOTAL_MS) {
+  if (Date.now() - session.createdAt > SIGNIN_MAX_TOTAL_MS) {
     closeSessionInternal(sessionId).catch(() => null);
     return null;
   }
@@ -187,12 +188,9 @@ export async function forwardScroll(
   const session = getSession(sessionId);
   if (!session) throw new Error("Session not found");
   session.lastActivityAt = Date.now();
-  // Clamp to reasonable range so a rogue client can't fire an
-  // enormous scroll and stall puppeteer.
-  const clamp = (v: number) => Math.max(-2000, Math.min(2000, Math.round(v)));
   await session.page.mouse.wheel({
-    deltaX: clamp(deltaX),
-    deltaY: clamp(deltaY),
+    deltaX: clampScrollDelta(deltaX),
+    deltaY: clampScrollDelta(deltaY),
   });
 }
 
@@ -200,24 +198,9 @@ export async function forwardKey(sessionId: string, key: string): Promise<void> 
   const session = getSession(sessionId);
   if (!session) throw new Error("Session not found");
   session.lastActivityAt = Date.now();
-  // Allowlist of named keys puppeteer accepts. Anything else is
-  // ignored — we don't want arbitrary string-to-KeyInput coercion.
-  const allowed: Array<import("puppeteer-core").KeyInput> = [
-    "Enter",
-    "Tab",
-    "Backspace",
-    "Escape",
-    "ArrowLeft",
-    "ArrowRight",
-    "ArrowUp",
-    "ArrowDown",
-    "Delete",
-    "Home",
-    "End",
-  ];
-  const match = allowed.find((k) => k === key);
+  const match = pickAllowedSigninKey(key);
   if (!match) return;
-  await session.page.keyboard.press(match);
+  await session.page.keyboard.press(match as import("puppeteer-core").KeyInput);
 }
 
 /**
@@ -234,19 +217,7 @@ export async function captureCookies(
   session.status = "capturing";
   session.lastActivityAt = Date.now();
   const cookies = await session.page.cookies();
-  return cookies.map((c) => ({
-    name: c.name,
-    value: c.value,
-    domain: c.domain,
-    path: c.path,
-    expires: typeof c.expires === "number" && c.expires > 0 ? c.expires : undefined,
-    httpOnly: c.httpOnly,
-    secure: c.secure,
-    sameSite:
-      c.sameSite === "Strict" || c.sameSite === "Lax" || c.sameSite === "None"
-        ? c.sameSite
-        : undefined,
-  }));
+  return cookies.map((c) => normalizeSigninCookie(c));
 }
 
 export async function closeSession(sessionId: string): Promise<void> {
@@ -268,10 +239,7 @@ async function closeSessionInternal(sessionId: string): Promise<void> {
 function pruneIdle(): void {
   const now = Date.now();
   for (const [id, session] of SESSIONS.entries()) {
-    if (
-      now - session.lastActivityAt > IDLE_TIMEOUT_MS ||
-      now - session.createdAt > MAX_TOTAL_MS
-    ) {
+    if (isSigninSessionExpired(session, now)) {
       closeSessionInternal(id).catch(() => null);
     }
   }
