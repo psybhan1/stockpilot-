@@ -18,6 +18,7 @@ import { enqueueJob, enqueueJobTx } from "@/modules/jobs/dispatcher";
 import { getAiProvider } from "@/providers/ai-provider";
 import type { ProviderCatalogItem } from "@/providers/contracts";
 import { CloverProvider } from "@/providers/pos/clover";
+import { ShopifyProvider } from "@/providers/pos/shopify";
 import { getPosProvider } from "@/providers/pos-provider";
 
 function getSquareCallbackUrl() {
@@ -26,6 +27,10 @@ function getSquareCallbackUrl() {
 
 function getCloverCallbackUrl() {
   return `${env.APP_URL.replace(/\/$/, "")}/api/integrations/clover/callback`;
+}
+
+function getShopifyCallbackUrl() {
+  return `${env.APP_URL.replace(/\/$/, "")}/api/integrations/shopify/callback`;
 }
 
 function getStoredAccessToken(accessTokenEncrypted?: string | null) {
@@ -887,6 +892,151 @@ export async function queueSquareWebhookSyncs(input: {
 import { getSquareWebhookJobType } from "./square-webhook";
 export { getSquareWebhookJobType } from "./square-webhook";
 
+// ---- Shopify -------------------------------------------------------
+
+/**
+ * Shopify ensure-integration. Key difference from Square/Clover: the
+ * caller MUST pass the merchant's shop domain (normalised to
+ * "{shop}.myshopify.com") — Shopify's OAuth URL is per-shop.
+ */
+export async function ensureShopifyIntegration(
+  locationId: string,
+  userId: string,
+  shopDomain: string
+) {
+  if (!env.SHOPIFY_CLIENT_ID || !env.SHOPIFY_CLIENT_SECRET) {
+    throw new Error(
+      "Shopify isn't configured. Set SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET on the server."
+    );
+  }
+
+  const provider = new ShopifyProvider();
+  const existing = await db.posIntegration.findFirst({
+    where: { locationId, provider: PosProviderType.SHOPIFY },
+    select: { id: true, accessTokenEncrypted: true },
+  });
+
+  const integration = existing
+    ? await db.posIntegration.update({
+        where: { id: existing.id },
+        data: {
+          status: IntegrationStatus.CONNECTING,
+          externalLocationId: shopDomain,
+          externalMerchantId: shopDomain,
+        },
+      })
+    : await db.posIntegration.create({
+        data: {
+          locationId,
+          provider: PosProviderType.SHOPIFY,
+          status: IntegrationStatus.CONNECTING,
+          externalLocationId: shopDomain,
+          externalMerchantId: shopDomain,
+        },
+      });
+
+  const state = `${integration.id}.${randomBytes(16).toString("hex")}`;
+  const result = await provider.connect({
+    integrationId: integration.id,
+    callbackUrl: getShopifyCallbackUrl(),
+    state,
+    shopDomain,
+  });
+
+  if (result.status === "redirect_required" && result.authUrl) {
+    await db.posIntegration.update({
+      where: { id: integration.id },
+      data: {
+        status: IntegrationStatus.CONNECTING,
+        settings: { oauthState: state, shopDomain },
+      },
+    });
+
+    await db.$transaction(async (tx) => {
+      await createAuditLogTx(tx, {
+        locationId,
+        userId,
+        action: "integration.shopify.oauth_started",
+        entityType: "posIntegration",
+        entityId: integration.id,
+        details: { shopDomain },
+      });
+    });
+
+    return {
+      integration,
+      requiresRedirect: true,
+      authUrl: result.authUrl,
+    };
+  }
+
+  return { integration, requiresRedirect: false };
+}
+
+export async function completeShopifyOAuth(input: {
+  integrationId: string;
+  state: string;
+  code: string;
+  shopDomain: string;
+}) {
+  const integration = await db.posIntegration.findUniqueOrThrow({
+    where: { id: input.integrationId },
+  });
+
+  const expectedState =
+    integration.settings &&
+    typeof integration.settings === "object" &&
+    !Array.isArray(integration.settings)
+      ? (integration.settings as Record<string, unknown>).oauthState
+      : null;
+
+  if (!expectedState || expectedState !== input.state) {
+    throw new Error("Shopify OAuth state could not be verified.");
+  }
+
+  const provider = new ShopifyProvider();
+  const result = await provider.exchangeCode!({
+    code: input.code,
+    callbackUrl: getShopifyCallbackUrl(),
+    shopDomain: input.shopDomain,
+  });
+
+  const updated = await db.posIntegration.update({
+    where: { id: integration.id },
+    data: {
+      status: IntegrationStatus.CONNECTED,
+      sandbox: false,
+      externalMerchantId: input.shopDomain,
+      externalLocationId: input.shopDomain,
+      accessTokenEncrypted: encryptSecret(result.accessToken),
+      settings: {
+        oauthState: null,
+        shopDomain: input.shopDomain,
+        connectedVia: "oauth",
+      },
+      lastSyncedAt: new Date(),
+    },
+  });
+
+  await enqueueJob({
+    locationId: integration.locationId,
+    type: "SYNC_CATALOG",
+    payload: { integrationId: integration.id },
+  });
+
+  await db.$transaction(async (tx) => {
+    await createAuditLogTx(tx, {
+      locationId: integration.locationId,
+      action: "integration.shopify.oauth_connected",
+      entityType: "posIntegration",
+      entityId: integration.id,
+      details: { shopDomain: input.shopDomain },
+    });
+  });
+
+  return updated;
+}
+
 /**
  * Disconnect a POS integration. Flips status to DISCONNECTED, clears
  * the access + refresh tokens, and best-effort revokes the token at
@@ -1133,6 +1283,104 @@ export async function refreshExpiringPosTokens(): Promise<{
   }
 
   return { scanned: integrations.length, refreshed, failed, details };
+}
+
+/**
+ * Shopify webhook → job enqueue. Topic string (e.g. "orders/create",
+ * "products/update") maps to one of our two sync job types. Shop
+ * domain narrows the match to the right PosIntegration row.
+ */
+export async function queueShopifyWebhookSyncs(input: {
+  topic?: string | null;
+  shopDomain?: string | null;
+  eventId?: string | null;
+}) {
+  const prefix = input.topic?.split("/")[0]?.toLowerCase();
+  const jobType =
+    prefix === "products" ||
+    prefix === "inventory_levels" ||
+    prefix === "inventory_items"
+      ? "SYNC_CATALOG"
+      : prefix === "orders" ||
+          prefix === "order_transactions" ||
+          prefix === "refunds"
+        ? "SYNC_SALES"
+        : null;
+
+  if (!jobType) {
+    return {
+      enqueued: false,
+      matchedIntegrations: 0,
+      message: "Shopify webhook did not map to a syncable job type.",
+    };
+  }
+
+  const integrations = await db.posIntegration.findMany({
+    where: {
+      provider: PosProviderType.SHOPIFY,
+      status: IntegrationStatus.CONNECTED,
+      ...(input.shopDomain
+        ? { externalMerchantId: input.shopDomain }
+        : {}),
+    },
+    select: { id: true, locationId: true },
+  });
+
+  if (integrations.length === 0) {
+    return {
+      enqueued: false,
+      matchedIntegrations: 0,
+      message:
+        "Shopify webhook validated, but no connected Shopify integrations matched it.",
+    };
+  }
+
+  await db.$transaction(async (tx) => {
+    for (const integration of integrations) {
+      await tx.posSyncRun.create({
+        data: {
+          integrationId: integration.id,
+          syncType: PosSyncType.WEBHOOK,
+          status: JobStatus.COMPLETED,
+          details: {
+            topic: input.topic ?? null,
+            eventId: input.eventId ?? null,
+            shopDomain: input.shopDomain ?? null,
+            queuedJobType: jobType,
+          },
+          completedAt: new Date(),
+        },
+      });
+      await enqueueJobTx(tx, {
+        locationId: integration.locationId,
+        type: jobType,
+        payload: {
+          integrationId: integration.id,
+          webhookEventType: input.topic ?? null,
+          webhookEventId: input.eventId ?? null,
+        },
+      });
+      await createAuditLogTx(tx, {
+        locationId: integration.locationId,
+        action: "integration.shopify.webhook_received",
+        entityType: "posIntegration",
+        entityId: integration.id,
+        details: {
+          topic: input.topic ?? null,
+          eventId: input.eventId ?? null,
+          shopDomain: input.shopDomain ?? null,
+          queuedJobType: jobType,
+        },
+      });
+    }
+  });
+
+  return {
+    enqueued: true,
+    matchedIntegrations: integrations.length,
+    jobType,
+    message: `Queued ${jobType.toLowerCase().replaceAll("_", " ")} for ${integrations.length} Shopify integration${integrations.length === 1 ? "" : "s"}.`,
+  };
 }
 
 /**

@@ -153,6 +153,10 @@ export interface PosProvider {
     callbackUrl: string;
     state: string;
     accessToken?: string | null;
+    // Shopify-only: the merchant's shop domain (e.g.
+    // "my-cafe.myshopify.com"). Ignored by Square + Clover whose
+    // OAuth URLs are vendor-hosted and don't depend on merchant.
+    shopDomain?: string | null;
   }): Promise<{
     status: "connected" | "redirect_required";
     sandbox: boolean;
@@ -165,6 +169,8 @@ export interface PosProvider {
   exchangeCode?(input: {
     code: string;
     callbackUrl: string;
+    // Shopify-only — see above.
+    shopDomain?: string | null;
   }): Promise<{
     sandbox: boolean;
     externalMerchantId?: string;

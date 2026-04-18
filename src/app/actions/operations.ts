@@ -30,6 +30,7 @@ import {
 import {
   disconnectPosIntegration,
   ensureCloverIntegration,
+  ensureShopifyIntegration,
   ensureSquareIntegration,
   importSampleSales,
 } from "@/modules/pos/service";
@@ -727,20 +728,72 @@ export async function startCloverConnectAction(): Promise<
 }
 
 /**
+ * Shopify start-connect action. Same popup-flow contract as Square
+ * and Clover, with one extra field: the merchant's shop domain.
+ * Normalised server-side inside ShopifyProvider so "my-cafe",
+ * "my-cafe.myshopify.com", or "https://my-cafe.myshopify.com/admin"
+ * all resolve to the same canonical form.
+ */
+export async function startShopifyConnectAction(input: {
+  shopDomain: string;
+}): Promise<
+  | { ok: true; status: "redirect"; authUrl: string }
+  | { ok: true; status: "connected" }
+  | { ok: false; reason: string }
+> {
+  const session = await requireSession(Role.MANAGER);
+
+  if (!env.SHOPIFY_CLIENT_ID || !env.SHOPIFY_CLIENT_SECRET) {
+    return {
+      ok: false,
+      reason:
+        "Shopify isn't configured yet. Ask the admin to register a Shopify custom app and set SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET on Railway.",
+    };
+  }
+
+  const { normaliseShopifyShopDomain } = await import(
+    "@/providers/pos/shopify"
+  );
+  const shopDomain = normaliseShopifyShopDomain(input.shopDomain ?? "");
+  if (!shopDomain) {
+    return {
+      ok: false,
+      reason:
+        "That doesn't look like a Shopify shop URL. Try the form 'my-cafe.myshopify.com' or just 'my-cafe'.",
+    };
+  }
+
+  const result = await ensureShopifyIntegration(
+    session.locationId,
+    session.userId,
+    shopDomain
+  );
+
+  if (result.requiresRedirect && result.authUrl) {
+    return { ok: true, status: "redirect", authUrl: result.authUrl };
+  }
+
+  revalidateOperations();
+  return { ok: true, status: "connected" };
+}
+
+/**
  * Disconnect a POS integration. Flips its status to DISCONNECTED,
  * clears tokens, best-effort revokes at the vendor. Used by the
  * "Disconnect" link on /settings so merchants can switch POS
  * themselves without emailing support.
  */
 export async function disconnectPosIntegrationAction(
-  provider: "SQUARE" | "CLOVER"
+  provider: "SQUARE" | "CLOVER" | "SHOPIFY"
 ): Promise<{ ok: true; revokedAtVendor: boolean } | { ok: false; reason: string }> {
   const session = await requireSession(Role.MANAGER);
 
   const providerEnum =
     provider === "SQUARE"
       ? PosProviderType.SQUARE
-      : PosProviderType.CLOVER;
+      : provider === "CLOVER"
+        ? PosProviderType.CLOVER
+        : PosProviderType.SHOPIFY;
 
   try {
     const result = await disconnectPosIntegration({

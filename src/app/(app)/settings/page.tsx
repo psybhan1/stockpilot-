@@ -19,6 +19,7 @@ import {
 } from "@/app/actions/operations";
 import { CloverConnectButton } from "@/components/app/clover-connect-button";
 import { PageHero } from "@/components/app/page-hero";
+import { ShopifyConnectButton } from "@/components/app/shopify-connect-button";
 import { SquareConnectButton } from "@/components/app/square-connect-button";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
@@ -383,6 +384,40 @@ export default async function SettingsPage({
           />
         </BrandCard>
 
+        {/* Shopify POS — per-shop OAuth. Each merchant types their
+            shop URL ({shop}.myshopify.com) before the OAuth popup
+            can open; we build their personal authorize URL from it. */}
+        <BrandCard
+          logo={<ShopifyLogo />}
+          name="Shopify POS"
+          tagline={
+            posByProvider.SHOPIFY?.status === "CONNECTED"
+              ? `Connected — ${posByProvider.SHOPIFY.externalMerchantId ?? "shop"}.`
+              : "One-click OAuth — catalog + sales auto-sync from any Shopify store."
+          }
+          status={
+            posByProvider.SHOPIFY?.status === "CONNECTED"
+              ? "Live"
+              : "Not connected"
+          }
+          statusTone={
+            posByProvider.SHOPIFY?.status === "CONNECTED" ? "success" : "info"
+          }
+        >
+          <ShopifyConnectButton
+            label={
+              posByProvider.SHOPIFY?.status === "CONNECTED"
+                ? "Reconnect"
+                : "Connect Shopify"
+            }
+            className="h-9 gap-2 bg-[#96BF48] hover:bg-[#7aa03a] text-white text-xs border-0"
+            connected={posByProvider.SHOPIFY?.status === "CONNECTED"}
+            currentShopDomain={
+              posByProvider.SHOPIFY?.externalMerchantId ?? null
+            }
+          />
+        </BrandCard>
+
         {/* One row for every other POS. Honest framing: native
             one-click is coming; for now it's a Zapier bridge with a
             per-tenant webhook. Advanced users click to expand. */}
@@ -390,7 +425,6 @@ export default async function SettingsPage({
           const otherProviders = [
             "TOAST",
             "LIGHTSPEED",
-            "SHOPIFY",
             "GENERIC_WEBHOOK",
           ] as const;
           const activeOther = otherProviders
@@ -401,7 +435,7 @@ export default async function SettingsPage({
             <details className="rounded-xl border border-border/50 bg-card/60 px-5 py-3 text-sm group">
               <summary className="flex cursor-pointer items-center justify-between text-xs text-muted-foreground hover:text-foreground">
                 <span>
-                  Other POS (Toast · Lightspeed · Shopify · other)
+                  Other POS (Toast · Lightspeed · other)
                 </span>
                 <span className="font-mono text-[10px]">
                   {any ? `${activeOther.length} connected` : "native OAuth in progress"}
@@ -410,8 +444,8 @@ export default async function SettingsPage({
               <div className="mt-4 space-y-4 text-muted-foreground">
                 <p className="text-xs">
                   Native one-click OAuth ships next for Toast (pending their
-                  partner approval), Lightspeed, and Shopify POS — each one
-                  needs its own OAuth app registered with the vendor.
+                  partner approval) and Lightspeed — each needs its own
+                  OAuth app registered with the vendor.
                   Until those land, a 2-minute Zapier bridge gets any POS
                   forwarding sales to StockPilot with the same end result:
                   real sales land on your dashboard, inventory depletes
@@ -963,6 +997,15 @@ function CloverLogo({ size = 20 }: { size?: number }) {
       <rect x="2" y="2" width="20" height="20" rx="3" fill="#00B140" />
       <path d="M12 6.5c-1 0-1.8.8-1.8 1.8 0 .2.02.4.07.58-.18-.05-.38-.08-.57-.08-1 0-1.8.8-1.8 1.8s.8 1.8 1.8 1.8c.2 0 .4-.03.57-.08-.05.18-.07.38-.07.57 0 1 .8 1.8 1.8 1.8s1.8-.8 1.8-1.8c0-.2-.03-.4-.08-.57.18.05.38.08.58.08 1 0 1.8-.8 1.8-1.8s-.8-1.8-1.8-1.8c-.2 0-.4.03-.58.08.05-.18.08-.38.08-.58 0-1-.8-1.8-1.8-1.8z" fill="white"/>
       <rect x="11.5" y="14.5" width="1" height="3" rx="0.5" fill="white" />
+    </svg>
+  );
+}
+
+function ShopifyLogo({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="2" y="2" width="20" height="20" rx="3" fill="#96BF48" />
+      <path d="M15.8 7.7c-.02-.13-.13-.2-.22-.2-.1 0-1.88-.05-1.88-.05s-1.51-1.47-1.66-1.62c-.15-.15-.44-.1-.56-.06 0 0-.28.09-.76.24-.08-.26-.2-.57-.37-.89-.55-1.05-1.35-1.61-2.32-1.61h-.03c-.07 0-.14.01-.2.02l-.07-.08c-.42-.45-.97-.67-1.62-.65-1.26.04-2.51 1-3.52 2.71C3.07 6.73 2.5 8.34 2.33 9.59c-1.45.45-2.47.77-2.49.78-.74.23-.76.25-.85.95C-1.05 11.81.16 22 .16 22l8.85.16L15.9 22 15.8 7.7zm-2.95-.74l-.73.23c-.01-.57-.08-1.37-.35-2.06.85.16 1.27 1.13 1.43 1.58l-.35.25zm-1.3.4l-1.8.56c.17-.66.5-1.3 1.05-1.72.2-.16.43-.28.66-.35.27.54.33 1.3.09 1.51z" fill="white"/>
     </svg>
   );
 }

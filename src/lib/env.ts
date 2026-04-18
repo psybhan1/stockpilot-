@@ -42,6 +42,16 @@ export const env = {
   CLOVER_CLIENT_ID: process.env.CLOVER_CLIENT_ID,
   CLOVER_CLIENT_SECRET: process.env.CLOVER_CLIENT_SECRET,
   CLOVER_WEBHOOK_SIGNATURE_KEY: process.env.CLOVER_WEBHOOK_SIGNATURE_KEY,
+  // Shopify — OAuth flow is per-shop: {shop}.myshopify.com/admin/oauth
+  // One Client ID/Secret works for every shop that installs the app.
+  // API version is frozen; Shopify publishes quarterly and deprecates
+  // old versions after ~12 months. 2024-10 is the current stable.
+  SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION ?? "2024-10",
+  SHOPIFY_CLIENT_ID: process.env.SHOPIFY_CLIENT_ID,
+  SHOPIFY_CLIENT_SECRET: process.env.SHOPIFY_CLIENT_SECRET,
+  SHOPIFY_SCOPES:
+    process.env.SHOPIFY_SCOPES ??
+    "read_products,read_inventory,read_orders,read_merchant_managed_fulfillment_orders",
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL ?? "gpt-5-mini",
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
