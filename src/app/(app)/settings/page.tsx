@@ -12,6 +12,7 @@ import {
   sendTestEmailAction,
   sendTestPosSaleAction,
   sendTestTelegramAction,
+  sendTestWhatsAppAction,
   startTelegramBotConnectAction,
   startWhatsAppBotConnectAction,
   syncSalesAction,
@@ -509,12 +510,26 @@ export default async function SettingsPage({
           status={currentManager.phoneNumber ? "Connected" : "Not connected"}
           statusTone={currentManager.phoneNumber ? "success" : "info"}
         >
-          <form action={startWhatsAppBotConnectAction}>
-            <Button type="submit" size="sm" className="h-9 gap-2 bg-[#25D366] hover:bg-[#1ebe5d] text-white text-xs border-0">
-              <WhatsAppLogo size={14} />
-              {currentManager.phoneNumber ? "Reconnect" : "Connect WhatsApp"}
-            </Button>
-          </form>
+          <div className="flex items-center gap-2">
+            {currentManager.phoneNumber ? (
+              <form action={sendTestWhatsAppAction}>
+                <Button
+                  type="submit"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 text-xs"
+                >
+                  Send test
+                </Button>
+              </form>
+            ) : null}
+            <form action={startWhatsAppBotConnectAction}>
+              <Button type="submit" size="sm" className="h-9 gap-2 bg-[#25D366] hover:bg-[#1ebe5d] text-white text-xs border-0">
+                <WhatsAppLogo size={14} />
+                {currentManager.phoneNumber ? "Reconnect" : "Connect WhatsApp"}
+              </Button>
+            </form>
+          </div>
         </BrandCard>
 
         <BrandCard

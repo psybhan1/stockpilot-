@@ -347,6 +347,71 @@ export async function saveSimpleMappingAction(formData: FormData) {
 }
 
 /**
+ * WhatsApp equivalent of sendTestTelegramAction — fires a hello
+ * through Twilio to the admin's paired WhatsApp number. Verifies
+ * the Twilio credentials are live and the WhatsApp sandbox (or
+ * production template) accepts sends.
+ */
+export async function sendTestWhatsAppAction() {
+  const session = await requireSession(Role.MANAGER);
+
+  const user = await db.user.findUniqueOrThrow({
+    where: { id: session.userId },
+    select: { phoneNumber: true, name: true },
+  });
+  if (!user.phoneNumber) {
+    redirect(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
+        "No WhatsApp number paired — tap Connect WhatsApp first."
+      )}`
+    );
+  }
+  if (
+    !env.TWILIO_ACCOUNT_SID ||
+    !env.TWILIO_AUTH_TOKEN ||
+    !env.TWILIO_WHATSAPP_FROM
+  ) {
+    redirect(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
+        "Twilio WhatsApp credentials aren't configured on the server."
+      )}`
+    );
+  }
+
+  try {
+    const { TwilioWhatsAppNotificationProvider } = await import(
+      "@/providers/notification/twilio-whatsapp"
+    );
+    const provider = new TwilioWhatsAppNotificationProvider({
+      accountSid: env.TWILIO_ACCOUNT_SID,
+      authToken: env.TWILIO_AUTH_TOKEN,
+      fromNumber: env.TWILIO_WHATSAPP_FROM,
+    });
+    const first = user.name.split(" ")[0] ?? "there";
+    await provider.sendNotification({
+      channel: NotificationChannel.WHATSAPP,
+      recipient: user.phoneNumber,
+      body: `Hey ${first} — StockPilot WhatsApp test. If you're reading this, the full bridge works.`,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("NEXT_REDIRECT")) throw err;
+    redirect(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
+        `WhatsApp send failed: ${message.slice(0, 200)}`
+      )}`
+    );
+  }
+
+  revalidateOperations();
+  redirect(
+    `/settings?channelConnect=connected&channelType=whatsapp&channelDetail=${encodeURIComponent(
+      `Test message sent to ${user.phoneNumber}.`
+    )}`
+  );
+}
+
+/**
  * Fires a short hello message at the admin's own Telegram chat so
  * they can verify end-to-end pairing works (bot token is live,
  * chat id is linked, message actually lands on their phone). Zero
