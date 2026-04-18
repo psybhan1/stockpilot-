@@ -102,7 +102,14 @@ test("secrets.encryptSecret and credential-encryption.encryptCredential produce 
   // N8N_WEBHOOK_SECRET) and different wire formats. Mixing them
   // up in a migration would silently break — this test is a
   // tripwire.
-  process.env.N8N_WEBHOOK_SECRET ||= "test-secret-for-secret-isolation";
+  // env.N8N_WEBHOOK_SECRET was captured from process.env at
+  // env.ts load time. If this test file runs first in the suite,
+  // process.env.N8N_WEBHOOK_SECRET is unset and deriveKey throws.
+  // Mutate the exported env object directly (it's a plain, non-
+  // frozen object) so the next deriveKey() call succeeds.
+  const { env } = await import("./env");
+  (env as { N8N_WEBHOOK_SECRET: string | undefined }).N8N_WEBHOOK_SECRET =
+    env.N8N_WEBHOOK_SECRET ?? "test-secret-for-secret-isolation";
   const { decryptCredential } = await import("./credential-encryption");
   const secretsOutput = encryptSecret("hello");
   // credential-encryption reads the prefix first; secrets output
