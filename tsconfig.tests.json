@@ -124,6 +124,8 @@
     "src/modules/purchasing/auto-approve-decision.ts",
     "src/modules/purchasing/auto-approve-decision.test.ts",
     "src/modules/purchasing/rescue-picker.ts",
-    "src/modules/purchasing/rescue-picker.test.ts"
+    "src/modules/purchasing/rescue-picker.test.ts",
+    "src/providers/email/mailto.ts",
+    "src/providers/email/mailto.test.ts"
   ]
 }

@@ -1,28 +1,9 @@
 import type { NotificationProvider, SupplierOrderProvider } from "@/providers/contracts";
 import { NotificationChannel } from "@/lib/prisma";
 import { buildWebsiteOrderPlaywrightTemplate } from "@/modules/automation/playwright-template";
+import { buildMailtoUrl } from "./mailto";
 
-// Build a tap-to-open mailto: URL. Used by the no-config fallback
-// so the Telegram bot can hand the user a button that opens their
-// native email app with everything pre-filled — no API key, no
-// OAuth, no domain setup. Trims the body to 1.8k chars so we stay
-// well under the ~2k URL-length limit most mobile email apps
-// enforce; beyond that the "Send" button silently fails.
-export function buildMailtoUrl(input: {
-  to: string;
-  subject: string;
-  body: string;
-}): string {
-  const trimmedBody =
-    input.body.length > 1800
-      ? input.body.slice(0, 1790) + "\n…"
-      : input.body;
-  const params = new URLSearchParams({
-    subject: input.subject,
-    body: trimmedBody,
-  });
-  return `mailto:${encodeURIComponent(input.to)}?${params.toString()}`;
-}
+export { buildMailtoUrl };
 
 export class ConsoleEmailProvider implements NotificationProvider, SupplierOrderProvider {
   async sendNotification(input: {
