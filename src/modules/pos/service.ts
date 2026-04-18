@@ -887,6 +887,256 @@ export async function queueSquareWebhookSyncs(input: {
 import { getSquareWebhookJobType } from "./square-webhook";
 export { getSquareWebhookJobType } from "./square-webhook";
 
+/**
+ * Clean up PosIntegration rows stuck in CONNECTING. Happens when a
+ * merchant opens the Square/Clover OAuth popup, then closes it before
+ * clicking Allow — the row stays in CONNECTING forever, making the
+ * /settings UI lie about state and blocking fresh connects from
+ * appearing correctly.
+ *
+ * Rules:
+ *   - Only delete rows with NO access token AND no externalMerchantId
+ *     (i.e. purely abandoned OAuth attempts). Rows that DID connect
+ *     once and simply have a stale re-connect attempt in progress
+ *     keep their credentials and get reverted to CONNECTED.
+ *   - Only act on rows older than 30 minutes so a slow real-OAuth
+ *     (merchant typing password) never trips the cleanup.
+ */
+export async function cleanupStaleConnectingPosIntegrations(): Promise<{
+  deleted: number;
+  reverted: number;
+}> {
+  const cutoff = new Date(Date.now() - 30 * 60 * 1000);
+  const stale = await db.posIntegration.findMany({
+    where: {
+      status: IntegrationStatus.CONNECTING,
+      updatedAt: { lt: cutoff },
+    },
+    select: {
+      id: true,
+      accessTokenEncrypted: true,
+      externalMerchantId: true,
+    },
+  });
+
+  let deleted = 0;
+  let reverted = 0;
+
+  for (const row of stale) {
+    if (!row.accessTokenEncrypted && !row.externalMerchantId) {
+      await db.posIntegration.delete({ where: { id: row.id } });
+      deleted += 1;
+    } else {
+      await db.posIntegration.update({
+        where: { id: row.id },
+        data: { status: IntegrationStatus.CONNECTED },
+      });
+      reverted += 1;
+    }
+  }
+
+  return { deleted, reverted };
+}
+
+/**
+ * Daily-ish token refresh sweep.
+ *
+ * Square access tokens live ~30 days; Clover tokens live up to a year
+ * but their refresh tokens expire 60 days after the access token. So
+ * we refresh every CONNECTED integration every time this runs — the
+ * vendors handle the "no change if not needed" case for us, and the
+ * cost is two HTTP requests per integration per day.
+ *
+ * Called from the in-process worker loop on a 12h interval. Safe to
+ * re-run: each provider's refresh endpoint is idempotent for the
+ * current refresh_token, and we only update the DB on success.
+ */
+export async function refreshExpiringPosTokens(): Promise<{
+  scanned: number;
+  refreshed: number;
+  failed: number;
+  details: Array<{
+    integrationId: string;
+    provider: string;
+    outcome: "ok" | "no-refresh-token" | "error";
+    error?: string;
+  }>;
+}> {
+  const integrations = await db.posIntegration.findMany({
+    where: { status: IntegrationStatus.CONNECTED },
+    select: {
+      id: true,
+      provider: true,
+      refreshTokenEncrypted: true,
+    },
+  });
+
+  let refreshed = 0;
+  let failed = 0;
+  const details: Array<{
+    integrationId: string;
+    provider: string;
+    outcome: "ok" | "no-refresh-token" | "error";
+    error?: string;
+  }> = [];
+
+  for (const integration of integrations) {
+    if (!integration.refreshTokenEncrypted) {
+      details.push({
+        integrationId: integration.id,
+        provider: integration.provider,
+        outcome: "no-refresh-token",
+      });
+      continue;
+    }
+
+    try {
+      const refreshToken = decryptSecret(integration.refreshTokenEncrypted);
+      let result: {
+        accessToken: string;
+        refreshToken?: string;
+        expiresAt: Date | null;
+      };
+
+      if (integration.provider === PosProviderType.SQUARE) {
+        const { SquareProvider } = await import("@/providers/pos/square");
+        result = await new SquareProvider().refreshAccessToken({ refreshToken });
+      } else if (integration.provider === PosProviderType.CLOVER) {
+        result = await new CloverProvider().refreshAccessToken({ refreshToken });
+      } else {
+        // Other providers don't have refresh methods yet — skip.
+        details.push({
+          integrationId: integration.id,
+          provider: integration.provider,
+          outcome: "no-refresh-token",
+        });
+        continue;
+      }
+
+      await db.posIntegration.update({
+        where: { id: integration.id },
+        data: {
+          accessTokenEncrypted: encryptSecret(result.accessToken),
+          refreshTokenEncrypted: result.refreshToken
+            ? encryptSecret(result.refreshToken)
+            : undefined,
+        },
+      });
+      refreshed += 1;
+      details.push({
+        integrationId: integration.id,
+        provider: integration.provider,
+        outcome: "ok",
+      });
+    } catch (err) {
+      failed += 1;
+      details.push({
+        integrationId: integration.id,
+        provider: integration.provider,
+        outcome: "error",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return { scanned: integrations.length, refreshed, failed, details };
+}
+
+/**
+ * Clover webhook → job enqueue. Same shape as queueSquareWebhookSyncs
+ * but scoped to CLOVER integrations. The event-type mapping already
+ * happened upstream (extractCloverEvents), so `eventType` here is
+ * already our internal "SYNC_CATALOG" | "SYNC_SALES" enum.
+ */
+export async function queueCloverWebhookSyncs(input: {
+  eventType?: string | null;
+  eventId?: string | null;
+  merchantId?: string | null;
+  locationId?: string | null;
+}) {
+  const jobType =
+    input.eventType === "SYNC_CATALOG" || input.eventType === "SYNC_SALES"
+      ? input.eventType
+      : null;
+
+  if (!jobType) {
+    return {
+      enqueued: false,
+      matchedIntegrations: 0,
+      message: "Clover webhook did not map to a syncable job type.",
+    };
+  }
+
+  const integrations = await db.posIntegration.findMany({
+    where: {
+      provider: PosProviderType.CLOVER,
+      status: IntegrationStatus.CONNECTED,
+      ...(input.merchantId
+        ? { externalMerchantId: input.merchantId }
+        : {}),
+    },
+    select: { id: true, locationId: true },
+  });
+
+  if (integrations.length === 0) {
+    return {
+      enqueued: false,
+      matchedIntegrations: 0,
+      message:
+        "Clover webhook validated, but no connected Clover integrations matched it.",
+    };
+  }
+
+  await db.$transaction(async (tx) => {
+    for (const integration of integrations) {
+      await tx.posSyncRun.create({
+        data: {
+          integrationId: integration.id,
+          syncType: PosSyncType.WEBHOOK,
+          status: JobStatus.COMPLETED,
+          details: {
+            eventType: input.eventType ?? null,
+            eventId: input.eventId ?? null,
+            merchantId: input.merchantId ?? null,
+            queuedJobType: jobType,
+          },
+          completedAt: new Date(),
+        },
+      });
+
+      await enqueueJobTx(tx, {
+        locationId: integration.locationId,
+        type: jobType,
+        payload: {
+          integrationId: integration.id,
+          webhookEventType: input.eventType ?? null,
+          webhookEventId: input.eventId ?? null,
+        },
+      });
+
+      await createAuditLogTx(tx, {
+        locationId: integration.locationId,
+        action: "integration.clover.webhook_received",
+        entityType: "posIntegration",
+        entityId: integration.id,
+        details: {
+          eventType: input.eventType ?? null,
+          eventId: input.eventId ?? null,
+          merchantId: input.merchantId ?? null,
+          queuedJobType: jobType,
+        },
+      });
+    }
+  });
+
+  return {
+    enqueued: true,
+    matchedIntegrations: integrations.length,
+    jobType,
+    message: `Queued ${jobType.toLowerCase().replaceAll("_", " ")} for ${integrations.length} Clover integration${integrations.length === 1 ? "" : "s"}.`,
+  };
+}
+
 async function resolveMenuItemForCatalogItemTx(
   tx: Prisma.TransactionClient,
   input: {

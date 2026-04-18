@@ -151,6 +151,58 @@ export class SquareProvider implements PosProvider {
     };
   }
 
+  /**
+   * Exchange a refresh_token for a fresh access_token pair. Square's
+   * access tokens live ~30 days; refresh tokens live ~90. Called by
+   * the daily cron (`refreshExpiringPosTokens`) so connected merchants
+   * don't silently go dead a month after connecting.
+   */
+  async refreshAccessToken(input: { refreshToken: string }): Promise<{
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt: Date | null;
+  }> {
+    if (!env.SQUARE_CLIENT_ID || !env.SQUARE_CLIENT_SECRET) {
+      throw new Error("Square client credentials are not configured.");
+    }
+
+    const response = await fetch(`${this.getTokenBaseUrl()}/oauth2/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Square-Version": env.SQUARE_API_VERSION,
+      },
+      body: JSON.stringify({
+        client_id: env.SQUARE_CLIENT_ID,
+        client_secret: env.SQUARE_CLIENT_SECRET,
+        refresh_token: input.refreshToken,
+        grant_type: "refresh_token",
+      }),
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_at?: string;
+      message?: string;
+      errors?: Array<{ detail?: string }>;
+    };
+
+    if (!response.ok || !payload.access_token) {
+      throw new Error(
+        payload.errors?.[0]?.detail ??
+          payload.message ??
+          `Square token refresh failed with status ${response.status}`
+      );
+    }
+
+    return {
+      accessToken: payload.access_token,
+      refreshToken: payload.refresh_token,
+      expiresAt: payload.expires_at ? new Date(payload.expires_at) : null,
+    };
+  }
+
   async syncCatalog(input?: {
     accessToken?: string | null;
     locationId?: string | null;

@@ -144,8 +144,10 @@ export async function register() {
         const JOB_TICK_MS = 5_000;
         const SUPPLIER_REPLY_INTERVAL_MS = 5 * 60 * 1000;
         const NUDGE_INTERVAL_MS = 60 * 60 * 1000; // hourly
+        const POS_TOKEN_REFRESH_MS = 12 * 60 * 60 * 1000; // twice a day
         let lastSupplierReplyAt = 0;
         let lastNudgeAt = 0;
+        let lastTokenRefreshAt = 0;
         let running = false;
 
         const tick = async () => {
@@ -185,6 +187,37 @@ export async function register() {
               ) {
                 console.log(
                   `[in-proc-worker] nudges: ${nudgeResult.stuckReplyNudgesSent} reply-followups, ${nudgeResult.lateDeliveryPromptsSent} delivery-prompts`
+                );
+              }
+            }
+            // POS OAuth token refresh — Square tokens expire ~30d,
+            // Clover refresh tokens expire 60d after access. Running
+            // every 12h means we refresh each token ~60× before it
+            // could ever die.
+            if (now - lastTokenRefreshAt >= POS_TOKEN_REFRESH_MS) {
+              lastTokenRefreshAt = now;
+              const {
+                refreshExpiringPosTokens,
+                cleanupStaleConnectingPosIntegrations,
+              } = await import("@/modules/pos/service");
+              const result = await refreshExpiringPosTokens().catch((err) => {
+                console.error("[in-proc-worker] pos token refresh", err);
+                return null;
+              });
+              if (result && (result.refreshed > 0 || result.failed > 0)) {
+                console.log(
+                  `[in-proc-worker] pos tokens: refreshed=${result.refreshed} failed=${result.failed} scanned=${result.scanned}`
+                );
+              }
+              const cleanup = await cleanupStaleConnectingPosIntegrations().catch(
+                (err) => {
+                  console.error("[in-proc-worker] stale-connecting cleanup", err);
+                  return null;
+                }
+              );
+              if (cleanup && (cleanup.deleted > 0 || cleanup.reverted > 0)) {
+                console.log(
+                  `[in-proc-worker] stale-connecting: deleted=${cleanup.deleted} reverted=${cleanup.reverted}`
                 );
               }
             }

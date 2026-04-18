@@ -156,6 +156,58 @@ export class CloverProvider implements PosProvider {
     };
   }
 
+  /**
+   * Clover token refresh. Clover issues access tokens that expire
+   * (default 1 year, but some orgs have shorter policies) along with
+   * a refresh_token. We refresh before expiry via the daily cron.
+   *
+   * Endpoint: POST /oauth/v2/refresh
+   * Body: { client_id, refresh_token }
+   * Response: { access_token, refresh_token, access_token_expiration }
+   */
+  async refreshAccessToken(input: { refreshToken: string }): Promise<{
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt: Date | null;
+  }> {
+    if (!env.CLOVER_CLIENT_ID || !env.CLOVER_CLIENT_SECRET) {
+      throw new Error("Clover client credentials are not configured.");
+    }
+
+    const response = await fetch(`${this.getApiBaseUrl()}/oauth/v2/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: env.CLOVER_CLIENT_ID,
+        refresh_token: input.refreshToken,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      access_token?: string;
+      refresh_token?: string;
+      access_token_expiration?: number;
+      message?: string;
+    };
+
+    if (!response.ok || !payload.access_token) {
+      throw new Error(
+        payload.message ??
+          `Clover token refresh failed with status ${response.status}`
+      );
+    }
+
+    return {
+      accessToken: payload.access_token,
+      refreshToken: payload.refresh_token,
+      // Clover returns seconds-since-epoch as a number.
+      expiresAt:
+        typeof payload.access_token_expiration === "number"
+          ? new Date(payload.access_token_expiration * 1000)
+          : null,
+    };
+  }
+
   async syncCatalog(input?: {
     accessToken?: string | null;
     locationId?: string | null;
