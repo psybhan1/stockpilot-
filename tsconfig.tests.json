@@ -58,6 +58,8 @@
     "src/lib/bot-telemetry.test.ts",
     "src/lib/twilio-webhook.ts",
     "src/lib/twilio-webhook.test.ts",
+    "src/lib/extension-cors.ts",
+    "src/lib/extension-cors.test.ts",
     "src/lib/env.ts",
     "src/lib/permissions.ts",
     "src/lib/permissions.test.ts",
