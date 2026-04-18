@@ -108,6 +108,8 @@
     "src/modules/pos/square-webhook.ts",
     "src/modules/pos/square-webhook.test.ts",
     "src/providers/notification/expo-ticket-parse.ts",
-    "src/providers/notification/expo-ticket-parse.test.ts"
+    "src/providers/notification/expo-ticket-parse.test.ts",
+    "src/modules/inventory/ledger-primitives.ts",
+    "src/modules/inventory/ledger-primitives.test.ts"
   ]
 }

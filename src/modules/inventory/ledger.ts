@@ -6,7 +6,6 @@ import {
   MovementType,
   RecommendationStatus,
   SaleProcessingStatus,
-  ServiceMode,
 } from "@/lib/prisma";
 import type { Prisma } from "@/lib/prisma";
 
@@ -23,102 +22,14 @@ import { isCountStale, isHighUsageSpike } from "@/modules/forecast/anomalies";
 import { queueManagerEmailNotificationsTx } from "@/modules/notifications/service";
 import { buildRecommendationSummary, calculateRecommendedOrder } from "@/modules/purchasing/reorder";
 import { applyDelta, calculateCountAdjustment } from "@/modules/inventory/units";
-
-const usageSignalMovementTypes: readonly MovementType[] = [
-  MovementType.POS_DEPLETION,
-  MovementType.WASTE,
-  MovementType.BREAKAGE,
-  MovementType.MANUAL_COUNT_ADJUSTMENT,
-  MovementType.CORRECTION,
-  MovementType.TRANSFER,
-  MovementType.RETURN,
-] as const;
-
-function componentMatchesServiceMode(
-  serviceMode: ServiceMode | null | undefined,
-  conditionServiceMode: ServiceMode | null | undefined
-) {
-  if (!conditionServiceMode) {
-    return true;
-  }
-
-  return serviceMode === conditionServiceMode;
-}
-
-function componentMatchesModifierKey(
-  modifierKey: string | null | undefined,
-  lineModifierKeys: string[]
-) {
-  if (!modifierKey) {
-    return true;
-  }
-
-  const normalizedModifierKey = normalizeModifierKey(modifierKey);
-  return lineModifierKeys.some(
-    (lineModifierKey) => normalizeModifierKey(lineModifierKey) === normalizedModifierKey
-  );
-}
-
-function normalizeModifierKey(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function extractModifierKeys(
-  modifierKeys: Prisma.JsonValue | null | undefined,
-  rawData: Prisma.JsonValue | null | undefined
-) {
-  const fromField = extractModifierKeysFromValue(modifierKeys);
-
-  if (fromField.length > 0) {
-    return fromField;
-  }
-
-  if (!rawData || typeof rawData !== "object" || Array.isArray(rawData)) {
-    return [];
-  }
-
-  return extractModifierKeysFromValue(
-    (rawData as Record<string, unknown>).modifiers as Prisma.JsonValue | undefined
-  );
-}
-
-function extractModifierKeysFromValue(value: Prisma.JsonValue | null | undefined) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .flatMap((entry) => {
-      if (typeof entry === "string") {
-        return [entry];
-      }
-
-      if (entry && typeof entry === "object" && !Array.isArray(entry)) {
-        const record = entry as Record<string, unknown>;
-        return [record.catalog_object_id, record.name].filter(
-          (candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0
-        );
-      }
-
-      return [];
-    })
-    .map((entry) => entry.trim());
-}
-
-function sumNegativeUsageBase(
-  movements: Array<{
-    movementType: MovementType;
-    quantityDeltaBase: number;
-  }>
-) {
-  return movements
-    .filter((movement) => usageSignalMovementTypes.includes(movement.movementType))
-    .reduce((sum, movement) => sum + Math.abs(Math.min(movement.quantityDeltaBase, 0)), 0);
-}
-
-function clampConfidenceScore(score: number) {
-  return Math.min(0.99, Math.max(0.2, score));
-}
+import {
+  USAGE_SIGNAL_MOVEMENT_TYPES,
+  clampConfidenceScore,
+  componentMatchesModifierKey,
+  componentMatchesServiceMode,
+  extractModifierKeys,
+  sumNegativeUsageBase,
+} from "@/modules/inventory/ledger-primitives";
 
 export async function postStockMovementTx(
   tx: Prisma.TransactionClient,
@@ -284,7 +195,7 @@ export async function syncAlertsAndRecommendationsTx(
       where: {
         inventoryItemId,
         movementType: {
-          in: [...usageSignalMovementTypes],
+          in: [...USAGE_SIGNAL_MOVEMENT_TYPES],
         },
         performedAt: {
           gte: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
@@ -295,7 +206,7 @@ export async function syncAlertsAndRecommendationsTx(
       where: {
         inventoryItemId,
         movementType: {
-          in: [...usageSignalMovementTypes],
+          in: [...USAGE_SIGNAL_MOVEMENT_TYPES],
         },
         performedAt: {
           gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
