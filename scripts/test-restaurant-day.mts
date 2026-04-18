@@ -20,7 +20,7 @@ const db = new PrismaClient();
 // We hand back scripted responses for each call. Most restaurant-
 // day scenarios go through the sniffer (which bypasses Groq), but
 // a few ("what's low?", mark delivered) need the agent.
-let groqScript: Array<{ role: string; content: string | null; tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }> }> = [];
+const groqScript: Array<{ role: string; content: string | null; tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }> }> = [];
 let groqIdx = 0;
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {

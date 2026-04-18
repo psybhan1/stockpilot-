@@ -20,18 +20,15 @@ export async function register() {
       const { ensureTelegramWebhook } = await import("@/lib/telegram-bot");
       const result = await ensureTelegramWebhook();
       if (!result.ok) {
-        // eslint-disable-next-line no-console
         console.warn("[bot] Telegram webhook sync skipped:", result.reason);
         return;
       }
       if (result.changed) {
-        // eslint-disable-next-line no-console
         console.log(
           `[bot] Telegram webhook re-synced → ${result.webhookUrl} (allowed_updates updated)`
         );
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.error(
         "[bot] Telegram webhook sync failed:",
         err instanceof Error ? err.message : err
@@ -58,14 +55,12 @@ export async function register() {
       });
 
       if (gmailCount > 0) {
-        // eslint-disable-next-line no-console
         console.log(
           `[email] No global provider, but ${gmailCount} location(s) have Gmail connected. Locations without Gmail will simulate sends.`
         );
         return;
       }
 
-      // eslint-disable-next-line no-console
       console.warn(
         "\n" +
           "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +

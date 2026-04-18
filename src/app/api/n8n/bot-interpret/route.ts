@@ -18,7 +18,6 @@ export async function POST(request: NextRequest) {
     const text = String(req.text ?? "").trim();
     const channel = String(req.channel ?? "UNKNOWN").trim().toUpperCase();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const inventoryChoices: Array<{ id: string; name: string; sku: string | null }> =
       Array.isArray(req.inventoryChoices)
         ? req.inventoryChoices
@@ -33,7 +32,6 @@ export async function POST(request: NextRequest) {
             }))
         : [];
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const conversationHistory: Array<{ role: string; text: string }> = Array.isArray(
       req.conversationHistory
     )

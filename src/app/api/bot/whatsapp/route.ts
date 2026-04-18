@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { env } from "@/lib/env";
 import { BotChannel } from "@/lib/prisma";
+import { rateLimit } from "@/lib/rate-limit";
 import {
   buildTwimlEmptyResponse,
   buildTwimlMessageResponse,
@@ -24,6 +25,25 @@ function readLocationPairingCode(text: string): string | null {
 }
 
 export async function POST(request: Request) {
+  try {
+    return await handleWhatsAppWebhook(request);
+  } catch (err) {
+    // Safety net: any unhandled throw (DB outage, provider error, etc.)
+    // must still return a TwiML reply so the user sees *something*
+    // instead of a silent 500. Twilio would retry 5xx and spam the
+    // user's chat with duplicates.
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[whatsapp webhook] unhandled error:", message);
+    return new NextResponse(
+      buildTwimlMessageResponse(
+        "⚠ Something went wrong on my end. Give me a minute and try again — if it keeps happening, your manager can check Settings → Alerts."
+      ),
+      { headers: XML_HEADERS }
+    );
+  }
+}
+
+async function handleWhatsAppWebhook(request: Request) {
   // ── Parse form fields ───────────────────────────────────────────────────────
   const formData = await request.formData();
   const formFields = new URLSearchParams();
@@ -53,6 +73,19 @@ export async function POST(request: Request) {
 
   if (!senderId) {
     return new NextResponse(buildTwimlEmptyResponse(), { headers: XML_HEADERS });
+  }
+
+  // Per-sender rate limit — matches the Telegram route. 15 messages
+  // per 60s is well above real human usage and contains abuse /
+  // retry storms without blocking other users.
+  const rl = rateLimit({ key: `wa:${senderId}`, windowMs: 60_000, max: 15 });
+  if (!rl.allowed) {
+    return new NextResponse(
+      buildTwimlMessageResponse(
+        `⚠ You're sending messages too fast — give me ${rl.retryAfterSec}s and try again.`
+      ),
+      { headers: XML_HEADERS }
+    );
   }
 
   // ── Resolve message text (text or transcribed voice) ───────────────────────
@@ -115,7 +148,14 @@ export async function POST(request: Request) {
   }
 
   // ── Regular bot message ─────────────────────────────────────────────────────
-  const result = await handleInboundManagerBotMessage({
+  // Hard 45s ceiling on the whole turn — mirrors the Telegram route.
+  // If the underlying agent hangs (LLM timeout × retries, metadata
+  // fetch stuck, etc.) we don't want Twilio to time us out at ~15s
+  // and retry; we'd rather return a human-friendly "try again."
+  //
+  // Wrap the inner work in .catch() so a late rejection (after the
+  // timeout arm wins) doesn't become an unhandled promise rejection.
+  const inner = handleInboundManagerBotMessage({
     channel: "WHATSAPP",
     senderId,
     senderDisplayName: profileName,
@@ -125,7 +165,32 @@ export async function POST(request: Request) {
       ...Object.fromEntries(formFields.entries()),
       isVoiceTranscription: isVoice,
     },
+  }).catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[whatsapp webhook] agent throw:", msg);
+    return {
+      ok: false,
+      reply:
+        "⚠ I hit an error processing that. Try again in a moment — if it keeps happening your manager can check Settings → Alerts.",
+      skipSend: false,
+    };
   });
+
+  const result = await Promise.race([
+    inner,
+    new Promise<{ ok: boolean; reply: string; skipSend?: boolean }>((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            ok: false,
+            reply:
+              "⌛ Taking longer than expected — try again in a moment. Complex operations can take 30+ seconds.",
+            skipSend: false,
+          }),
+        45000
+      )
+    ),
+  ]);
 
   return new NextResponse(
     result.skipSend ? buildTwimlEmptyResponse() : buildTwimlMessageResponse(result.reply),

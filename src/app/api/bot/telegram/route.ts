@@ -348,19 +348,40 @@ async function handleTelegramUpdate(payload: TelegramUpdate) {
   // etc.) we don't want the webhook to block forever — Telegram
   // retries after ~60s on its end, which creates duplicate-processing
   // storms. Return a safe "try again" instead.
+  //
+  // Important: wrap the inner work in .catch() so a late rejection
+  // (after the timeout arm wins) doesn't become an unhandled promise
+  // rejection that can crash the process under --unhandled-rejections=strict.
+  const inner = handleInboundManagerBotMessage({
+    channel: "TELEGRAM",
+    senderId: String(chatId),
+    senderDisplayName:
+      displayName || payload.message?.from?.username || String(senderId),
+    text,
+    sourceMessageId,
+    rawPayload: {
+      ...(payload as unknown as Record<string, unknown>),
+      isVoiceTranscription: isVoice,
+    } as unknown as Prisma.InputJsonValue,
+  }).catch((err: unknown): {
+    ok: boolean;
+    reply: string;
+    purchaseOrderId?: string | null;
+    orderNumber?: string | null;
+    skipSend?: boolean;
+  } => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[telegram webhook] agent throw:", msg);
+    return {
+      ok: false,
+      reply:
+        "⚠ I hit an error processing that. Try again in a moment — if it keeps happening your manager can check Settings → Alerts.",
+      skipSend: false,
+    };
+  });
+
   const result = await Promise.race([
-    handleInboundManagerBotMessage({
-      channel: "TELEGRAM",
-      senderId: String(chatId),
-      senderDisplayName:
-        displayName || payload.message?.from?.username || String(senderId),
-      text,
-      sourceMessageId,
-      rawPayload: {
-        ...(payload as unknown as Record<string, unknown>),
-        isVoiceTranscription: isVoice,
-      } as unknown as Prisma.InputJsonValue,
-    }),
+    inner,
     new Promise<{
       ok: boolean;
       reply: string;

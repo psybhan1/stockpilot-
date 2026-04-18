@@ -24,7 +24,6 @@ export const botTelemetry = {
   event(name: string, details: JsonObject = {}) {
     const payload: JsonObject = { evt: name, ts: Date.now(), ...details };
     // Single line JSON, safe for most log aggregators.
-    // eslint-disable-next-line no-console
     console.log(`[bot] ${JSON.stringify(payload)}`);
   },
 

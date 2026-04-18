@@ -24,7 +24,6 @@ export async function POST(request: NextRequest) {
     const scenario = String(req.scenario ?? "default").trim().toLowerCase();
     const managerText = String(req.managerText ?? "").trim();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const conversationHistory: Array<{ role: string; text: string }> = Array.isArray(
       req.conversationHistory
     )
