@@ -76,6 +76,8 @@
     "src/modules/automation/product-metadata.ts",
     "src/modules/automation/product-metadata.test.ts",
     "src/modules/operator-bot/workflows/parse-helpers.ts",
-    "src/modules/operator-bot/workflows/parse-helpers.test.ts"
+    "src/modules/operator-bot/workflows/parse-helpers.test.ts",
+    "src/modules/inventory/image-resolver.ts",
+    "src/modules/inventory/image-resolver.test.ts"
   ]
 }
