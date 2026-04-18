@@ -12,7 +12,13 @@ import {
   takeStepScreenshot,
   type AgentStepSink,
 } from "@/modules/automation/browser-safety";
+import {
+  AGE_GATE_DIRECT_SELECTORS,
+  AGE_GATE_TEXT_PATTERNS,
+} from "@/modules/automation/sites/age-gate";
 import type { SupplierWebsiteCredentials } from "@/modules/suppliers/website-credentials";
+
+export { isAgeGateConfirmText } from "@/modules/automation/sites/age-gate";
 
 export type GenericSearchResult = {
   query: string;
@@ -243,35 +249,8 @@ export async function addItemsToGenericSite(
 }
 
 // ── Age gate handling ────────────────────────────────────────────
-// LCBO, SAQ, BevMo, Total Wine, and many alcohol / adult-content
-// sites block access behind an age-verification modal. The modal
-// is usually a simple "Yes, I'm 21+" / "I am 19 or older" button
-// that sets a cookie then lets you browse. Missing it means the
-// search box isn't reachable and the agent fails cryptically.
-//
-// We look for a bunch of common variants and click whichever one
-// hits first. Pure best-effort — it's fine to call on pages without
-// a gate (finds nothing, returns silently).
-
-const AGE_GATE_TEXT_PATTERNS = [
-  /\byes[,!]?\s+i['’]?m\s+(?:\d{2}|of\s+age|old(?:er|enough))/i,
-  /\bi\s+am\s+(?:\d{2}|of\s+legal\s+age|old\s+enough)/i,
-  /\b(?:i['’]?m|yes,?\s+i['’]?m)\s+(?:of\s+(?:drinking|legal)\s+age)/i,
-  /\benter\s+(?:site|store|shop)\b/i,
-  /\bconfirm(?:\s+age)?\b/i,
-  /\bover\s+\d{2}\b/i,
-  /\b(?:19|20|21)\+/,
-];
-
-const AGE_GATE_DIRECT_SELECTORS = [
-  'button[id*="age"]',
-  'button[class*="age"]',
-  'button[data-testid*="age"]',
-  'button[aria-label*="age" i]',
-  'a[id*="age-gate"]',
-  'button[id*="over"]',
-  'button[class*="enter-site" i]',
-];
+// Patterns + selectors live in ./age-gate (pure, test-compilable).
+// This function is the browser-runtime glue that drives puppeteer.
 
 export async function dismissAgeGate(page: import("puppeteer-core").Page): Promise<boolean> {
   try {
@@ -326,15 +305,3 @@ export async function dismissAgeGate(page: import("puppeteer-core").Page): Promi
   return false;
 }
 
-/**
- * Exported pure helper for the test suite: does this visible button
- * text look like an age-gate confirmation (not a denial)?
- */
-export function isAgeGateConfirmText(text: string): boolean {
-  const normalised = text.trim();
-  if (!normalised) return false;
-  // Deny first: "No, I'm under 21" / "Exit"
-  if (/no,?\s+i['’]?m\s+(?:under|not)/i.test(normalised)) return false;
-  if (/\bexit\b/i.test(normalised)) return false;
-  return AGE_GATE_TEXT_PATTERNS.some((p) => p.test(normalised));
-}
