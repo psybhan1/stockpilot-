@@ -32,6 +32,8 @@
     "src/modules/variance/math.test.ts",
     "src/modules/recipes/costing.ts",
     "src/modules/recipes/costing.test.ts",
+    "src/modules/invoices/parse.ts",
+    "src/modules/invoices/parse.test.ts",
     "src/lib/csv.ts",
     "src/lib/csv.test.ts",
     "src/providers/contracts.ts",

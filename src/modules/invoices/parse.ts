@@ -313,9 +313,13 @@ export function coerceParsedResponse(
       : {};
 
   const supplierName =
-    typeof obj.supplierName === "string" ? obj.supplierName.slice(0, 120) : null;
+    typeof obj.supplierName === "string" && obj.supplierName.trim().length > 0
+      ? obj.supplierName.trim().slice(0, 120)
+      : null;
   const invoiceNumber =
-    typeof obj.invoiceNumber === "string" ? obj.invoiceNumber.slice(0, 64) : null;
+    typeof obj.invoiceNumber === "string" && obj.invoiceNumber.trim().length > 0
+      ? obj.invoiceNumber.trim().slice(0, 64)
+      : null;
 
   return {
     ok: true,
@@ -459,19 +463,39 @@ const GENERIC_CORP_TOKENS = new Set([
   "foods",
   "food",
   "supply",
-  "company",
   "the",
   "and",
 ]);
 
+/**
+ * Coerce to a finite number. Accepts numeric strings like "1245" or
+ * "1245.00" because `response_format: json_object` doesn't stop the
+ * model from emitting quoted numbers. Returns null for anything
+ * else (objects, non-numeric strings, NaN, Infinity, negatives).
+ */
+function coerceFiniteNumber(v: unknown): number | null {
+  if (typeof v === "number") {
+    return Number.isFinite(v) ? v : null;
+  }
+  if (typeof v === "string") {
+    const trimmed = v.trim();
+    if (!trimmed) return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 function coerceNonNegativeInteger(v: unknown): number | null {
-  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
-  return Math.round(v);
+  const n = coerceFiniteNumber(v);
+  if (n == null || n < 0) return null;
+  return Math.round(n);
 }
 
 function coerceNonNegativeNumber(v: unknown): number | null {
-  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
-  return v;
+  const n = coerceFiniteNumber(v);
+  if (n == null || n < 0) return null;
+  return n;
 }
 
 /**
