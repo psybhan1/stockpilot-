@@ -7,10 +7,16 @@ export const dynamic = "force-static";
 
 const DOCS = [
   {
-    href: "/docs/pos-quickstart",
-    title: "Connect any POS in 4 steps",
+    href: "/docs/square-setup",
+    title: "Connect Square in 5 minutes",
     description:
-      "Step-by-step Zapier walkthrough: trigger, webhook, URL + Bearer, first test. Works for Toast, Clover, Lightspeed, Shopify POS, and any other POS Zapier supports.",
+      "Native OAuth setup. Register a Square developer app, paste three credentials into Railway, click Connect Square. Every sale then auto-depletes inventory in real time.",
+  },
+  {
+    href: "/docs/pos-quickstart",
+    title: "Connect any other POS (Zapier bridge)",
+    description:
+      "For Toast, Clover, Lightspeed, Shopify POS, and anything else Zapier supports. 2-minute Zapier setup wires sales to StockPilot's generic webhook.",
   },
   {
     href: "/docs/google-verification",

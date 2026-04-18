@@ -331,18 +331,26 @@ export default async function SettingsPage({
                 : "warning"
           }
         >
-          <form action={connectSquareAction}>
-            <Button
-              type="submit"
-              size="sm"
-              className="h-9 gap-2 bg-[#3E4348] hover:bg-[#2d3136] text-white text-xs border-0"
+          <div className="flex items-center gap-2">
+            <Link
+              href="/docs/square-setup"
+              className="text-[11px] text-muted-foreground hover:text-foreground whitespace-nowrap"
             >
-              <SquareLogo size={14} />
-              {posByProvider.SQUARE?.status === "CONNECTED"
-                ? "Reconnect"
-                : "Connect Square"}
-            </Button>
-          </form>
+              Setup guide →
+            </Link>
+            <form action={connectSquareAction}>
+              <Button
+                type="submit"
+                size="sm"
+                className="h-9 gap-2 bg-[#3E4348] hover:bg-[#2d3136] text-white text-xs border-0"
+              >
+                <SquareLogo size={14} />
+                {posByProvider.SQUARE?.status === "CONNECTED"
+                  ? "Reconnect"
+                  : "Connect Square"}
+              </Button>
+            </form>
+          </div>
         </BrandCard>
 
         {/* One row for every other POS. Honest framing: native
