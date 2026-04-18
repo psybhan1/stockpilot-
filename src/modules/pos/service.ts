@@ -888,6 +888,99 @@ import { getSquareWebhookJobType } from "./square-webhook";
 export { getSquareWebhookJobType } from "./square-webhook";
 
 /**
+ * Disconnect a POS integration. Flips status to DISCONNECTED, clears
+ * the access + refresh tokens, and best-effort revokes the token at
+ * the vendor (Square has /oauth2/revoke; Clover has no public revoke,
+ * so we let it expire naturally).
+ *
+ * We deliberately DON'T delete the PosIntegration row — PosSaleEvent,
+ * PosCatalogItem, and PosSimpleMapping all relate back to it, and
+ * deleting would nuke historical sales data. Next time the merchant
+ * clicks Connect, ensureSquare/CloverIntegration re-uses the same
+ * row and flips it back to CONNECTED without losing anything.
+ */
+export async function disconnectPosIntegration(input: {
+  locationId: string;
+  provider: PosProviderType;
+  userId: string;
+}): Promise<{ ok: true; revokedAtVendor: boolean }> {
+  const integration = await db.posIntegration.findFirst({
+    where: {
+      locationId: input.locationId,
+      provider: input.provider,
+    },
+    select: {
+      id: true,
+      accessTokenEncrypted: true,
+    },
+  });
+
+  if (!integration) {
+    return { ok: true, revokedAtVendor: false };
+  }
+
+  let revokedAtVendor = false;
+
+  // Best-effort vendor-side revoke. If it fails, we still disconnect
+  // locally — the merchant expects the button to "do what it says."
+  if (integration.accessTokenEncrypted) {
+    try {
+      const accessToken = decryptSecret(integration.accessTokenEncrypted);
+      if (input.provider === PosProviderType.SQUARE) {
+        if (env.SQUARE_CLIENT_ID) {
+          const revokeBase =
+            env.SQUARE_ENVIRONMENT === "production"
+              ? "https://connect.squareup.com"
+              : "https://connect.squareupsandbox.com";
+          const response = await fetch(`${revokeBase}/oauth2/revoke`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Client ${env.SQUARE_CLIENT_SECRET ?? ""}`,
+              "Square-Version": env.SQUARE_API_VERSION,
+            },
+            body: JSON.stringify({
+              client_id: env.SQUARE_CLIENT_ID,
+              access_token: accessToken,
+            }),
+          });
+          revokedAtVendor = response.ok;
+        }
+      }
+      // Clover: no public revoke endpoint — token will die on its
+      // own at the expiration stored when exchangeCode ran. Merchants
+      // can uninstall from Clover's "My Apps" dashboard if they want
+      // to fully sever the connection at Clover's side.
+    } catch {
+      // Swallow — we still want the local disconnect to succeed.
+    }
+  }
+
+  await db.posIntegration.update({
+    where: { id: integration.id },
+    data: {
+      status: IntegrationStatus.DISCONNECTED,
+      accessTokenEncrypted: null,
+      refreshTokenEncrypted: null,
+      settings: { oauthState: null },
+    },
+  });
+
+  await db.$transaction(async (tx) => {
+    await createAuditLogTx(tx, {
+      locationId: input.locationId,
+      userId: input.userId,
+      action: `integration.${input.provider.toLowerCase()}.disconnected`,
+      entityType: "posIntegration",
+      entityId: integration.id,
+      details: { revokedAtVendor },
+    });
+  });
+
+  return { ok: true, revokedAtVendor };
+}
+
+/**
  * Clean up PosIntegration rows stuck in CONNECTING. Happens when a
  * merchant opens the Square/Clover OAuth popup, then closes it before
  * clicking Allow — the row stays in CONNECTING forever, making the

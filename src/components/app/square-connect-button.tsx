@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { startSquareConnectAction } from "@/app/actions/operations";
+import {
+  disconnectPosIntegrationAction,
+  startSquareConnectAction,
+} from "@/app/actions/operations";
 import { Button } from "@/components/ui/button";
 
 type Outcome = "connected" | "error";
@@ -35,13 +38,17 @@ type OAuthMessage = {
 export function SquareConnectButton({
   label,
   className,
+  connected = false,
 }: {
   label: string;
   className?: string;
+  connected?: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [phase, setPhase] = useState<"idle" | "opening" | "waiting">("idle");
+  const [phase, setPhase] = useState<"idle" | "opening" | "waiting" | "disconnecting">(
+    "idle"
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const popupRef = useRef<Window | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -138,13 +145,36 @@ export function SquareConnectButton({
     });
   }, [clearPoll, router]);
 
+  const handleDisconnect = useCallback(() => {
+    if (
+      !window.confirm(
+        "Disconnect Square? Sales will stop syncing until you reconnect. Your inventory and sale history are kept."
+      )
+    ) {
+      return;
+    }
+    setErrorMessage(null);
+    setPhase("disconnecting");
+    startTransition(async () => {
+      const result = await disconnectPosIntegrationAction("SQUARE");
+      setPhase("idle");
+      if (!result.ok) {
+        setErrorMessage(result.reason);
+        return;
+      }
+      router.refresh();
+    });
+  }, [router]);
+
   const disabled = isPending || phase !== "idle";
   const buttonLabel =
     phase === "opening"
       ? "Opening Square…"
       : phase === "waiting"
         ? "Waiting for Square…"
-        : label;
+        : phase === "disconnecting"
+          ? "Disconnecting…"
+          : label;
 
   return (
     <div className="flex flex-col items-end gap-1.5">
@@ -156,6 +186,16 @@ export function SquareConnectButton({
       >
         {buttonLabel}
       </Button>
+      {connected ? (
+        <button
+          type="button"
+          onClick={handleDisconnect}
+          disabled={disabled}
+          className="text-[11px] text-muted-foreground hover:text-red-400 transition disabled:opacity-50"
+        >
+          Disconnect
+        </button>
+      ) : null}
       {errorMessage ? (
         <p className="max-w-xs text-right text-xs text-red-400">
           {errorMessage}

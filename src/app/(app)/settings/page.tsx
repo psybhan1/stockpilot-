@@ -346,6 +346,7 @@ export default async function SettingsPage({
                   : "Connect Square"
               }
               className="h-9 gap-2 bg-[#3E4348] hover:bg-[#2d3136] text-white text-xs border-0"
+              connected={posByProvider.SQUARE?.status === "CONNECTED"}
             />
           </div>
         </BrandCard>
@@ -378,6 +379,7 @@ export default async function SettingsPage({
                 : "Connect Clover"
             }
             className="h-9 gap-2 bg-[#00B140] hover:bg-[#008f35] text-white text-xs border-0"
+            connected={posByProvider.CLOVER?.status === "CONNECTED"}
           />
         </BrandCard>
 

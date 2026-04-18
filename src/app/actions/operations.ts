@@ -16,6 +16,7 @@ import {
   AgentTaskStatus,
   BotChannel,
   JobType,
+  PosProviderType,
 } from "@/lib/prisma";
 import {
   acknowledgePurchaseOrder,
@@ -27,6 +28,7 @@ import {
   rejectRecommendation,
 } from "@/modules/purchasing/service";
 import {
+  disconnectPosIntegration,
   ensureCloverIntegration,
   ensureSquareIntegration,
   importSampleSales,
@@ -722,6 +724,38 @@ export async function startCloverConnectAction(): Promise<
   revalidateOperations();
 
   return { ok: true, status: "connected" };
+}
+
+/**
+ * Disconnect a POS integration. Flips its status to DISCONNECTED,
+ * clears tokens, best-effort revokes at the vendor. Used by the
+ * "Disconnect" link on /settings so merchants can switch POS
+ * themselves without emailing support.
+ */
+export async function disconnectPosIntegrationAction(
+  provider: "SQUARE" | "CLOVER"
+): Promise<{ ok: true; revokedAtVendor: boolean } | { ok: false; reason: string }> {
+  const session = await requireSession(Role.MANAGER);
+
+  const providerEnum =
+    provider === "SQUARE"
+      ? PosProviderType.SQUARE
+      : PosProviderType.CLOVER;
+
+  try {
+    const result = await disconnectPosIntegration({
+      locationId: session.locationId,
+      provider: providerEnum,
+      userId: session.userId,
+    });
+    revalidateOperations();
+    return { ok: true, revokedAtVendor: result.revokedAtVendor };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Disconnect failed.",
+    };
+  }
 }
 
 export async function connectSquareAction() {
