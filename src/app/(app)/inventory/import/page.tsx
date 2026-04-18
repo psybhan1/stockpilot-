@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { importInventoryCsvAction } from "@/app/actions/operations";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,9 +34,9 @@ export default async function ImportInventoryPage({
         <Card className="rounded-3xl border-emerald-200 bg-emerald-50/80">
           <CardContent className="p-4 text-sm text-emerald-800">
             Import complete. Head to{" "}
-            <a href="/inventory" className="underline font-medium">
+            <Link href="/inventory" className="underline font-medium">
               Inventory
-            </a>{" "}
+            </Link>{" "}
             to review what was created.
           </CardContent>
         </Card>

@@ -121,7 +121,7 @@ async function pollOneThread(ctx: {
   const accessToken = creds.accessToken;
 
   const threadUrl = `https://gmail.googleapis.com/gmail/v1/users/me/threads/${ctx.threadId}?format=full`;
-  let res = await fetch(threadUrl, {
+  const res = await fetch(threadUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (res.status === 401) {
