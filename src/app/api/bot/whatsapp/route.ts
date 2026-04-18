@@ -12,16 +12,11 @@ import {
   connectManagerBotChannel,
   readConnectTokenFromText,
 } from "@/modules/operator-bot/connect";
+import { readLocationPairingCode } from "@/modules/operator-bot/connect-primitives";
 import { completeWhatsAppChannelPairing } from "@/modules/channels/service";
 import { handleInboundManagerBotMessage } from "@/modules/operator-bot/service";
 
 const XML_HEADERS = { "Content-Type": "text/xml; charset=utf-8" };
-
-/** Detects a StockPilot location pairing code like "SB-AB1234" */
-function readLocationPairingCode(text: string): string | null {
-  const match = text.trim().match(/^(SB-[A-Z0-9]{6})$/i);
-  return match ? match[1].toUpperCase() : null;
-}
 
 export async function POST(request: Request) {
   // ── Parse form fields ───────────────────────────────────────────────────────

@@ -14,16 +14,11 @@ import {
   connectManagerBotChannel,
   readConnectTokenFromText,
 } from "@/modules/operator-bot/connect";
+import { readLocationPairingCode } from "@/modules/operator-bot/connect-primitives";
 import { handleInboundManagerBotMessage } from "@/modules/operator-bot/service";
 import { handleTelegramCallback } from "@/modules/operator-bot/telegram-callbacks";
 import { completeTelegramChannelPairing } from "@/modules/channels/service";
 import { env } from "@/lib/env";
-
-/** Detects a StockPilot location pairing code like "SB-AB1234" */
-function readLocationPairingCode(text: string): string | null {
-  const match = text.trim().match(/^(SB-[A-Z0-9]{6})$/i);
-  return match ? match[1].toUpperCase() : null;
-}
 
 type TelegramUpdate = {
   update_id?: number;

@@ -4,12 +4,30 @@ import { createAuditLogTx } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import { BotChannel } from "@/lib/prisma";
-import type { Prisma } from "@/lib/prisma";
+import {
+  buildTelegramConnectUrl,
+  buildWhatsAppConnectUrl,
+  isPublicAppUrl,
+  isTwilioSandboxSender,
+  normalizePhoneNumber,
+  normalizeTelegramChatId,
+  normalizeTelegramUsername,
+  readConnectStatus,
+  readConnectTokenFromText,
+} from "@/modules/operator-bot/connect-primitives";
 import {
   completeBotMessageReceipt,
   failBotMessageReceipt,
   reserveBotMessageReceipt,
 } from "@/modules/operator-bot/receipts";
+
+export {
+  buildTelegramConnectUrl,
+  buildWhatsAppConnectUrl,
+  isPublicAppUrl,
+  isTwilioSandboxSender,
+  readConnectTokenFromText,
+};
 
 const BOT_CONNECT_TTL_MINUTES = 15;
 
@@ -516,37 +534,6 @@ export async function connectManagerTelegramLoginChannel(input: {
   };
 }
 
-export function buildTelegramConnectUrl(botUsername: string, token: string) {
-  const normalizedBotUsername = botUsername.replace(/^@/, "").trim();
-  return `https://t.me/${normalizedBotUsername}?start=connect-${token}`;
-}
-
-export function buildWhatsAppConnectUrl(senderNumber: string, token: string) {
-  const normalizedSender = senderNumber
-    .replace(/^whatsapp:/i, "")
-    .replace(/[^\d]/g, "");
-  const message = encodeURIComponent(`🔗 Link my StockPilot account\nCode: ${token}`);
-  return `https://wa.me/${normalizedSender}?text=${message}`;
-}
-
-export function readConnectTokenFromText(input: {
-  channel: BotChannel;
-  text: string;
-}) {
-  const normalized = input.text.trim();
-
-  if (input.channel === BotChannel.TELEGRAM) {
-    const match = normalized.match(/^\/start\s+connect-([A-Za-z0-9_-]+)$/i);
-    return match?.[1] ?? null;
-  }
-
-  // Match both "Code: {token}" (new pretty format) and "connect {token}" (legacy)
-  const prettyMatch = normalized.match(/code:\s*([A-Za-z0-9_-]+)/i);
-  if (prettyMatch) return prettyMatch[1];
-  const legacyMatch = normalized.match(/^connect\s+([A-Za-z0-9_-]+)$/i);
-  return legacyMatch?.[1] ?? null;
-}
-
 export function verifyTelegramWidgetAuth(input: Record<string, string>) {
   if (!env.TELEGRAM_BOT_TOKEN) {
     throw new Error("Missing TELEGRAM_BOT_TOKEN.");
@@ -572,21 +559,6 @@ export function verifyTelegramWidgetAuth(input: Record<string, string>) {
   const isFresh = Number.isFinite(authDate) && Date.now() / 1000 - authDate <= maxAgeSeconds;
 
   return isFresh && computedHash === receivedHash;
-}
-
-export function isPublicAppUrl(url: string) {
-  try {
-    const parsed = new URL(url);
-    const hostname = parsed.hostname.toLowerCase();
-
-    if (parsed.protocol !== "https:" && hostname !== "localhost" && hostname !== "127.0.0.1") {
-      return false;
-    }
-
-    return !["localhost", "127.0.0.1", "0.0.0.0"].includes(hostname);
-  } catch {
-    return false;
-  }
 }
 
 export async function getTelegramBotUsername() {
@@ -625,47 +597,6 @@ export async function getTelegramBotUsername() {
 
 function hashConnectToken(token: string) {
   return createHash("sha256").update(`${token}:${env.SESSION_SECRET}`).digest("hex");
-}
-
-function normalizePhoneNumber(value: string) {
-  const normalized = value.replace(/^whatsapp:/i, "").replace(/[^\d+]/g, "");
-  if (!normalized) {
-    return null;
-  }
-
-  return normalized.startsWith("+") ? normalized : `+${normalized}`;
-}
-
-function normalizeTelegramChatId(value: string) {
-  const normalized = value.trim();
-  return normalized.length > 0 ? normalized : null;
-}
-
-function normalizeTelegramUsername(value: string | null) {
-  if (!value) {
-    return null;
-  }
-
-  return value.startsWith("@") ? value : `@${value}`;
-}
-
-function readConnectStatus(metadata: Prisma.JsonValue | null | undefined): BotConnectStatus["status"] {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return "connected";
-  }
-
-  const connectStatus = (metadata as Record<string, unknown>).connectStatus;
-
-  if (
-    connectStatus === "connected" ||
-    connectStatus === "expired" ||
-    connectStatus === "invalid" ||
-    connectStatus === "conflict"
-  ) {
-    return connectStatus;
-  }
-
-  return "connected";
 }
 
 async function recordConnectAttempt(
@@ -707,10 +638,3 @@ async function recordConnectAttempt(
   });
 }
 
-export function isTwilioSandboxSender(value: string | null | undefined) {
-  if (!value) {
-    return false;
-  }
-
-  return value.replace(/^whatsapp:/i, "") === "+14155238886";
-}
