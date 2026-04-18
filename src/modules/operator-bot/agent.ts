@@ -34,7 +34,18 @@ export type AgentContext = {
   channel: ManagerBotChannel;
   senderId: string;
   sourceMessageId: string | null;
-  conversation: Array<{ role: "user" | "assistant"; content: string }>;
+  conversation: Array<{
+    role: "user" | "assistant";
+    content: string;
+    /**
+     * Optional `data:image/...;base64,...` URLs attached to a USER
+     * turn. When present, we hand the latest turn to Groq in the
+     * multimodal `content` array form so Llama 4 Scout can see the
+     * photo. History turns keep text-only form — old images add
+     * tokens without adding decision-relevant context.
+     */
+    images?: string[];
+  }>;
 };
 
 // ── URL helpers ──────────────────────────────────────────────────────────
@@ -1245,13 +1256,48 @@ type GroqToolCall = {
   function: { name: string; arguments: string };
 };
 
+/**
+ * OpenAI-compatible multimodal content parts. Groq's vision models
+ * (Llama 4 Scout) accept either a plain string `content` or an
+ * array of typed parts. We only use the two part types we need —
+ * `text` for the user's caption / default prompt, and `image_url`
+ * for a base64 data URL.
+ */
+type GroqContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 type GroqMessage = {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | GroqContentPart[] | null;
   tool_calls?: GroqToolCall[];
   tool_call_id?: string;
   name?: string;
 };
+
+/**
+ * Build the `content` field for a user turn. If images are attached,
+ * emit the multimodal array form. Otherwise emit a plain string so
+ * we don't bloat token counts for text-only traffic.
+ */
+function buildUserContent(
+  text: string,
+  images?: string[]
+): string | GroqContentPart[] {
+  if (!images || images.length === 0) return text;
+  // A caption-less image from the user comes through with empty text
+  // — give the model SOMETHING to anchor on so it doesn't ask "what
+  // do you want me to do?" back. The operator almost always wants
+  // item / receipt / stock info extracted.
+  const caption = text.trim() || "What's in this photo? If it's inventory, a receipt, or a product label, tell me what you see and offer to update stock or log it.";
+  return [
+    { type: "text", text: caption },
+    ...images.map((url) => ({
+      type: "image_url" as const,
+      image_url: { url },
+    })),
+  ];
+}
 
 // Default model — override with GROQ_BOT_MODEL env var.
 // Llama 4 Scout: native tool calling, separate TPD quota from 70b
@@ -1528,11 +1574,25 @@ export async function runBotAgent(ctx: AgentContext): Promise<BotHandlingResult>
   const liveData = await buildLiveDataBlock(ctx);
   const systemPrompt = `${SYSTEM_PROMPT_BASE}\n\n${liveData}`;
 
+  // Images only go on the LATEST user turn. Earlier images are
+  // dropped from the wire to keep token count bounded — the model
+  // still has the assistant's prior reply describing what it saw,
+  // which is usually enough context.
+  const lastUserIdx = (() => {
+    for (let i = ctx.conversation.length - 1; i >= 0; i--) {
+      if (ctx.conversation[i].role === "user") return i;
+    }
+    return -1;
+  })();
+
   const messages: GroqMessage[] = [
     { role: "system", content: systemPrompt },
-    ...ctx.conversation.map((turn) => ({
+    ...ctx.conversation.map((turn, idx) => ({
       role: turn.role,
-      content: turn.content,
+      content:
+        turn.role === "user" && idx === lastUserIdx
+          ? buildUserContent(turn.content, turn.images)
+          : turn.content,
     })),
   ];
 

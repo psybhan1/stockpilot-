@@ -249,6 +249,62 @@ export async function editTelegramMessage(
   ).catch(() => null);
 }
 
+/**
+ * Download a Telegram file (photo, voice, document) by its file_id.
+ * Two-step: getFile → file_path, then the CDN fetch. Returns the raw
+ * bytes plus the `file_path` Telegram handed back (from which the
+ * caller can infer the extension / MIME).
+ *
+ * Returns null on any failure so callers fall back gracefully rather
+ * than showing a Telegram 401/500 to the user.
+ */
+export async function downloadTelegramFile(
+  fileId: string
+): Promise<{ buffer: ArrayBuffer; filePath: string } | null> {
+  const botToken = env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) return null;
+
+  try {
+    const baseUrl = env.TELEGRAM_BOT_API_BASE_URL.replace(/\/$/, "");
+    const fileRes = await fetch(
+      `${baseUrl}/bot${botToken}/getFile?file_id=${encodeURIComponent(fileId)}`,
+      { signal: AbortSignal.timeout(15_000) }
+    );
+    if (!fileRes.ok) return null;
+
+    const fileData = (await fileRes.json()) as {
+      ok?: boolean;
+      result?: { file_path?: string };
+    };
+    const filePath = fileData?.result?.file_path;
+    if (!filePath) return null;
+
+    const audioRes = await fetch(
+      `https://api.telegram.org/file/bot${botToken}/${filePath}`,
+      { signal: AbortSignal.timeout(30_000) }
+    );
+    if (!audioRes.ok) return null;
+
+    return { buffer: await audioRes.arrayBuffer(), filePath };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Map a Telegram file_path extension to an `image/*` MIME for the
+ * data-URL we hand to the vision model. Telegram always hands out
+ * JPEG for `message.photo[]` but may hand out PNG/WEBP for documents.
+ */
+export function imageMimeFromTelegramPath(filePath: string): string {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  // Photos from the phone camera come back as .jpg.
+  return "image/jpeg";
+}
+
 export function getTelegramWebhookSecret() {
   if (env.TELEGRAM_WEBHOOK_SECRET?.trim()) {
     return env.TELEGRAM_WEBHOOK_SECRET.trim();

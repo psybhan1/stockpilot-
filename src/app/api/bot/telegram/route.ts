@@ -4,7 +4,9 @@ import { BotChannel } from "@/lib/prisma";
 
 import {
   answerCallbackQuery,
+  downloadTelegramFile,
   editTelegramMessage,
+  imageMimeFromTelegramPath,
   isValidTelegramWebhook,
   sendTelegramMessage,
   sendTelegramTyping,
@@ -31,6 +33,21 @@ type TelegramUpdate = {
       mime_type?: string;
       file_size?: number;
     };
+    /**
+     * Telegram sends a photo as an ARRAY of PhotoSize objects — the
+     * same image at multiple resolutions. We want the largest (last)
+     * so the vision model sees as much detail as possible, but
+     * bounded: Telegram's bot API caps downloads at 20 MB so a
+     * giant image fails anyway.
+     */
+    photo?: Array<{
+      file_id: string;
+      file_unique_id?: string;
+      width?: number;
+      height?: number;
+      file_size?: number;
+    }>;
+    caption?: string;
     chat?: {
       id?: number;
     };
@@ -248,6 +265,29 @@ async function handleTelegramUpdate(payload: TelegramUpdate) {
     }
   }
 
+  // Photo attachments — Telegram sends `photo[]` at multiple
+  // resolutions. Pick the largest (last) so the vision model has as
+  // much pixel detail as possible. Caption (if any) becomes the
+  // user text; empty caption is handled by the agent's default
+  // "what's in this photo?" prompt.
+  const imageDataUrls: string[] = [];
+  const photoSizes = payload.message?.photo;
+  if (photoSizes && photoSizes.length > 0) {
+    const largest = photoSizes[photoSizes.length - 1];
+    if (largest?.file_id) {
+      const file = await downloadTelegramFile(largest.file_id);
+      if (file) {
+        const mime = imageMimeFromTelegramPath(file.filePath);
+        const b64 = Buffer.from(file.buffer).toString("base64");
+        imageDataUrls.push(`data:${mime};base64,${b64}`);
+      }
+    }
+    // Caption travels as text; fall back to empty so the agent's
+    // default prompt kicks in.
+    const caption = payload.message?.caption?.trim();
+    if (caption && !text) text = caption;
+  }
+
   // Normalise: strip whitespace-only messages. Previously a voice
   // message that transcribed to "   " slipped through and the user
   // got no feedback at all. Now we tell them we couldn't hear.
@@ -257,7 +297,11 @@ async function handleTelegramUpdate(payload: TelegramUpdate) {
     return NextResponse.json({ ok: true, ignored: true });
   }
 
-  if (!text) {
+  // A photo-only message (no text, no caption) is VALID — the agent
+  // treats an empty-caption image as "describe / extract". Only
+  // fall through to the voice-failure / ignore branch when there's
+  // neither text nor an image.
+  if (!text && imageDataUrls.length === 0) {
     if (isVoice) {
       // Match the reply to the actual failure so the user knows what
       // to do. "Couldn't make out" is only right for empty/noisy audio.
@@ -349,11 +393,13 @@ async function handleTelegramUpdate(payload: TelegramUpdate) {
       senderId: String(chatId),
       senderDisplayName:
         displayName || payload.message?.from?.username || String(senderId),
-      text,
+      text: text ?? "",
       sourceMessageId,
+      images: imageDataUrls.length > 0 ? imageDataUrls : undefined,
       rawPayload: {
         ...(payload as unknown as Record<string, unknown>),
         isVoiceTranscription: isVoice,
+        hasImage: imageDataUrls.length > 0,
       } as unknown as Prisma.InputJsonValue,
     }),
     new Promise<{

@@ -147,6 +147,51 @@ export async function transcribeWhatsAppVoice(
 }
 
 /**
+ * Check whether a Twilio media content-type is one the vision model
+ * can actually interpret. We accept the four web-image MIMEs —
+ * Llama 4 Scout rejects everything else and we'd rather tell the
+ * user than silently drop the image.
+ */
+export function isSupportedImageContentType(contentType: string): boolean {
+  const c = contentType.toLowerCase().split(";")[0].trim();
+  return (
+    c === "image/jpeg" ||
+    c === "image/jpg" ||
+    c === "image/png" ||
+    c === "image/webp" ||
+    c === "image/gif"
+  );
+}
+
+/**
+ * Canonicalise a media content-type to the form the vision model
+ * expects in the data-URL prefix. Twilio sometimes sends `image/jpg`
+ * which is non-standard; Llama wants `image/jpeg`.
+ */
+export function canonicalImageMime(contentType: string): string {
+  const c = contentType.toLowerCase().split(";")[0].trim();
+  if (c === "image/jpg") return "image/jpeg";
+  return c;
+}
+
+/**
+ * Download a Twilio media URL and return it as a base64 `data:`
+ * URL suitable for inlining into a Groq / OpenAI `image_url`
+ * content part. Returns null on any failure so the caller falls
+ * back to text-only.
+ */
+export async function downloadTwilioMediaAsDataUrl(
+  mediaUrl: string,
+  contentType: string
+): Promise<string | null> {
+  const buffer = await downloadTwilioMedia(mediaUrl);
+  if (!buffer) return null;
+  const mime = canonicalImageMime(contentType);
+  const b64 = Buffer.from(buffer).toString("base64");
+  return `data:${mime};base64,${b64}`;
+}
+
+/**
  * Normalise to the exact `whatsapp:<number>` form Twilio requires.
  *
  * Twilio rejects any variant casing ("WhatsApp:", "WHATSAPP:") — it

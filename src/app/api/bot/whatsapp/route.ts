@@ -7,7 +7,11 @@ import {
   buildTwimlMessageResponse,
   isValidTwilioWebhook,
 } from "@/lib/twilio-webhook";
-import { transcribeWhatsAppVoice } from "@/lib/whatsapp-bot";
+import {
+  downloadTwilioMediaAsDataUrl,
+  isSupportedImageContentType,
+  transcribeWhatsAppVoice,
+} from "@/lib/whatsapp-bot";
 import {
   connectManagerBotChannel,
   readConnectTokenFromText,
@@ -50,31 +54,41 @@ export async function POST(request: Request) {
     return new NextResponse(buildTwimlEmptyResponse(), { headers: XML_HEADERS });
   }
 
-  // ── Resolve message text (text or transcribed voice) ───────────────────────
+  // ── Resolve message text + media (text, voice transcription, image) ────────
   let text = formFields.get("Body")?.trim() ?? "";
   let isVoice = false;
+  const imageDataUrls: string[] = [];
 
-  if (!text) {
-    // Twilio sends media as MediaUrl0, MediaContentType0 (up to MediaUrl9)
-    const mediaUrl = formFields.get("MediaUrl0");
-    const mediaType = formFields.get("MediaContentType0") ?? "";
+  const mediaUrl = formFields.get("MediaUrl0");
+  const mediaType = formFields.get("MediaContentType0") ?? "";
 
-    if (mediaUrl && (mediaType.includes("audio") || mediaType.includes("ogg") || mediaType.includes("amr"))) {
+  if (mediaUrl) {
+    if (!text && (mediaType.includes("audio") || mediaType.includes("ogg") || mediaType.includes("amr"))) {
       const transcription = await transcribeWhatsAppVoice(mediaUrl, mediaType);
       if (transcription) {
         text = transcription;
         isVoice = true;
       }
+    } else if (isSupportedImageContentType(mediaType)) {
+      // Image — download, base64 it, hand to the multimodal agent.
+      // Caption (if any) arrived as Body; we keep it as `text`.
+      const dataUrl = await downloadTwilioMediaAsDataUrl(mediaUrl, mediaType);
+      if (dataUrl) imageDataUrls.push(dataUrl);
     }
   }
 
-  if (!text) {
-    // No text and no transcribable voice — ignore silently
+  if (!text && imageDataUrls.length === 0) {
+    // No text, no voice, no image — ignore silently (e.g. unsupported
+    // media type like a stray PDF). Previously a no-body webhook
+    // burned a TwiML response and a Twilio delivery cost for nothing.
     return new NextResponse(buildTwimlEmptyResponse(), { headers: XML_HEADERS });
   }
 
   // ── Location-level pairing code (SB-XXXXXX) ────────────────────────────────
-  const locationPairingCode = readLocationPairingCode(text);
+  // Pairing / connect tokens are text-only flows; skip them when
+  // the inbound was image-only so we don't accidentally parse the
+  // caption (which may be empty) against the location-code regex.
+  const locationPairingCode = text ? readLocationPairingCode(text) : null;
   if (locationPairingCode) {
     const result = await completeWhatsAppChannelPairing({
       pairingCode: locationPairingCode,
@@ -92,7 +106,9 @@ export async function POST(request: Request) {
   }
 
   // ── Personal bot connect token ──────────────────────────────────────────────
-  const connectToken = readConnectTokenFromText({ channel: BotChannel.WHATSAPP, text });
+  const connectToken = text
+    ? readConnectTokenFromText({ channel: BotChannel.WHATSAPP, text })
+    : null;
   if (connectToken) {
     const connection = await connectManagerBotChannel({
       channel: BotChannel.WHATSAPP,
@@ -116,9 +132,11 @@ export async function POST(request: Request) {
     senderDisplayName: profileName,
     text,
     sourceMessageId: messageSid,
+    images: imageDataUrls.length > 0 ? imageDataUrls : undefined,
     rawPayload: {
       ...Object.fromEntries(formFields.entries()),
       isVoiceTranscription: isVoice,
+      hasImage: imageDataUrls.length > 0,
     },
   });
 

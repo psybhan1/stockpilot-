@@ -56,6 +56,14 @@ type InboundManagerBotMessage = {
   text: string;
   sourceMessageId?: string | null;
   rawPayload?: Prisma.InputJsonValue;
+  /**
+   * Optional `data:image/...;base64,...` URLs the caller downloaded
+   * off the inbound platform message (Telegram photo, WhatsApp
+   * image MediaUrl). Only passed to the LLM agent; not persisted
+   * (Prisma json would balloon). Empty array is equivalent to
+   * undefined.
+   */
+  images?: string[];
 };
 
 export type BotHandlingResult = {
@@ -437,7 +445,11 @@ export async function handleInboundManagerBotMessage(
               role: turn.role === "manager" ? ("user" as const) : ("assistant" as const),
               content: turn.text,
             })),
-            { role: "user" as const, content: input.text },
+            {
+              role: "user" as const,
+              content: input.text,
+              images: input.images && input.images.length > 0 ? input.images : undefined,
+            },
           ],
         });
 

@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  canonicalImageMime,
   contentTypeToWhisperExtension,
+  isSupportedImageContentType,
   normalizeWhatsAppAddress,
 } from "./whatsapp-bot";
 
@@ -276,4 +278,122 @@ test("content-type ext: every mapping produces a Whisper-compatible extension", 
       `${s} → ${ext} is not a Whisper-supported extension`
     );
   }
+});
+
+// ── isSupportedImageContentType ──────────────────────────────────────────
+//
+// Gate before we spend a Twilio media download + Groq vision tokens.
+// Twilio occasionally forwards non-image MIMEs (video/*, application/*
+// for PDF invoices) that Llama 4 Scout can't parse — we want the
+// helper to say "no" so the route ignores the media rather than
+// shipping a garbage data URL to the model.
+
+test("image mime supported: image/jpeg → true", () => {
+  assert.equal(isSupportedImageContentType("image/jpeg"), true);
+});
+
+test("image mime supported: image/jpg (non-standard) → true", () => {
+  // Some Twilio carriers report jpg without the "e". We still accept
+  // and canonicalise downstream.
+  assert.equal(isSupportedImageContentType("image/jpg"), true);
+});
+
+test("image mime supported: image/png → true", () => {
+  assert.equal(isSupportedImageContentType("image/png"), true);
+});
+
+test("image mime supported: image/webp → true", () => {
+  assert.equal(isSupportedImageContentType("image/webp"), true);
+});
+
+test("image mime supported: image/gif → true", () => {
+  assert.equal(isSupportedImageContentType("image/gif"), true);
+});
+
+test("image mime supported: IMAGE/JPEG (case) → true", () => {
+  assert.equal(isSupportedImageContentType("IMAGE/JPEG"), true);
+});
+
+test("image mime supported: image/jpeg;charset=binary → true (params stripped)", () => {
+  assert.equal(
+    isSupportedImageContentType("image/jpeg;charset=binary"),
+    true
+  );
+});
+
+test("image mime supported: 'image/jpeg ' (whitespace) → true", () => {
+  // Defensive — some gateways pad the content-type header.
+  assert.equal(isSupportedImageContentType("image/jpeg "), true);
+});
+
+test("image mime supported: image/bmp → false (not in vision allowlist)", () => {
+  // Llama 4 Scout docs list jpeg/png/webp/gif; bmp isn't guaranteed.
+  // Reject upfront so we don't waste a Groq call on 400 back.
+  assert.equal(isSupportedImageContentType("image/bmp"), false);
+});
+
+test("image mime supported: image/tiff → false", () => {
+  assert.equal(isSupportedImageContentType("image/tiff"), false);
+});
+
+test("image mime supported: image/svg+xml → false", () => {
+  // SVG is XML — vision models don't read it as an image.
+  assert.equal(isSupportedImageContentType("image/svg+xml"), false);
+});
+
+test("image mime supported: video/mp4 → false", () => {
+  assert.equal(isSupportedImageContentType("video/mp4"), false);
+});
+
+test("image mime supported: application/pdf → false", () => {
+  // Common: manager forwards a PDF invoice. We currently don't
+  // handle PDFs via the vision model — reject and let the route
+  // fall back to "unsupported".
+  assert.equal(isSupportedImageContentType("application/pdf"), false);
+});
+
+test("image mime supported: audio/ogg → false", () => {
+  assert.equal(isSupportedImageContentType("audio/ogg"), false);
+});
+
+test("image mime supported: empty string → false", () => {
+  assert.equal(isSupportedImageContentType(""), false);
+});
+
+test("image mime supported: 'image' with no subtype → false", () => {
+  assert.equal(isSupportedImageContentType("image"), false);
+});
+
+// ── canonicalImageMime ───────────────────────────────────────────────────
+//
+// The vision model expects the `data:<mime>;base64,...` prefix to use
+// the canonical IANA MIME. `image/jpg` is a widespread typo that the
+// model rejects, so we normalise it to `image/jpeg`.
+
+test("canonical mime: image/jpeg unchanged", () => {
+  assert.equal(canonicalImageMime("image/jpeg"), "image/jpeg");
+});
+
+test("canonical mime: image/jpg → image/jpeg (normaliser)", () => {
+  assert.equal(canonicalImageMime("image/jpg"), "image/jpeg");
+});
+
+test("canonical mime: image/png unchanged", () => {
+  assert.equal(canonicalImageMime("image/png"), "image/png");
+});
+
+test("canonical mime: image/webp unchanged", () => {
+  assert.equal(canonicalImageMime("image/webp"), "image/webp");
+});
+
+test("canonical mime: params stripped (image/jpeg;foo=bar → image/jpeg)", () => {
+  assert.equal(canonicalImageMime("image/jpeg;charset=binary"), "image/jpeg");
+});
+
+test("canonical mime: IMAGE/PNG → image/png (lowercased)", () => {
+  assert.equal(canonicalImageMime("IMAGE/PNG"), "image/png");
+});
+
+test("canonical mime: 'image/jpg ; foo' → image/jpeg (trim + params + normalise)", () => {
+  assert.equal(canonicalImageMime("image/jpg ; foo"), "image/jpeg");
 });
