@@ -1,18 +1,7 @@
+import { buildN8nWebhookUrl, parsePositiveNumber } from "./env-helpers";
+
 const fallbackSessionSecret = "stockpilot-local-dev-secret";
 const fallbackDatabaseUrl = "file:./dev.db";
-
-function parsePositiveNumber(value: string | undefined, fallback: number) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function buildN8nWebhookUrl(baseUrl: string | undefined, path: string) {
-  if (!baseUrl?.trim()) {
-    return undefined;
-  }
-
-  return `${baseUrl.replace(/\/$/, "")}/webhook/${path}`;
-}
 
 const n8nBaseUrl = process.env.N8N_BASE_URL;
 
