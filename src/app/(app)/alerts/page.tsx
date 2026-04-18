@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   acknowledgeAlertAction,
   resolveAlertAction,
@@ -85,7 +86,23 @@ export default async function AlertsPage() {
               )}
 
               {alert.status !== "RESOLVED" && (
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {/* Deep-link to /pos-mapping for POS-unmapped
+                      alerts so the owner jumps straight into the
+                      fix flow instead of having to figure out
+                      where the mapping lives. The alert id encodes
+                      (integrationId, externalProductId) — we don't
+                      parse it; /pos-mapping shows everything
+                      unmapped at once, the owner scrolls to the
+                      row they recognise. */}
+                  {alert.id.startsWith("pos-unmapped-") && (
+                    <Link
+                      href="/pos-mapping"
+                      className="inline-flex h-8 items-center gap-1 rounded-none border-2 border-amber-500/60 bg-amber-500/15 px-3 text-xs font-bold uppercase tracking-[0.14em] text-amber-900 hover:bg-amber-500/25 dark:text-amber-200"
+                    >
+                      Map now →
+                    </Link>
+                  )}
                   {alert.status === "OPEN" && (
                     <form action={acknowledgeAlertAction}>
                       <input type="hidden" name="alertId" value={alert.id} />
