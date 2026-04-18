@@ -19,6 +19,9 @@ import { db } from "@/lib/db";
 const WINDOW_DAYS = 30;
 
 export type AnalyticsOverview = {
+  /** Server-side request timestamp. Passed to pure render children
+   * so they don't call Date.now() themselves (impure-render rule). */
+  nowMs: number;
   windowDays: number;
   ordersSent: number;
   ordersConfirmed: number;
@@ -61,7 +64,8 @@ export type ItemVolume = {
 export async function getAnalyticsOverview(
   locationId: string
 ): Promise<AnalyticsOverview> {
-  const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const nowMs = Date.now();
+  const since = new Date(nowMs - WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
   const [
     poAgg,
@@ -223,6 +227,7 @@ export async function getAnalyticsOverview(
   }));
 
   return {
+    nowMs,
     windowDays: WINDOW_DAYS,
     ordersSent,
     ordersConfirmed,

@@ -230,9 +230,6 @@ export async function runWebsiteOrderAgent(
     // Determine which adapter to use based on the URL.
     const isAmazon = /amazon\.(com|ca|co\.uk|de|fr|es|it|co\.jp)/i.test(supplierUrl);
 
-    let results: Array<{ query: string; added: boolean; reason?: string }>;
-    let screenshots: Array<{ stepName: string; screenshot: Buffer }>;
-
     // Use Promise.race for a proper timeout — setTimeout + throw
     // doesn't propagate to the async function's try/catch.
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -262,8 +259,10 @@ export async function runWebsiteOrderAgent(
     })();
 
     const adapterResult = await Promise.race([adapterPromise, timeoutPromise]);
-    results = adapterResult.results;
-    screenshots = adapterResult.screenshots;
+    const results: Array<{ query: string; added: boolean; reason?: string }> =
+      adapterResult.results;
+    const screenshots: Array<{ stepName: string; screenshot: Buffer }> =
+      adapterResult.screenshots;
 
     const itemsAdded = results.filter((r) => r.added).length;
     const itemsFailed = results.filter((r) => !r.added).length;

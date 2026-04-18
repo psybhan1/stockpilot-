@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 
@@ -19,15 +19,16 @@ const initialState = { error: "" };
 
 export function SignupForm() {
   const [state, action, pending] = useActionState(signupAction, initialState);
-  const [timezone, setTimezone] = useState<string>("America/Toronto");
+  const tzRef = useRef<HTMLInputElement>(null);
 
-  // Best-guess timezone from the browser. Fallback baked into the
-  // server action anyway, so this is just for accuracy when
-  // available.
+  // Best-guess timezone from the browser, poked into the hidden
+  // input after mount. Server action has a fallback baked in, so
+  // this is pure accuracy-when-available. Mutating the input directly
+  // (instead of via state) avoids a redundant re-render on mount.
   useEffect(() => {
     try {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      if (tz) setTimezone(tz);
+      if (tz && tzRef.current) tzRef.current.value = tz;
     } catch {
       /* use the fallback */
     }
@@ -123,7 +124,12 @@ export function SignupForm() {
             />
           </div>
 
-          <input type="hidden" name="timezone" value={timezone} />
+          <input
+            ref={tzRef}
+            type="hidden"
+            name="timezone"
+            defaultValue="America/Toronto"
+          />
 
           {state.error ? (
             <p className="text-sm text-[var(--destructive)]">{state.error}</p>

@@ -63,23 +63,6 @@ export function CommandPalette({
   userRoleOrdinal?: number;
 }) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Result[]>([]);
-  const [active, setActive] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const router = useRouter();
-
-  // All known pages, flattened. Filtered by role if caller passed one.
-  const pages = useMemo<Result[]>(() => {
-    const all: NavItem[] = [...primaryNav, ...secondaryNav];
-    return all.map((p) => ({
-      kind: "page" as const,
-      id: p.href,
-      label: p.label,
-      detail: p.description ?? "",
-      href: p.href,
-    }));
-  }, []);
 
   // Cmd/Ctrl+K toggle + "/" to focus (if palette already open), esc to close.
   useEffect(() => {
@@ -106,37 +89,44 @@ export function CommandPalette({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  useEffect(() => {
-    if (open) {
-      setTimeout(() => inputRef.current?.focus(), 10);
-      setActive(0);
-    } else {
-      setQuery("");
-      setResults([]);
-    }
-  }, [open]);
+  // `userRoleOrdinal` is reserved for future role-aware page
+  // filtering. Silence the unused-var lint without hiding the prop
+  // in the public API.
+  void userRoleOrdinal;
 
-  // Debounced record-search + client-side page filter merged together.
-  useEffect(() => {
-    if (!open) return;
-    const q = query.trim();
-    const pageMatches = q
-      ? pages.filter(
-          (p) =>
-            p.label.toLowerCase().includes(q.toLowerCase()) ||
-            p.detail.toLowerCase().includes(q.toLowerCase())
-        )
-      : [];
-    if (q.length === 0) {
-      // Show pages as the empty-state menu so the palette doubles as a nav.
-      setResults(pages);
-      setActive(0);
-      return;
-    }
-    // Show page matches immediately; server results join in when they arrive.
-    setResults(pageMatches);
-    setActive(0);
+  if (!open) return null;
+  // Mounting PaletteDialog only while open means its query / results /
+  // active state naturally reset on close — no setState-in-effect dance.
+  return <PaletteDialog onClose={() => setOpen(false)} />;
+}
 
+function PaletteDialog({ onClose }: { onClose: () => void }) {
+  const [query, setQuery] = useState("");
+  const [serverResults, setServerResults] = useState<Result[]>([]);
+  const [active, setActive] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
+
+  const pages = useMemo<Result[]>(() => buildPages(), []);
+
+  // Derive visible results during render so we don't sync pure
+  // derivations through state (React-19 impure/cascade rule).
+  const q = query.trim();
+  const pageMatches = useMemo(() => {
+    if (q.length === 0) return pages;
+    const needle = q.toLowerCase();
+    return pages.filter(
+      (p) =>
+        p.label.toLowerCase().includes(needle) ||
+        p.detail.toLowerCase().includes(needle)
+    );
+  }, [pages, q]);
+  const results: Result[] =
+    q.length === 0 ? pages : [...pageMatches, ...serverResults];
+
+  // Only the network call lives in an effect — the rest is derived.
+  useEffect(() => {
+    if (q.length === 0) return;
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
@@ -145,9 +135,7 @@ export function CommandPalette({
         });
         if (!res.ok) return;
         const data = (await res.json()) as SearchResponse;
-        const records: Result[] = (data.results ?? []).map((r) => ({ ...r }));
-        setResults([...pageMatches, ...records]);
-        setActive(0);
+        setServerResults((data.results ?? []).map((r) => ({ ...r })));
       } catch {
         /* abort / offline — empty state already shown */
       }
@@ -156,10 +144,10 @@ export function CommandPalette({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query, open, pages]);
+  }, [q]);
 
   const go = (r: Result) => {
-    setOpen(false);
+    onClose();
     router.push(r.href);
   };
 
@@ -176,17 +164,10 @@ export function CommandPalette({
     }
   };
 
-  // `userRoleOrdinal` is reserved for future role-aware page
-  // filtering. Silence the unused-var lint without hiding the prop
-  // in the public API.
-  void userRoleOrdinal;
-
-  if (!open) return null;
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 backdrop-blur-sm p-4 pt-[15vh]"
-      onClick={() => setOpen(false)}
+      onClick={onClose}
     >
       <div
         role="dialog"
@@ -199,8 +180,16 @@ export function CommandPalette({
           <Search className="size-4 text-muted-foreground" aria-hidden />
           <input
             ref={inputRef}
+            autoFocus
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              // Reset selection + drop stale server rows on every
+              // keystroke so typing doesn't land on a result from
+              // the previous query.
+              setActive(0);
+              setServerResults([]);
+            }}
             onKeyDown={onKeyDown}
             placeholder="Search items, suppliers, orders, menu — or type a page name"
             className="flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground"
@@ -222,6 +211,17 @@ export function CommandPalette({
       </div>
     </div>
   );
+}
+
+function buildPages(): Result[] {
+  const all: NavItem[] = [...primaryNav, ...secondaryNav];
+  return all.map((p) => ({
+    kind: "page" as const,
+    id: p.href,
+    label: p.label,
+    detail: p.description ?? "",
+    href: p.href,
+  }));
 }
 
 // ── Result list + grouping ──────────────────────────────────────────

@@ -228,7 +228,11 @@ export default async function AnalyticsPage() {
             {data.dailyOrders.length === 0 ? (
               <EmptyRow title="No orders yet" detail="The chart fills as you place orders." />
             ) : (
-              <DailyBars days={data.dailyOrders} windowDays={data.windowDays} />
+              <DailyBars
+                days={data.dailyOrders}
+                windowDays={data.windowDays}
+                nowMs={data.nowMs}
+              />
             )}
             <div className="grid grid-cols-3 gap-3 border-t border-border/60 pt-4 text-xs text-muted-foreground">
               <Stat label="Confirmed" value={data.ordersConfirmed} tone="pos" />
@@ -349,15 +353,19 @@ function ConfirmRateBar({ rate }: { rate: number }) {
 function DailyBars({
   days,
   windowDays,
+  nowMs,
 }: {
   days: Array<{ date: string; count: number }>;
   windowDays: number;
+  nowMs: number;
 }) {
-  // Normalise into a windowDays-sized array.
+  // Normalise into a windowDays-sized array. `nowMs` is passed in
+  // so render stays pure — Date.now() captured once at the request
+  // boundary, not during each child render.
   const byDate = new Map(days.map((d) => [d.date, d.count]));
   const arr: Array<{ date: string; count: number }> = [];
   for (let i = windowDays - 1; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+    const d = new Date(nowMs - i * 24 * 60 * 60 * 1000);
     const key = d.toISOString().slice(0, 10);
     arr.push({ date: key, count: byDate.get(key) ?? 0 });
   }

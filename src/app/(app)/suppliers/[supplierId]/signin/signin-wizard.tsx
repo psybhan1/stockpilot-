@@ -22,7 +22,7 @@
  * simple login form. Clicks are snappy.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Loader2, Save, X, Clipboard, Check } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 
 type WizardTab = "extension" | "remote" | "paste";
+
+// Returns true on phones, false everywhere else (including SSR).
+// useSyncExternalStore keeps SSR snapshot stable (no hydration
+// mismatch) AND avoids the setState-in-effect re-render churn that
+// `useState + useEffect` causes.
+const MOBILE_UA_RE = /android|iphone|ipad|ipod|mobile/i;
+const noopSubscribe = () => () => {};
+function useIsPhone(): boolean {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => MOBILE_UA_RE.test(navigator.userAgent),
+    () => false
+  );
+}
 
 export function SigninWizard({
   supplierId,
@@ -1567,16 +1581,8 @@ function DesktopOnlyExtensionTip({
 }: {
   supplierName: string;
 }) {
-  const [isDesktop, setIsDesktop] = useState(false);
-  useEffect(() => {
-    if (typeof navigator !== "undefined") {
-      const mobile = /android|iphone|ipad|ipod|mobile/i.test(
-        navigator.userAgent
-      );
-      setIsDesktop(!mobile);
-    }
-  }, []);
-  if (!isDesktop) return null;
+  const isPhone = useIsPhone();
+  if (isPhone) return null;
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200">
       <div className="font-semibold">Tip: the Extension tab is faster on desktop.</div>
@@ -1595,15 +1601,9 @@ function BotBlockedWarning({
   supplierName: string;
   supplierWebsite: string | null;
 }) {
-  // Device-aware copy lives in state so SSR and the first client
-  // render agree (no hydration mismatch). `isPhone` starts false
-  // and flips true on mount if the UA looks mobile.
-  const [isPhone, setIsPhone] = useState(false);
-  useEffect(() => {
-    if (typeof navigator !== "undefined") {
-      setIsPhone(/android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent));
-    }
-  }, []);
+  // Device-aware copy — `useIsPhone` stays false for SSR then
+  // resolves on the client without triggering a setState-in-effect.
+  const isPhone = useIsPhone();
 
   if (!supplierWebsite) return null;
   const blocked = BOT_BLOCKED_HOSTS.some((re) => re.test(supplierWebsite));
