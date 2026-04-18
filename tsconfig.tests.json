@@ -78,6 +78,8 @@
     "src/modules/operator-bot/workflows/parse-helpers.ts",
     "src/modules/operator-bot/workflows/parse-helpers.test.ts",
     "src/modules/inventory/image-resolver.ts",
-    "src/modules/inventory/image-resolver.test.ts"
+    "src/modules/inventory/image-resolver.test.ts",
+    "src/modules/purchasing/reply-address.ts",
+    "src/modules/purchasing/reply-address.test.ts"
   ]
 }

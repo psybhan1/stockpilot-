@@ -10,7 +10,7 @@
 // reply correctly. `/api/inbound/email` parses the local-part back
 // into the PO id and re-attaches the reply on the same PO.
 
-import { env } from "@/lib/env";
+import { env } from "../../lib/env";
 
 export function buildSupplierReplyAddress(
   purchaseOrderId: string | null | undefined
