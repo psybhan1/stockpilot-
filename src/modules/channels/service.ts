@@ -15,25 +15,10 @@ import { sendWhatsAppMessage } from "@/lib/whatsapp-bot";
 
 export { ChannelType };
 
-const PAIRING_CODE_TTL_MINUTES = 15;
-
-// ---------------------------------------------------------------------------
-// Pairing code helpers
-// ---------------------------------------------------------------------------
-
-export function generatePairingCode(): string {
-  // 6 uppercase alphanumeric chars — easy to type
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "SB-";
-  for (let i = 0; i < 6; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
-}
-
-export function pairingCodeExpiresAt(): Date {
-  return new Date(Date.now() + PAIRING_CODE_TTL_MINUTES * 60_000);
-}
+// Pairing code helpers live in ./pairing-codes so they can be unit-
+// tested without pulling Prisma into the test compile.
+import { generatePairingCode, pairingCodeExpiresAt } from "./pairing-codes";
+export { generatePairingCode, pairingCodeExpiresAt };
 
 // ---------------------------------------------------------------------------
 // Telegram

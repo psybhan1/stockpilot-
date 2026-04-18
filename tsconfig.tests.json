@@ -88,6 +88,10 @@
     "src/lib/telegram-bot.ts",
     "src/lib/telegram-bot.test.ts",
     "src/modules/automation/step-labels.ts",
-    "src/modules/automation/step-labels.test.ts"
+    "src/modules/automation/step-labels.test.ts",
+    "src/lib/whatsapp-bot.ts",
+    "src/lib/whatsapp-bot.test.ts",
+    "src/modules/channels/pairing-codes.ts",
+    "src/modules/channels/pairing-codes.test.ts"
   ]
 }
