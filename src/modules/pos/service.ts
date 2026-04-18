@@ -17,10 +17,15 @@ import { processSaleEventById } from "@/modules/inventory/ledger";
 import { enqueueJob, enqueueJobTx } from "@/modules/jobs/dispatcher";
 import { getAiProvider } from "@/providers/ai-provider";
 import type { ProviderCatalogItem } from "@/providers/contracts";
+import { CloverProvider } from "@/providers/pos/clover";
 import { getPosProvider } from "@/providers/pos-provider";
 
 function getSquareCallbackUrl() {
   return `${env.APP_URL.replace(/\/$/, "")}/api/integrations/square/callback`;
+}
+
+function getCloverCallbackUrl() {
+  return `${env.APP_URL.replace(/\/$/, "")}/api/integrations/clover/callback`;
 }
 
 function getStoredAccessToken(accessTokenEncrypted?: string | null) {
@@ -229,6 +234,175 @@ export async function completeSquareOAuth(input: {
   });
 
   return updatedIntegration;
+}
+
+// ---- Clover ---------------------------------------------------------
+
+/**
+ * Clover-specific integration initialisation. Mirrors the Square path
+ * but uses CloverProvider directly (rather than going through
+ * getPosProvider, which picks Square based on env vars). Each POS
+ * keeps its own PosIntegration row keyed by (locationId, provider).
+ */
+export async function ensureCloverIntegration(
+  locationId: string,
+  userId: string
+) {
+  if (!env.CLOVER_CLIENT_ID || !env.CLOVER_CLIENT_SECRET) {
+    throw new Error(
+      "Clover isn't configured. Set CLOVER_CLIENT_ID and CLOVER_CLIENT_SECRET on the server."
+    );
+  }
+
+  const provider = new CloverProvider();
+  const existing = await db.posIntegration.findFirst({
+    where: {
+      locationId,
+      provider: PosProviderType.CLOVER,
+    },
+    select: {
+      id: true,
+      accessTokenEncrypted: true,
+    },
+  });
+
+  const integration = existing
+    ? await db.posIntegration.update({
+        where: { id: existing.id },
+        data: { status: IntegrationStatus.CONNECTING },
+      })
+    : await db.posIntegration.create({
+        data: {
+          locationId,
+          provider: PosProviderType.CLOVER,
+          status: IntegrationStatus.CONNECTING,
+        },
+      });
+
+  const state = `${integration.id}.${randomBytes(16).toString("hex")}`;
+  const result = await provider.connect({
+    integrationId: integration.id,
+    callbackUrl: getCloverCallbackUrl(),
+    state,
+    accessToken: existing?.accessTokenEncrypted
+      ? decryptSecret(existing.accessTokenEncrypted)
+      : null,
+  });
+
+  if (result.status === "redirect_required" && result.authUrl) {
+    await db.posIntegration.update({
+      where: { id: integration.id },
+      data: {
+        status: IntegrationStatus.CONNECTING,
+        sandbox: result.sandbox,
+        settings: { oauthState: state },
+      },
+    });
+
+    await db.$transaction(async (tx) => {
+      await createAuditLogTx(tx, {
+        locationId,
+        userId,
+        action: "integration.clover.oauth_started",
+        entityType: "posIntegration",
+        entityId: integration.id,
+      });
+    });
+
+    return {
+      integration,
+      requiresRedirect: true,
+      authUrl: result.authUrl,
+    };
+  }
+
+  const updated = await db.posIntegration.update({
+    where: { id: integration.id },
+    data: {
+      status: IntegrationStatus.CONNECTED,
+      sandbox: result.sandbox,
+      externalMerchantId: result.externalMerchantId,
+      // Clover merchant IS the location — no separate locationId concept.
+      externalLocationId: result.externalMerchantId,
+      accessTokenEncrypted: result.accessToken
+        ? encryptSecret(result.accessToken)
+        : existing?.accessTokenEncrypted,
+      settings: { oauthState: null, connectedVia: "oauth" },
+      lastSyncedAt: new Date(),
+    },
+  });
+
+  await enqueueJob({
+    locationId,
+    type: "SYNC_CATALOG",
+    payload: { integrationId: updated.id, userId },
+  });
+
+  return { integration: updated, requiresRedirect: false };
+}
+
+export async function completeCloverOAuth(input: {
+  integrationId: string;
+  state: string;
+  code: string;
+  merchantId: string;
+}) {
+  const integration = await db.posIntegration.findUniqueOrThrow({
+    where: { id: input.integrationId },
+  });
+
+  const expectedState =
+    integration.settings &&
+    typeof integration.settings === "object" &&
+    !Array.isArray(integration.settings)
+      ? (integration.settings as Record<string, unknown>).oauthState
+      : null;
+
+  if (!expectedState || expectedState !== input.state) {
+    throw new Error("Clover OAuth state could not be verified.");
+  }
+
+  const provider = new CloverProvider();
+  const result = await provider.exchangeCode({
+    code: input.code,
+    callbackUrl: getCloverCallbackUrl(),
+  });
+
+  const updated = await db.posIntegration.update({
+    where: { id: integration.id },
+    data: {
+      status: IntegrationStatus.CONNECTED,
+      sandbox: result.sandbox,
+      // Clover's token exchange doesn't return merchant_id — it comes
+      // from the callback querystring, passed in as input.merchantId.
+      externalMerchantId: input.merchantId,
+      externalLocationId: input.merchantId,
+      accessTokenEncrypted: encryptSecret(result.accessToken),
+      refreshTokenEncrypted: result.refreshToken
+        ? encryptSecret(result.refreshToken)
+        : undefined,
+      settings: { oauthState: null, connectedVia: "oauth" },
+      lastSyncedAt: new Date(),
+    },
+  });
+
+  await enqueueJob({
+    locationId: integration.locationId,
+    type: "SYNC_CATALOG",
+    payload: { integrationId: integration.id },
+  });
+
+  await db.$transaction(async (tx) => {
+    await createAuditLogTx(tx, {
+      locationId: integration.locationId,
+      action: "integration.clover.oauth_connected",
+      entityType: "posIntegration",
+      entityId: integration.id,
+      details: { externalMerchantId: updated.externalMerchantId },
+    });
+  });
+
+  return updated;
 }
 
 export async function syncCatalog(integrationId: string, userId?: string | null) {

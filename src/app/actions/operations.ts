@@ -26,7 +26,11 @@ import {
   markPurchaseOrderSent,
   rejectRecommendation,
 } from "@/modules/purchasing/service";
-import { ensureSquareIntegration, importSampleSales } from "@/modules/pos/service";
+import {
+  ensureCloverIntegration,
+  ensureSquareIntegration,
+  importSampleSales,
+} from "@/modules/pos/service";
 import { requireSession } from "@/modules/auth/session";
 import { runPendingJobs } from "@/modules/jobs/dispatcher";
 import {
@@ -676,6 +680,44 @@ export async function startSquareConnectAction(): Promise<
 
   void runPendingJobs(10).catch((err) => {
     console.error("[startSquareConnectAction] job drain failed:", err);
+  });
+  revalidateOperations();
+
+  return { ok: true, status: "connected" };
+}
+
+/**
+ * Clover equivalent of startSquareConnectAction. Same popup-flow
+ * contract: returns {authUrl} for the client to window.open(), or
+ * {status:"connected"} if the stored PAT revalidated without OAuth.
+ */
+export async function startCloverConnectAction(): Promise<
+  | { ok: true; status: "redirect"; authUrl: string }
+  | { ok: true; status: "connected" }
+  | { ok: false; reason: string }
+> {
+  const session = await requireSession(Role.MANAGER);
+
+  const { env } = await import("@/lib/env");
+  if (!env.CLOVER_CLIENT_ID || !env.CLOVER_CLIENT_SECRET) {
+    return {
+      ok: false,
+      reason:
+        "Clover isn't configured yet. Ask the admin to register a Clover app at clover.com/developers and set CLOVER_CLIENT_ID and CLOVER_CLIENT_SECRET on Railway.",
+    };
+  }
+
+  const result = await ensureCloverIntegration(
+    session.locationId,
+    session.userId
+  );
+
+  if (result.requiresRedirect && result.authUrl) {
+    return { ok: true, status: "redirect", authUrl: result.authUrl };
+  }
+
+  void runPendingJobs(10).catch((err) => {
+    console.error("[startCloverConnectAction] job drain failed:", err);
   });
   revalidateOperations();
 

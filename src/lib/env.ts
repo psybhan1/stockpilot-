@@ -33,6 +33,15 @@ export const env = {
   SQUARE_CLIENT_ID: process.env.SQUARE_CLIENT_ID,
   SQUARE_CLIENT_SECRET: process.env.SQUARE_CLIENT_SECRET,
   SQUARE_WEBHOOK_SIGNATURE_KEY: process.env.SQUARE_WEBHOOK_SIGNATURE_KEY,
+  // Clover — native OAuth + REST. Production uses www.clover.com +
+  // api.clover.com; sandbox uses sandbox.dev.clover.com +
+  // apisandbox.dev.clover.com. One app ID/secret pair per env.
+  CLOVER_ENVIRONMENT:
+    (process.env.CLOVER_ENVIRONMENT as "sandbox" | "production") ??
+    "production",
+  CLOVER_CLIENT_ID: process.env.CLOVER_CLIENT_ID,
+  CLOVER_CLIENT_SECRET: process.env.CLOVER_CLIENT_SECRET,
+  CLOVER_WEBHOOK_SIGNATURE_KEY: process.env.CLOVER_WEBHOOK_SIGNATURE_KEY,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL ?? "gpt-5-mini",
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",

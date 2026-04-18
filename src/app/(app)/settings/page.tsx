@@ -17,6 +17,7 @@ import {
   syncSalesAction,
   updateAutoApproveThresholdAction,
 } from "@/app/actions/operations";
+import { CloverConnectButton } from "@/components/app/clover-connect-button";
 import { PageHero } from "@/components/app/page-hero";
 import { SquareConnectButton } from "@/components/app/square-connect-button";
 import { StatusBadge } from "@/components/app/status-badge";
@@ -349,13 +350,43 @@ export default async function SettingsPage({
           </div>
         </BrandCard>
 
+        {/* Clover — same one-click OAuth path as Square. Each Clover
+            merchant installs our app from clover.com, approves access,
+            and we exchange the code for a per-merchant token via the
+            /api/integrations/clover/callback endpoint. */}
+        <BrandCard
+          logo={<CloverLogo />}
+          name="Clover"
+          tagline={
+            posByProvider.CLOVER?.status === "CONNECTED"
+              ? `Connected — merchant ${posByProvider.CLOVER.externalMerchantId ?? "unknown"}.`
+              : "One-click OAuth — catalog syncs, sales auto-deplete inventory."
+          }
+          status={
+            posByProvider.CLOVER?.status === "CONNECTED"
+              ? "Live"
+              : "Not connected"
+          }
+          statusTone={
+            posByProvider.CLOVER?.status === "CONNECTED" ? "success" : "info"
+          }
+        >
+          <CloverConnectButton
+            label={
+              posByProvider.CLOVER?.status === "CONNECTED"
+                ? "Reconnect"
+                : "Connect Clover"
+            }
+            className="h-9 gap-2 bg-[#00B140] hover:bg-[#008f35] text-white text-xs border-0"
+          />
+        </BrandCard>
+
         {/* One row for every other POS. Honest framing: native
             one-click is coming; for now it's a Zapier bridge with a
             per-tenant webhook. Advanced users click to expand. */}
         {(() => {
           const otherProviders = [
             "TOAST",
-            "CLOVER",
             "LIGHTSPEED",
             "SHOPIFY",
             "GENERIC_WEBHOOK",
@@ -368,7 +399,7 @@ export default async function SettingsPage({
             <details className="rounded-xl border border-border/50 bg-card/60 px-5 py-3 text-sm group">
               <summary className="flex cursor-pointer items-center justify-between text-xs text-muted-foreground hover:text-foreground">
                 <span>
-                  Other POS (Toast · Clover · Lightspeed · Shopify · other)
+                  Other POS (Toast · Lightspeed · Shopify · other)
                 </span>
                 <span className="font-mono text-[10px]">
                   {any ? `${activeOther.length} connected` : "native OAuth in progress"}
@@ -376,13 +407,13 @@ export default async function SettingsPage({
               </summary>
               <div className="mt-4 space-y-4 text-muted-foreground">
                 <p className="text-xs">
-                  Native one-click OAuth for Toast, Clover, Lightspeed, and
-                  Shopify POS is in-progress — each one needs its own OAuth
-                  app registered with the vendor, plus partner approval for
-                  Toast. Until those ship, a 2-minute Zapier bridge gets any
-                  of them (or any other POS) forwarding sales to StockPilot
-                  with the same end result: real sales land on your
-                  dashboard, inventory depletes automatically.
+                  Native one-click OAuth ships next for Toast (pending their
+                  partner approval), Lightspeed, and Shopify POS — each one
+                  needs its own OAuth app registered with the vendor.
+                  Until those land, a 2-minute Zapier bridge gets any POS
+                  forwarding sales to StockPilot with the same end result:
+                  real sales land on your dashboard, inventory depletes
+                  automatically.
                 </p>
                 <Link
                   href="/docs/pos-quickstart"
@@ -922,6 +953,16 @@ function SquareLogo({ size = 20 }: { size?: number }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
       <rect x="2" y="2" width="20" height="20" rx="3" fill="#3E4348" />
       <rect x="7" y="7" width="10" height="10" rx="1.5" fill="white" />
+    </svg>
+  );
+}
+
+function CloverLogo({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="2" y="2" width="20" height="20" rx="3" fill="#00B140" />
+      <path d="M12 6.5c-1 0-1.8.8-1.8 1.8 0 .2.02.4.07.58-.18-.05-.38-.08-.57-.08-1 0-1.8.8-1.8 1.8s.8 1.8 1.8 1.8c.2 0 .4-.03.57-.08-.05.18-.07.38-.07.57 0 1 .8 1.8 1.8 1.8s1.8-.8 1.8-1.8c0-.2-.03-.4-.08-.57.18.05.38.08.58.08 1 0 1.8-.8 1.8-1.8s-.8-1.8-1.8-1.8c-.2 0-.4.03-.58.08.05-.18.08-.38.08-.58 0-1-.8-1.8-1.8-1.8z" fill="white"/>
+      <rect x="11.5" y="14.5" width="1" height="3" rx="0.5" fill="white" />
     </svg>
   );
 }
