@@ -38,32 +38,11 @@ export type AgentContext = {
 };
 
 // ── URL helpers ──────────────────────────────────────────────────────────
-// The model is instructed to pass `website_url` exactly as the user
-// pasted it, but in practice it sometimes strips the protocol, wraps
-// the URL in markdown, or appends trailing punctuation from the chat.
-// These helpers reconcile that into (a) a clean full URL we save on
-// the PO line for direct navigation, and (b) a bare hostname root
-// stored on Supplier.website for the search-by-name fallback.
-
-export function normalizeProductUrl(raw: string): string {
-  let url = raw.trim();
-  if (!url) return "";
-  // Strip markdown ` and < > wrappers, trailing punctuation often
-  // attached when a URL ends a sentence.
-  url = url.replace(/^[<`'"]+|[>`'".,;!?)\]]+$/g, "");
-  // Add scheme if missing — model output drops `https://` ~30% of
-  // the time. URL constructor needs one to parse hostname.
-  if (!/^[a-z]+:\/\//i.test(url)) {
-    url = `https://${url}`;
-  }
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    return parsed.toString();
-  } catch {
-    return "";
-  }
-}
+// `normalizeProductUrl` lives in sniffer-helpers.ts so the unit-test
+// build can import it without pulling in the agent's DB/env imports.
+// Re-exported here for the existing call sites + scripts.
+import { normalizeProductUrl } from "./sniffer-helpers";
+export { normalizeProductUrl };
 
 export function toHostnameRoot(url: string): string {
   try {

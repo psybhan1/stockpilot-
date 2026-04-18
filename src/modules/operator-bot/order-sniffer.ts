@@ -12,8 +12,20 @@
  * through to the agent as normal.
  */
 
-import { lookupKnownSupplierWebsite, normalizeProductUrl } from "@/modules/operator-bot/agent";
+import { lookupKnownSupplierWebsite } from "@/modules/operator-bot/agent";
 import { fetchProductMetadata } from "@/modules/automation/product-metadata";
+import {
+  capitaliseItem,
+  findAllUrls,
+  findUrl,
+  hostnameToSupplierLabel,
+  itemNameFromUrl,
+  looksLikeOrderIntent,
+  normaliseSupplierName,
+  parseQuantityFromText,
+} from "@/modules/operator-bot/sniffer-helpers";
+
+export { findUrl, findAllUrls, sniffApproveOrCancel } from "@/modules/operator-bot/sniffer-helpers";
 
 export type SniffedOrder = {
   itemName: string;
@@ -45,38 +57,6 @@ const UNITS =
 // are match-as-atom so they work at end-of-string (no trailing \s+
 // required, otherwise "...cart in" at end of message fails to match).
 const SUPPLIER_PREP = "(?:from|at|on|in(?:\\s+(?:my|the))?|to(?:\\s+(?:my|the))?)";
-
-/**
- * Detect a URL anywhere in the text. Returns the first match normalised
- * via the agent's URL normaliser.
- */
-export function findUrl(text: string): string | null {
-  // Permissive: anything that looks like a URL (with or without scheme).
-  const match = text.match(
-    /\b(?:https?:\/\/|(?:www\.)|(?:amzn\.to|a\.co)\/)\S+/i
-  );
-  if (!match) return null;
-  return normalizeProductUrl(match[0]) || null;
-}
-
-/**
- * Find EVERY URL in a message. Deduplicates and normalises. Used for
- * the bulk-paste case: "add these to my cart: <url1> <url2> <url3>".
- */
-export function findAllUrls(text: string): string[] {
-  const regex = /\b(?:https?:\/\/|(?:www\.)|(?:amzn\.to|a\.co)\/)\S+/gi;
-  const urls: string[] = [];
-  const seen = new Set<string>();
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    const normalised = normalizeProductUrl(match[0]);
-    if (normalised && !seen.has(normalised)) {
-      urls.push(normalised);
-      seen.add(normalised);
-    }
-  }
-  return urls;
-}
 
 /**
  * Try to split a user message into separate order chunks sharing a
@@ -258,93 +238,6 @@ async function matchSingleOrder(
   };
 }
 
-function hostnameToSupplierLabel(url: string): string | null {
-  try {
-    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
-    if (/amazon\.|amzn\.to|a\.co/.test(host)) return "Amazon";
-    if (host.includes("costco")) return "Costco";
-    if (host.includes("walmart")) return "Walmart";
-    if (host.includes("target.com")) return "Target";
-    if (host.includes("lcbo")) return "LCBO";
-    if (host.includes("sysco")) return "Sysco";
-    if (host.includes("webstaurant")) return "WebstaurantStore";
-    if (host.includes("homedepot")) return "Home Depot";
-    if (host.includes("staples")) return "Staples";
-    // Fall back to the first hostname segment titled-cased.
-    const first = host.split(".")[0];
-    if (first) return first.charAt(0).toUpperCase() + first.slice(1);
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function itemNameFromUrl(url: string): string | null {
-  // Amazon: /Urnex-Cafiza-Espresso/dp/B005... → "Urnex Cafiza Espresso"
-  const amzn = url.match(/\/([A-Za-z0-9-]+(?:-[A-Za-z0-9]+){1,})\/(?:dp|gp\/product)\//);
-  if (amzn) {
-    return amzn[1].replace(/-/g, " ").trim();
-  }
-  return null;
-}
-
-/**
- * Pull a quantity out of free-text imperatives like "add three in
- * the cart", "get me 5", "order 2 of these". Returns 1 if nothing
- * parseable — that's the sensible default for "add this".
- *
- * Carefully avoids false positives:
- *   - Rejects digits glued to letters by hyphens or letters
- *     ("7-Eleven", "B000FDL68W" ASIN, "M-2")
- *   - Rejects digits inside URLs (skips the URL substring first)
- *   - Accepts "a dozen" / "a couple of"
- */
-const WORD_DIGITS: Record<string, number> = {
-  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
-  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, dozen: 12,
-  thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
-  eighteen: 18, nineteen: 19, twenty: 20, a: 1, an: 1,
-};
-function parseQuantityFromText(text: string): number {
-  // Strip URLs first — ASINs like B000FDL68W contain digits we
-  // don't want captured. Also strip anything URL-ish that dangled
-  // without http:// prefix.
-  const withoutUrls = text
-    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, " ")
-    .replace(/\S+\.(?:com|ca|net|org|io)\/\S*/gi, " ");
-
-  // Digit must be surrounded by whitespace/start/end — NOT by a
-  // letter or hyphen. Rejects "7-Eleven", "M-2", "Route66".
-  const digit = withoutUrls.match(/(?:^|[\s,.!?])(\d{1,4})(?=\s|$|[.,!?])/);
-  if (digit) {
-    const n = Number(digit[1]);
-    if (n > 0 && n < 1000) return n;
-  }
-  const word = withoutUrls.match(
-    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|dozen|a|an)\b/i
-  );
-  if (word) {
-    const n = WORD_DIGITS[word[1].toLowerCase()];
-    if (n) return n;
-  }
-  return 1;
-}
-
-function capitaliseItem(s: string): string {
-  return s
-    .split(/\s+/)
-    .map((w) => (w.length > 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w))
-    .join(" ");
-}
-
-function normaliseSupplierName(s: string): string {
-  return s
-    .replace(/^(?:my\s+|the\s+)/i, "")
-    .replace(/\s+(cart|website|shop|store)$/i, "")
-    .replace(/[.,!?]+$/, "")
-    .trim();
-}
-
 /**
  * Public entry: sniff a manager's message. Returns an array of orders
  * when the message is unambiguous, or null to fall through to the LLM.
@@ -398,69 +291,3 @@ export async function sniffOrderIntent(text: string): Promise<SniffResult> {
   return null;
 }
 
-/**
- * Is this message phrased like an order? Used as the gate for the
- * bulk-URL case — we only want to fire it when the user clearly
- * meant "add these items", not when they're just sharing links.
- */
-function looksLikeOrderIntent(text: string): boolean {
-  return /\b(add|order|buy|get|we\s+need|put|please\s+order)\b/i.test(text);
-}
-
-/**
- * Deterministic approve/cancel sniffer. Llama-4-Scout sometimes replies
- * "Cancelled." or "Approved." without actually calling the cancel/
- * approve tool — a classic small-model failure mode. So when the
- * user's whole message is clearly a yes-or-no to a pending PO, we
- * route around the LLM entirely and call the tool ourselves.
- *
- * Returns null when the message isn't a clean approve/cancel signal
- * (too long, mentions digits, or doesn't contain one of the trigger
- * words) — those cases fall through to the LLM as normal.
- */
-export function sniffApproveOrCancel(text: string): "approve" | "cancel" | null {
-  const raw = (text ?? "").trim().toLowerCase();
-  if (raw.length === 0 || raw.length > 40) return null;
-  // If the message has digits it's probably a new order ("order 5…"),
-  // not a yes/no to an existing one.
-  if (/\d/.test(raw)) return null;
-
-  // Emoji signals first — they don't live inside \b word boundaries
-  // and trying to regex them is messier than a direct contains check.
-  const hasApproveEmoji = /[👍✅✔✓🆗]/u.test(raw);
-  const hasCancelEmoji = /[❌✖✗🚫🛑]/u.test(raw);
-
-  // Normalise text for word-boundary regex: strip punctuation (incl.
-  // apostrophe → collapse so "don't" becomes "dont"), collapse spaces.
-  const stripped = raw
-    .replace(/['`]/g, "") // apostrophe → nothing (keeps "dont" one token)
-    .replace(/[.,!?;:"—–-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  // Cancel patterns.
-  const CANCEL_WORDS =
-    /\b(cancel|nvm|never\s*mind|scrap(?:\s*that)?|dont\s*send(?:\s*it)?|stop|abort|nope|nah|no(?:pe)?)\b/i;
-  const APPROVE_WORDS =
-    /\b(approve(?:\s*(?:it|and\s*send))?|send\s*it|go\s*ahead|do\s*it|looks\s*good|lgtm|sure|yes|yep|yup|yeah|ok(?:ay)?)\b/i;
-
-  // Negation markers — if any appear, the whole message is a
-  // cancel regardless of what "approve" words sit inside it.
-  // "dont send it" contains "send it" (approve-ish), but the "dont"
-  // flips it; same for "no go ahead" → still a no.
-  const NEGATION = /\b(dont|do\s*not|no|not|nope|nah|nvm|never\s*mind|cancel|scrap|stop|abort)\b/i;
-  const hasNegation = NEGATION.test(stripped);
-
-  const hasCancel = hasCancelEmoji || CANCEL_WORDS.test(stripped) || hasNegation;
-  const hasApprove = hasApproveEmoji || APPROVE_WORDS.test(stripped);
-
-  // Negation wins over any approve hit inside the same short message.
-  // Genuine ambiguity ("no wait yes") is handled below: hasNegation
-  // is true AND the approve word is after a clause break. We keep
-  // the simpler rule here — "no wait, yes" in practice is rare and
-  // the user can just retype.
-  if (hasNegation) return "cancel";
-  if (hasCancel) return "cancel";
-  if (hasApprove) return "approve";
-  return null;
-}
