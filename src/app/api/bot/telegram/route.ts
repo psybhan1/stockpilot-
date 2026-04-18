@@ -382,11 +382,12 @@ async function handleTelegramUpdate(payload: TelegramUpdate) {
     });
   }
 
-  // Hard 45s ceiling on the whole bot turn. If the underlying agent
-  // is stuck (Groq 30s timeout × 3 retries, metadata fetch hanging,
-  // etc.) we don't want the webhook to block forever — Telegram
-  // retries after ~60s on its end, which creates duplicate-processing
-  // storms. Return a safe "try again" instead.
+  // Hard ceiling on the whole bot turn. If the underlying agent is
+  // stuck (Groq timeout, retry, metadata fetch hanging, etc.) we
+  // don't want the webhook to block forever — Telegram retries after
+  // ~60s on its end, which creates duplicate-processing storms. Give
+  // vision turns more headroom since Maverick is slower than Scout.
+  const hardCeilingMs = imageDataUrls.length > 0 ? 55000 : 45000;
   const result = await Promise.race([
     handleInboundManagerBotMessage({
       channel: "TELEGRAM",
@@ -417,7 +418,7 @@ async function handleTelegramUpdate(payload: TelegramUpdate) {
               "⌛ Taking longer than expected — try again in a moment. Complex operations like searching Amazon can take 30+ seconds.",
             skipSend: false,
           }),
-        45000
+        hardCeilingMs
       )
     ),
   ]);

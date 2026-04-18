@@ -120,6 +120,8 @@
     "src/lib/env-helpers.ts",
     "src/lib/env-helpers.test.ts",
     "src/modules/operator-bot/connect-primitives.ts",
-    "src/modules/operator-bot/connect-primitives.test.ts"
+    "src/modules/operator-bot/connect-primitives.test.ts",
+    "src/modules/operator-bot/vision-routing.ts",
+    "src/modules/operator-bot/vision-routing.test.ts"
   ]
 }

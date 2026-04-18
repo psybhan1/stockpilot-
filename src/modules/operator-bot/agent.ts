@@ -1250,59 +1250,32 @@ User: "what do I need" → list below-par items from LIVE DATA, offer to draft a
 User: "nvm" → cancel_recent_order, reply: "Cancelled."`;
 
 // ── Groq client ───────────────────────────────────────────────────────────────
-type GroqToolCall = {
-  id: string;
-  type: "function";
-  function: { name: string; arguments: string };
-};
+import {
+  buildUserContent,
+  hasVisionContent,
+  resolveGroqModel,
+  type GroqMessage,
+  type GroqToolCall,
+} from "@/modules/operator-bot/vision-routing";
+export { hasVisionContent };
 
-/**
- * OpenAI-compatible multimodal content parts. Groq's vision models
- * (Llama 4 Scout) accept either a plain string `content` or an
- * array of typed parts. We only use the two part types we need —
- * `text` for the user's caption / default prompt, and `image_url`
- * for a base64 data URL.
- */
-type GroqContentPart =
-  | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
-
-type GroqMessage = {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string | GroqContentPart[] | null;
-  tool_calls?: GroqToolCall[];
-  tool_call_id?: string;
-  name?: string;
-};
-
-/**
- * Build the `content` field for a user turn. If images are attached,
- * emit the multimodal array form. Otherwise emit a plain string so
- * we don't bloat token counts for text-only traffic.
- */
-function buildUserContent(
-  text: string,
-  images?: string[]
-): string | GroqContentPart[] {
-  if (!images || images.length === 0) return text;
-  // A caption-less image from the user comes through with empty text
-  // — give the model SOMETHING to anchor on so it doesn't ask "what
-  // do you want me to do?" back. The operator almost always wants
-  // item / receipt / stock info extracted.
-  const caption = text.trim() || "What's in this photo? If it's inventory, a receipt, or a product label, tell me what you see and offer to update stock or log it.";
-  return [
-    { type: "text", text: caption },
-    ...images.map((url) => ({
-      type: "image_url" as const,
-      image_url: { url },
-    })),
-  ];
-}
-
-// Default model — override with GROQ_BOT_MODEL env var.
-// Llama 4 Scout: native tool calling, separate TPD quota from 70b
-// (which we burned out), and the newest Llama 4 model on Groq.
+// Default models — overridable via env vars.
+//
+//   GROQ_BOT_MODEL         — used for every turn unless the user sent
+//                            an image. Llama 4 Scout 17B (16 experts):
+//                            fast, native tool calling, separate TPD
+//                            quota from the 70b line we'd burned out.
+//
+//   GROQ_BOT_VISION_MODEL  — used when the latest user turn carries
+//                            an image. Llama 4 Maverick 17B (128
+//                            experts) is Meta's flagship multimodal
+//                            Llama on Groq — noticeably stronger at
+//                            reading receipts, handwritten labels,
+//                            fridge shelves. It's slower than Scout
+//                            so we only pay that cost when there's
+//                            actually a photo to analyse.
 const DEFAULT_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+const DEFAULT_VISION_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct";
 
 async function callGroq(messages: GroqMessage[]): Promise<{
   content: string | null;
@@ -1311,7 +1284,14 @@ async function callGroq(messages: GroqMessage[]): Promise<{
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY not set");
 
-  const model = process.env.GROQ_BOT_MODEL ?? DEFAULT_MODEL;
+  const isVisionTurn = hasVisionContent(messages);
+  const model = resolveGroqModel({
+    hasVision: isVisionTurn,
+    textModelOverride: process.env.GROQ_BOT_MODEL,
+    visionModelOverride: process.env.GROQ_BOT_VISION_MODEL,
+    defaultTextModel: DEFAULT_MODEL,
+    defaultVisionModel: DEFAULT_VISION_MODEL,
+  });
 
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
@@ -1323,12 +1303,17 @@ async function callGroq(messages: GroqMessage[]): Promise<{
       model,
       temperature: 0.3,
       top_p: 0.95,
-      max_tokens: 512,
+      // Vision outputs tend to be longer (description + structured
+      // extraction). Give Maverick more headroom so a receipt with
+      // 12 line items doesn't get truncated mid-list.
+      max_tokens: isVisionTurn ? 1024 : 512,
       messages,
       tools: TOOLS,
       tool_choice: "auto",
     }),
-    signal: AbortSignal.timeout(30000),
+    // Maverick is slower per token than Scout — bump the timeout
+    // on vision turns so we don't false-negative on a busy model.
+    signal: AbortSignal.timeout(isVisionTurn ? 45000 : 30000),
   });
 
   if (!res.ok) {
