@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Cable, Settings2 } from "lucide-react";
+import { Cable, Mail, Settings2 } from "lucide-react";
 
 import {
   connectSquareAction,
@@ -39,7 +39,7 @@ export default async function SettingsPage({
 }) {
   const session = await requireSession(Role.MANAGER);
   const params = await searchParams;
-  const { integration, jobs } = await getSettingsData(session.locationId);
+  const { integration, jobs, emailProvider } = await getSettingsData(session.locationId);
 
   const [locationChannels, currentManager, locationSettings] = await Promise.all([
     getLocationChannels(session.locationId),
@@ -57,6 +57,24 @@ export default async function SettingsPage({
     locationSettings.autoApproveEmailUnderCents != null
       ? (locationSettings.autoApproveEmailUnderCents / 100).toString()
       : "";
+
+  // "Send PO emails" is ready whenever EITHER Gmail is connected OR
+  // Resend is configured. New cafés hit Resend by default with zero
+  // setup, so we show a green-ready state and keep the Gmail OAuth
+  // button as an optional upgrade behind a disclosure — no scary
+  // "Sign in with Google" prompt on first visit.
+  const gmailConnected = Boolean(locationChannels?.email);
+  const emailReady = emailProvider.name !== "console";
+  const emailSendingAs = (() => {
+    if (emailProvider.name === "gmail" && emailProvider.email) return emailProvider.email;
+    if (emailProvider.name === "resend") {
+      const addr = emailProvider.email?.match(/<([^>]+)>/)?.[1] ?? emailProvider.email ?? "";
+      return emailProvider.displayName
+        ? `${emailProvider.displayName} <${addr}>`
+        : addr;
+    }
+    return null;
+  })();
 
   const telegramTokenReady = Boolean(env.TELEGRAM_BOT_TOKEN);
   const publicAppUrlReady = isPublicAppUrl(env.APP_URL);
@@ -185,34 +203,67 @@ export default async function SettingsPage({
           </form>
         </BrandCard>
 
-        {/* Email */}
+        {/* Email — ready by default via Resend; Gmail OAuth is an
+            optional upgrade hidden behind a <details> disclosure so
+            new cafés don't see the scary Google OAuth warning unless
+            they explicitly want to use their own address. */}
         <BrandCard
-          logo={<GmailLogo />}
+          logo={<Mail size={20} className="text-muted-foreground" />}
           name="Email"
           tagline={
-            locationChannels.email
-              ? `Sending from ${locationChannels.email.address ?? locationChannels.email.provider}`
-              : "Connect Gmail to send order approval emails"
+            gmailConnected
+              ? `PO emails send from your Gmail${emailSendingAs ? `: ${emailSendingAs}` : ""}.`
+              : emailReady && emailSendingAs
+                ? `Ready — POs send from ${emailSendingAs}. Suppliers reply to a StockPilot address that routes back to the matching order.`
+                : "Not configured yet — contact your admin to set up the sending provider."
           }
-          status={locationChannels.email ? "Connected" : "Not connected"}
-          statusTone={locationChannels.email ? "success" : "info"}
+          status={emailReady ? "Ready" : "Setup needed"}
+          statusTone={emailReady ? "success" : "warning"}
         >
-          {locationChannels.email ? (
+          {gmailConnected ? (
             <form action={disconnectEmailChannelAction}>
-              <input type="hidden" name="provider" value={locationChannels.email.provider} />
+              <input type="hidden" name="provider" value={locationChannels.email!.provider} />
               <Button type="submit" variant="ghost" size="sm" className="h-9 text-xs text-muted-foreground">
-                Disconnect
+                Disconnect Gmail
               </Button>
             </form>
-          ) : (
-            <a href="/api/auth/google/gmail">
-              <Button size="sm" className="h-9 gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs shadow-sm">
-                <GoogleLogo size={16} />
-                Sign in with Google
-              </Button>
-            </a>
-          )}
+          ) : null}
         </BrandCard>
+
+        {!gmailConnected && emailReady ? (
+          <details className="rounded-xl border border-border/50 bg-card/60 px-5 py-3 text-sm">
+            <summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">
+              Advanced · send POs from your own Gmail address
+            </summary>
+            <div className="mt-3 space-y-3 text-muted-foreground">
+              <p>
+                By default, suppliers see <span className="font-medium text-foreground">
+                  {emailSendingAs ?? "a StockPilot-managed address"}
+                </span>{" "}
+                and their replies route straight back to the matching order.
+                That works out of the box — you don&apos;t need to connect anything.
+              </p>
+              <p>
+                If you&apos;d rather have PO emails go out from your own Gmail
+                account, connect it below. Google may show an{" "}
+                <span className="font-medium text-foreground">
+                  &ldquo;unverified app&rdquo;
+                </span>{" "}
+                warning until we finish Google&apos;s verification process — that&apos;s
+                normal, and you can click{" "}
+                <span className="font-medium text-foreground">Advanced → Go to StockPilot (unsafe)</span>{" "}
+                to continue. We only request <code>gmail.send</code> — we never
+                read your inbox.
+              </p>
+              <a href="/api/auth/google/gmail" className="inline-block">
+                <Button size="sm" className="h-9 gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs shadow-sm">
+                  <GoogleLogo size={16} />
+                  Connect Gmail
+                </Button>
+              </a>
+            </div>
+          </details>
+        ) : null}
       </Section>
 
       {/* ─── Ordering automation ─── */}

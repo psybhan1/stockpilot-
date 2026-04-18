@@ -549,7 +549,10 @@ export async function getAgentTasksData(locationId: string) {
 }
 
 export async function getSettingsData(locationId: string) {
-  const [integration, jobs, auditLogs] = await Promise.all([
+  const { describeSupplierOrderProvider } = await import(
+    "@/providers/supplier-order-provider"
+  );
+  const [integration, jobs, auditLogs, emailProvider] = await Promise.all([
     db.posIntegration.findFirst({
       where: {
         locationId,
@@ -565,9 +568,10 @@ export async function getSettingsData(locationId: string) {
       orderBy: { createdAt: "desc" },
       take: 10,
     }),
+    describeSupplierOrderProvider(locationId),
   ]);
 
-  return { integration, jobs, auditLogs };
+  return { integration, jobs, auditLogs, emailProvider };
 }
 
 export async function getAssistantSummary(locationId: string) {

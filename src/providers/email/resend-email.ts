@@ -7,12 +7,27 @@ import { buildWebsiteOrderPlaywrightTemplate } from "@/modules/automation/playwr
 type ResendEmailProviderOptions = {
   apiKey: string;
   fromEmail: string;
+  /** Optional per-tenant display name wrapped into the From header —
+   * lets each café show its own identity even though we all share a
+   * single Resend sending domain. When omitted, the configured
+   * fromEmail is used verbatim. */
+  displayName?: string;
 };
 
 export class ResendEmailProvider
   implements NotificationProvider, SupplierOrderProvider
 {
   constructor(private readonly options: ResendEmailProviderOptions) {}
+
+  private resolvedFrom(): string {
+    const name = this.options.displayName?.trim();
+    if (!name) return this.options.fromEmail;
+    // If fromEmail already has a "Name <addr>" shape, replace the name.
+    const match = this.options.fromEmail.match(/<([^>]+)>/);
+    if (match) return `${name} <${match[1]}>`;
+    // Plain address — wrap with the tenant name.
+    return `${name} <${this.options.fromEmail}>`;
+  }
 
   async sendNotification(input: {
     notificationId?: string;
@@ -151,7 +166,7 @@ export class ResendEmailProvider
         "Idempotency-Key": randomUUID(),
       },
       body: JSON.stringify({
-        from: this.options.fromEmail,
+        from: this.resolvedFrom(),
         to: [input.recipient],
         subject: input.subject,
         text: input.body,

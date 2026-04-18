@@ -1,3 +1,4 @@
+import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import type { SupplierOrderProvider } from "@/providers/contracts";
 import { ConsoleEmailProvider } from "@/providers/email/console-email";
@@ -27,12 +28,17 @@ export function getSupplierOrderProvider(): SupplierOrderProvider {
 
 /**
  * Per-location provider. Preference order:
- *   1. Location's connected Gmail (free, uses their own 500/day quota)
- *   2. Resend, if configured globally
- *   3. Console (test mode — logs only)
+ *   1. Location's connected Gmail (free, uses their own 500/day quota,
+ *      supplier sees the owner's own Gmail address). This is OPTIONAL —
+ *      new cafés skip it entirely.
+ *   2. Resend, if configured globally. The café name is wrapped into
+ *      the From header so suppliers still see the right identity
+ *      (e.g. "Sunny's Café <orders@stockpilot.app>").
+ *   3. Console (test mode — logs only).
  *
  * The Gmail check is a cheap DB read; if no row is found we fall
- * through to the global provider.
+ * through to the global Resend provider so zero-setup cafés still
+ * send real PO emails on day one.
  */
 export async function getSupplierOrderProviderForLocation(
   locationId: string
@@ -41,17 +47,57 @@ export async function getSupplierOrderProviderForLocation(
   if (gmail?.accessToken) {
     return new GmailEmailProvider(locationId);
   }
-  return getSupplierOrderProvider();
+
+  if (env.DEFAULT_EMAIL_PROVIDER === "resend" && env.RESEND_API_KEY) {
+    const displayName = await resolveLocationDisplayName(locationId);
+    return new ResendEmailProvider({
+      apiKey: env.RESEND_API_KEY,
+      fromEmail: env.RESEND_FROM_EMAIL,
+      displayName,
+    });
+  }
+
+  return new ConsoleEmailProvider();
 }
 
 /** Human-readable name of whichever provider would be used for this location. */
 export async function describeSupplierOrderProvider(
   locationId: string
-): Promise<{ name: "gmail" | "resend" | "console"; email?: string }> {
+): Promise<{ name: "gmail" | "resend" | "console"; email?: string; displayName?: string }> {
   const gmail = await getGmailCredentials(locationId);
   if (gmail?.accessToken) return { name: "gmail", email: gmail.email };
   if (env.DEFAULT_EMAIL_PROVIDER === "resend" && env.RESEND_API_KEY) {
-    return { name: "resend", email: env.RESEND_FROM_EMAIL };
+    return {
+      name: "resend",
+      email: env.RESEND_FROM_EMAIL,
+      displayName: await resolveLocationDisplayName(locationId),
+    };
   }
   return { name: "console" };
+}
+
+/**
+ * Picks the best supplier-facing display name for a location:
+ * business name first, falling back to location name, then a neutral
+ * default. Used to wrap the shared Resend sender address in a
+ * per-tenant brand — so two cafés sending through the same domain
+ * still look like themselves to their suppliers.
+ */
+async function resolveLocationDisplayName(
+  locationId: string
+): Promise<string | undefined> {
+  try {
+    const loc = await db.location.findUnique({
+      where: { id: locationId },
+      select: {
+        name: true,
+        business: { select: { name: true } },
+      },
+    });
+    const candidate =
+      loc?.business?.name?.trim() || loc?.name?.trim() || undefined;
+    return candidate;
+  } catch {
+    return undefined;
+  }
 }
