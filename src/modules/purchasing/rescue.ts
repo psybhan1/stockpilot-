@@ -26,6 +26,10 @@ import { db } from "@/lib/db";
 import { createAuditLogTx } from "@/lib/audit";
 import { approveAndDispatchPurchaseOrder } from "@/modules/operator-bot/service";
 import { nextOrderNumber } from "@/modules/purchasing/service";
+import {
+  pickAlternateSupplier,
+  type RescueLineInput,
+} from "./rescue-picker";
 
 export type AlternateMatch = {
   supplier: {
@@ -88,69 +92,35 @@ export async function findAlternateSupplierForOrder(
   });
   if (lines.length === 0) return null;
 
-  // For the single-line POs the bot creates we just need the first
-  // supplierItem that isn't the original. For multi-line POs we pick
-  // the first alternate that carries ALL lines — otherwise we bail
-  // so the user makes the call themselves.
-  const originalSupplierId = po.supplierId;
+  type CandidateSupplier = AlternateMatch["supplier"];
 
-  // Collect each line's candidate alternates.
-  const perLineAlternates = new Map<
-    string,
-    Array<{
-      supplierId: string;
-      supplier: { id: string; name: string; email: string | null; orderingMode: SupplierOrderingMode };
-      packSizeBase: number;
-    }>
-  >();
-  for (const line of lines) {
-    const candidates = line.inventoryItem.supplierItems
-      .filter((si) => si.supplierId !== originalSupplierId)
-      .map((si) => ({
-        supplierId: si.supplierId,
-        supplier: si.supplier,
-        packSizeBase: si.packSizeBase,
-      }));
-    if (candidates.length === 0) return null; // one line has no alternate → bail
-    perLineAlternates.set(line.id, candidates);
-  }
+  // Build per-line candidate sets (preferred-first) with the original
+  // supplier removed, then hand them to the pure picker.
+  const pickerInput: Array<RescueLineInput<CandidateSupplier>> = lines.map(
+    (line) => ({
+      lineId: line.id,
+      candidates: line.inventoryItem.supplierItems
+        .filter((si) => si.supplierId !== po.supplierId)
+        .map((si) => ({
+          supplierId: si.supplierId,
+          supplier: si.supplier,
+          packSizeBase: si.packSizeBase,
+        })),
+    })
+  );
 
-  // Pick a supplier that covers EVERY line.
-  const firstLineCandidates = perLineAlternates.get(lines[0].id) ?? [];
-  let picked: {
-    supplier: AlternateMatch["supplier"];
-    packByLine: Map<string, number>;
-  } | null = null;
-  for (const candidate of firstLineCandidates) {
-    const packByLine = new Map<string, number>();
-    let covers = true;
-    for (const line of lines) {
-      const match = (perLineAlternates.get(line.id) ?? []).find(
-        (c) => c.supplierId === candidate.supplierId
-      );
-      if (!match) {
-        covers = false;
-        break;
-      }
-      packByLine.set(line.id, match.packSizeBase);
-    }
-    if (covers) {
-      picked = { supplier: candidate.supplier, packByLine };
-      break;
-    }
-  }
+  const picked = pickAlternateSupplier(pickerInput);
   if (!picked) return null;
 
-  const pickedFinal = picked;
   return {
-    supplier: pickedFinal.supplier,
+    supplier: picked.supplier,
     lines: lines.map((line) => ({
       inventoryItemId: line.inventoryItemId,
       description: line.description,
       quantityOrdered: line.quantityOrdered,
       expectedQuantityBase: line.expectedQuantityBase,
       purchaseUnit: line.purchaseUnit,
-      packSizeBase: pickedFinal.packByLine.get(line.id) ?? line.packSizeBase,
+      packSizeBase: picked.packSizeByLine.get(line.id) ?? line.packSizeBase,
     })),
   };
 }

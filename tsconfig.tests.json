@@ -120,6 +120,10 @@
     "src/lib/env-helpers.ts",
     "src/lib/env-helpers.test.ts",
     "src/modules/operator-bot/telegram-oidc-parse.ts",
-    "src/modules/operator-bot/telegram-oidc-parse.test.ts"
+    "src/modules/operator-bot/telegram-oidc-parse.test.ts",
+    "src/modules/purchasing/auto-approve-decision.ts",
+    "src/modules/purchasing/auto-approve-decision.test.ts",
+    "src/modules/purchasing/rescue-picker.ts",
+    "src/modules/purchasing/rescue-picker.test.ts"
   ]
 }

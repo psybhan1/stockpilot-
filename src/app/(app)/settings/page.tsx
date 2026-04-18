@@ -514,13 +514,11 @@ export default async function SettingsPage({
                           const zapierUrl =
                             provider === "TOAST"
                               ? "https://zapier.com/apps/toast/integrations/webhook"
-                              : provider === "CLOVER"
-                                ? "https://zapier.com/apps/clover/integrations/webhook"
-                                : provider === "LIGHTSPEED"
-                                  ? "https://zapier.com/apps/lightspeed-retail/integrations/webhook"
-                                  : provider === "SHOPIFY"
-                                    ? "https://zapier.com/apps/shopify/integrations/webhook"
-                                    : "https://zapier.com/app-directory";
+                              : provider === "LIGHTSPEED"
+                                ? "https://zapier.com/apps/lightspeed-retail/integrations/webhook"
+                                : provider === "SHOPIFY"
+                                  ? "https://zapier.com/apps/shopify/integrations/webhook"
+                                  : "https://zapier.com/app-directory";
                           return (
                             <a
                               href={zapierUrl}

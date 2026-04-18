@@ -17,8 +17,9 @@
  * without knowing the dollar amount.
  */
 
-import { PurchaseOrderStatus, SupplierOrderingMode } from "@/lib/prisma";
+import type { PurchaseOrderStatus } from "@/lib/prisma";
 import { db } from "@/lib/db";
+import { decideAutoApprove, formatMoneyCents } from "./auto-approve-decision";
 // service.ts imports auto-approve dynamically; we dynamically import
 // back to break the cycle cleanly (static import would see a partial
 // module at load time).
@@ -65,50 +66,20 @@ export async function maybeAutoApprovePurchaseOrder(input: {
     return { autoApproved: false, reason: "PO not found" };
   }
 
-  // Only auto-approve freshly-drafted orders. If the PO already
-  // moved past AWAITING_APPROVAL (approved manually, cancelled, etc.)
-  // don't touch it.
-  if (
-    po.status !== PurchaseOrderStatus.AWAITING_APPROVAL &&
-    po.status !== PurchaseOrderStatus.DRAFT
-  ) {
-    return { autoApproved: false, reason: `PO is ${po.status.toLowerCase()}` };
-  }
+  const decision = decideAutoApprove({
+    poStatus: po.status,
+    supplier: {
+      orderingMode: po.supplier.orderingMode,
+      email: po.supplier.email,
+    },
+    location: {
+      autoApproveEmailUnderCents: po.location.autoApproveEmailUnderCents,
+    },
+    lines: po.lines,
+  });
 
-  if (po.supplier.orderingMode !== SupplierOrderingMode.EMAIL) {
-    return {
-      autoApproved: false,
-      reason: `supplier is ${po.supplier.orderingMode.toLowerCase()}, not email`,
-    };
-  }
-
-  if (!po.supplier.email) {
-    return { autoApproved: false, reason: "supplier has no email on file" };
-  }
-
-  const threshold = po.location.autoApproveEmailUnderCents;
-  if (threshold == null || threshold <= 0) {
-    return { autoApproved: false, reason: "auto-approve threshold not set" };
-  }
-
-  // Price guard: every line must have a known cost — otherwise we
-  // can't verify the total is actually under the cap.
-  let totalCents = 0;
-  for (const line of po.lines) {
-    if (line.latestCostCents == null || line.latestCostCents < 0) {
-      return {
-        autoApproved: false,
-        reason: "one or more lines have no price — can't safely auto-approve",
-      };
-    }
-    totalCents += line.latestCostCents * line.quantityOrdered;
-  }
-
-  if (totalCents > threshold) {
-    return {
-      autoApproved: false,
-      reason: `total $${(totalCents / 100).toFixed(2)} > cap $${(threshold / 100).toFixed(2)}`,
-    };
+  if (!decision.autoApprove) {
+    return { autoApproved: false, reason: decision.reason };
   }
 
   const { approveAndDispatchPurchaseOrder } = await import(
@@ -121,8 +92,8 @@ export async function maybeAutoApprovePurchaseOrder(input: {
 
   return {
     autoApproved: true,
-    totalCents,
-    thresholdCents: threshold,
+    totalCents: decision.totalCents,
+    thresholdCents: decision.thresholdCents,
     orderNumber: dispatch.orderNumber || po.orderNumber,
     supplierName: dispatch.supplierName || po.supplier.name,
     status: dispatch.status,
@@ -130,5 +101,5 @@ export async function maybeAutoApprovePurchaseOrder(input: {
 }
 
 export function formatMoney(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+  return formatMoneyCents(cents);
 }
