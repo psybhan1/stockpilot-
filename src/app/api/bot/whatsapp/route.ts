@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 
 import { env } from "@/lib/env";
 import { BotChannel } from "@/lib/prisma";
@@ -7,15 +7,24 @@ import {
   buildTwimlMessageResponse,
   isValidTwilioWebhook,
 } from "@/lib/twilio-webhook";
-import { transcribeWhatsAppVoice } from "@/lib/whatsapp-bot";
+import { sendWhatsAppMessage, transcribeWhatsAppVoice } from "@/lib/whatsapp-bot";
 import {
   connectManagerBotChannel,
   readConnectTokenFromText,
 } from "@/modules/operator-bot/connect";
 import { completeWhatsAppChannelPairing } from "@/modules/channels/service";
-import { handleInboundManagerBotMessage } from "@/modules/operator-bot/service";
+import {
+  handleInboundManagerBotMessage,
+  type BotHandlingResult,
+} from "@/modules/operator-bot/service";
 
 const XML_HEADERS = { "Content-Type": "text/xml; charset=utf-8" };
+
+// Twilio's webhook receiver times out around 15s. We race the agent at
+// 12s so there's headroom for network + TwiML round-trip, and defer the
+// rest of the work to an after() callback that sends the real reply via
+// the Twilio REST API once the agent finishes.
+const AGENT_TIMEOUT_MS = 12_000;
 
 /** Detects a StockPilot location pairing code like "SB-AB1234" */
 function readLocationPairingCode(text: string): string | null {
@@ -54,6 +63,51 @@ export async function POST(request: Request) {
   if (!senderId) {
     return new NextResponse(buildTwimlEmptyResponse(), { headers: XML_HEADERS });
   }
+
+  // Per-sender rate limit — matches the Telegram webhook. A single
+  // number flooding us (bot, user retry storm, Twilio redelivery bug)
+  // must not block other users' messages. 15 per 60s is well above
+  // real human usage but low enough to contain abuse.
+  const { rateLimit } = await import("@/lib/rate-limit");
+  const rl = rateLimit({ key: `wa:${senderId}`, windowMs: 60_000, max: 15 });
+  if (!rl.allowed) {
+    return new NextResponse(
+      buildTwimlMessageResponse(
+        `⚠ You're sending messages too fast — give me ${rl.retryAfterSec}s and try again.`
+      ),
+      { headers: XML_HEADERS }
+    );
+  }
+
+  try {
+    return await handleWhatsAppRequest({
+      formFields,
+      senderId,
+      profileName,
+      messageSid,
+    });
+  } catch (err) {
+    // FINAL SAFETY NET. Mirrors the Telegram webhook. If anything below
+    // throws (DB outage, Prisma pool, unexpected model error, etc.) the
+    // user should still get SOME reply instead of a silent failure.
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error("[whatsapp webhook] unhandled error:", errMsg);
+    return new NextResponse(
+      buildTwimlMessageResponse(
+        "⚠ Something went wrong on my end. Give me a minute and try again — if it keeps happening, your manager can check Settings → Alerts."
+      ),
+      { headers: XML_HEADERS }
+    );
+  }
+}
+
+async function handleWhatsAppRequest(args: {
+  formFields: URLSearchParams;
+  senderId: string;
+  profileName: string | null;
+  messageSid: string | null;
+}) {
+  const { formFields, senderId, profileName, messageSid } = args;
 
   // ── Resolve message text (text or transcribed voice) ───────────────────────
   let text = formFields.get("Body")?.trim() ?? "";
@@ -115,7 +169,11 @@ export async function POST(request: Request) {
   }
 
   // ── Regular bot message ─────────────────────────────────────────────────────
-  const result = await handleInboundManagerBotMessage({
+  // Race the agent against AGENT_TIMEOUT_MS. If it finishes in time we
+  // reply in the TwiML response. If it takes longer we tell the user
+  // we're still working on it and push the real reply out-of-band via
+  // the Twilio REST API once the agent is done.
+  const handlerPromise = handleInboundManagerBotMessage({
     channel: "WHATSAPP",
     senderId,
     senderDisplayName: profileName,
@@ -127,6 +185,51 @@ export async function POST(request: Request) {
     },
   });
 
+  const raced = await Promise.race([
+    handlerPromise.then(
+      (result): { kind: "done"; result: BotHandlingResult } => ({ kind: "done", result }),
+      (err: unknown): { kind: "error"; err: unknown } => ({ kind: "error", err })
+    ),
+    new Promise<{ kind: "timeout" }>((resolve) =>
+      setTimeout(() => resolve({ kind: "timeout" }), AGENT_TIMEOUT_MS)
+    ),
+  ]);
+
+  if (raced.kind === "timeout") {
+    // Continue waiting for the agent and send the real reply via REST
+    // after the TwiML response flushes. Swallow errors so we never
+    // crash the deferred task — the user already got an ack reply.
+    after(async () => {
+      try {
+        const result = await handlerPromise;
+        if (!result.skipSend && result.reply) {
+          await sendWhatsAppMessage(senderId, result.reply).catch(() => null);
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error("[whatsapp webhook] deferred handler error:", errMsg);
+        await sendWhatsAppMessage(
+          senderId,
+          "⚠ Something went wrong on my end. Give me a minute and try again."
+        ).catch(() => null);
+      }
+    });
+
+    return new NextResponse(
+      buildTwimlMessageResponse(
+        "⌛ Still working on it — I'll reply in a moment. Complex operations like searching Amazon can take 30+ seconds."
+      ),
+      { headers: XML_HEADERS }
+    );
+  }
+
+  if (raced.kind === "error") {
+    // Re-throw so the outer safety net catches it and returns the
+    // generic "something went wrong" reply.
+    throw raced.err;
+  }
+
+  const result = raced.result;
   return new NextResponse(
     result.skipSend ? buildTwimlEmptyResponse() : buildTwimlMessageResponse(result.reply),
     { headers: XML_HEADERS }
