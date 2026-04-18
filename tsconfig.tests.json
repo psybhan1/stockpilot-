@@ -72,6 +72,8 @@
     "src/modules/automation/browser-safety.ts",
     "src/modules/automation/browser-safety.test.ts",
     "src/modules/automation/cart-links.ts",
-    "src/modules/automation/cart-links.test.ts"
+    "src/modules/automation/cart-links.test.ts",
+    "src/modules/automation/product-metadata.ts",
+    "src/modules/automation/product-metadata.test.ts"
   ]
 }
