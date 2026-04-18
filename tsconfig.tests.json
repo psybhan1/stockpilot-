@@ -106,6 +106,8 @@
     "src/modules/automation/playwright-template.ts",
     "src/modules/automation/playwright-template.test.ts",
     "src/modules/pos/square-webhook.ts",
-    "src/modules/pos/square-webhook.test.ts"
+    "src/modules/pos/square-webhook.test.ts",
+    "src/providers/notification/expo-ticket-parse.ts",
+    "src/providers/notification/expo-ticket-parse.test.ts"
   ]
 }
