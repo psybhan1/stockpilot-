@@ -6,6 +6,13 @@ import { env } from "@/lib/env";
 import { BotChannel } from "@/lib/prisma";
 import type { Prisma } from "@/lib/prisma";
 import {
+  buildTelegramConnectUrl as buildTelegramConnectUrlPrimitive,
+  buildWhatsAppConnectUrl as buildWhatsAppConnectUrlPrimitive,
+  isPublicAppUrl as isPublicAppUrlPrimitive,
+  isTwilioSandboxSender as isTwilioSandboxSenderPrimitive,
+  readConnectTokenFromText as readConnectTokenFromTextPrimitive,
+} from "@/modules/operator-bot/connect-primitives";
+import {
   completeBotMessageReceipt,
   failBotMessageReceipt,
   reserveBotMessageReceipt,
@@ -517,34 +524,21 @@ export async function connectManagerTelegramLoginChannel(input: {
 }
 
 export function buildTelegramConnectUrl(botUsername: string, token: string) {
-  const normalizedBotUsername = botUsername.replace(/^@/, "").trim();
-  return `https://t.me/${normalizedBotUsername}?start=connect-${token}`;
+  return buildTelegramConnectUrlPrimitive(botUsername, token);
 }
 
 export function buildWhatsAppConnectUrl(senderNumber: string, token: string) {
-  const normalizedSender = senderNumber
-    .replace(/^whatsapp:/i, "")
-    .replace(/[^\d]/g, "");
-  const message = encodeURIComponent(`🔗 Link my StockPilot account\nCode: ${token}`);
-  return `https://wa.me/${normalizedSender}?text=${message}`;
+  return buildWhatsAppConnectUrlPrimitive(senderNumber, token);
 }
 
 export function readConnectTokenFromText(input: {
   channel: BotChannel;
   text: string;
 }) {
-  const normalized = input.text.trim();
-
-  if (input.channel === BotChannel.TELEGRAM) {
-    const match = normalized.match(/^\/start\s+connect-([A-Za-z0-9_-]+)$/i);
-    return match?.[1] ?? null;
-  }
-
-  // Match both "Code: {token}" (new pretty format) and "connect {token}" (legacy)
-  const prettyMatch = normalized.match(/code:\s*([A-Za-z0-9_-]+)/i);
-  if (prettyMatch) return prettyMatch[1];
-  const legacyMatch = normalized.match(/^connect\s+([A-Za-z0-9_-]+)$/i);
-  return legacyMatch?.[1] ?? null;
+  return readConnectTokenFromTextPrimitive({
+    channel: input.channel === BotChannel.TELEGRAM ? "TELEGRAM" : "WHATSAPP",
+    text: input.text,
+  });
 }
 
 export function verifyTelegramWidgetAuth(input: Record<string, string>) {
@@ -575,18 +569,7 @@ export function verifyTelegramWidgetAuth(input: Record<string, string>) {
 }
 
 export function isPublicAppUrl(url: string) {
-  try {
-    const parsed = new URL(url);
-    const hostname = parsed.hostname.toLowerCase();
-
-    if (parsed.protocol !== "https:" && hostname !== "localhost" && hostname !== "127.0.0.1") {
-      return false;
-    }
-
-    return !["localhost", "127.0.0.1", "0.0.0.0"].includes(hostname);
-  } catch {
-    return false;
-  }
+  return isPublicAppUrlPrimitive(url);
 }
 
 export async function getTelegramBotUsername() {
@@ -708,9 +691,5 @@ async function recordConnectAttempt(
 }
 
 export function isTwilioSandboxSender(value: string | null | undefined) {
-  if (!value) {
-    return false;
-  }
-
-  return value.replace(/^whatsapp:/i, "") === "+14155238886";
+  return isTwilioSandboxSenderPrimitive(value);
 }
