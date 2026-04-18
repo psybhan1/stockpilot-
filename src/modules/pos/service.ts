@@ -24,11 +24,21 @@ function getSquareCallbackUrl() {
 }
 
 function getStoredAccessToken(accessTokenEncrypted?: string | null) {
-  // When SQUARE_ACCESS_TOKEN is set in the env, we're in PAT mode —
-  // the env value is authoritative and lets an admin rotate the token
-  // by editing the env var alone (no DB cleanup needed). Only fall
-  // back to the DB-stored token for OAuth mode, where env has no
-  // token and each tenant's per-merchant token lives in the DB.
+  // Mode detection:
+  // - OAuth mode (CLIENT_ID+SECRET set): per-tenant token lives in DB.
+  //   DB wins because each merchant has their own token from the
+  //   OAuth callback — env has no meaningful fallback here.
+  // - PAT mode (only ACCESS_TOKEN set): env wins so admins can rotate
+  //   by editing Railway alone; stale encrypted DB copies don't override.
+  const hasOAuth = Boolean(env.SQUARE_CLIENT_ID && env.SQUARE_CLIENT_SECRET);
+
+  if (hasOAuth) {
+    if (accessTokenEncrypted) {
+      return decryptSecret(accessTokenEncrypted);
+    }
+    return env.SQUARE_ACCESS_TOKEN ?? null;
+  }
+
   if (env.SQUARE_ACCESS_TOKEN) {
     return env.SQUARE_ACCESS_TOKEN;
   }

@@ -66,7 +66,28 @@ export class SquareProvider implements PosProvider {
     state: string;
     accessToken?: string | null;
   }) {
+    const hasOAuth = Boolean(env.SQUARE_CLIENT_ID && env.SQUARE_CLIENT_SECRET);
     const accessToken = input.accessToken ?? env.SQUARE_ACCESS_TOKEN;
+
+    // When OAuth creds are configured, prefer the OAuth redirect flow —
+    // that's the "Log in with Square" UX the merchant expects and the
+    // only path that supports multi-tenant per-merchant tokens. PAT is
+    // the fallback for single-tenant setups where no OAuth app exists.
+    if (hasOAuth) {
+      const params = new URLSearchParams({
+        client_id: env.SQUARE_CLIENT_ID!,
+        scope: env.SQUARE_SCOPES,
+        session: this.isSandbox() ? "true" : "false",
+        state: input.state,
+        redirect_uri: input.callbackUrl,
+      });
+
+      return {
+        status: "redirect_required" as const,
+        sandbox: this.isSandbox(),
+        authUrl: `${this.getAuthorizeBaseUrl()}?${params.toString()}`,
+      };
+    }
 
     if (accessToken) {
       const context = await this.fetchMerchantContext(accessToken);
@@ -79,25 +100,9 @@ export class SquareProvider implements PosProvider {
       };
     }
 
-    if (!env.SQUARE_CLIENT_ID || !env.SQUARE_CLIENT_SECRET) {
-      throw new Error(
-        "Square client credentials or a Square access token are not configured."
-      );
-    }
-
-    const params = new URLSearchParams({
-      client_id: env.SQUARE_CLIENT_ID,
-      scope: env.SQUARE_SCOPES,
-      session: this.isSandbox() ? "true" : "false",
-      state: input.state,
-      redirect_uri: input.callbackUrl,
-    });
-
-    return {
-      status: "redirect_required" as const,
-      sandbox: this.isSandbox(),
-      authUrl: `${this.getAuthorizeBaseUrl()}?${params.toString()}`,
-    };
+    throw new Error(
+      "Square client credentials or a Square access token are not configured."
+    );
   }
 
   async exchangeCode(input: { code: string; callbackUrl: string }) {
@@ -381,9 +386,13 @@ export class SquareProvider implements PosProvider {
   }
 
   private getAuthorizeBaseUrl() {
+    // Square's OAuth authorize endpoint lives under the `connect.`
+    // subdomain alongside the API, per their current docs. The bare
+    // squareup.com variants 404, which means the old code 404'd the
+    // "Log in with Square" button the first time it ran.
     return this.isSandbox()
-      ? "https://squareupsandbox.com/oauth2/authorize"
-      : "https://squareup.com/oauth2/authorize";
+      ? "https://connect.squareupsandbox.com/oauth2/authorize"
+      : "https://connect.squareup.com/oauth2/authorize";
   }
 
   private getApiBaseUrl() {
