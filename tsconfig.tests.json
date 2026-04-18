@@ -114,6 +114,8 @@
     "src/modules/onboarding/starter-pack-data.ts",
     "src/modules/onboarding/starter-pack-data.test.ts",
     "src/modules/automation/signin-session-helpers.ts",
-    "src/modules/automation/signin-session-helpers.test.ts"
+    "src/modules/automation/signin-session-helpers.test.ts",
+    "src/modules/purchasing/supplier-nudges-primitives.ts",
+    "src/modules/purchasing/supplier-nudges-primitives.test.ts"
   ]
 }
