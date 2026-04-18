@@ -238,6 +238,7 @@ enum ChannelType {
   WHATSAPP
   EMAIL_SMTP
   EMAIL_GMAIL
+  EMAIL_RESEND
 }
 
 model User {

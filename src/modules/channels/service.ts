@@ -351,6 +351,59 @@ export async function updateGmailAccessToken(
 }
 
 // ---------------------------------------------------------------------------
+// Email — Resend (API-key based, no OAuth)
+// ---------------------------------------------------------------------------
+
+export type ResendCredentials = {
+  apiKey: string;
+  fromEmail: string;
+  /** Optional explicit display name. When omitted, the location's
+   * business/location name is used at send time. */
+  displayName?: string;
+};
+
+export async function connectResendEmailChannel(
+  locationId: string,
+  creds: ResendCredentials
+) {
+  const credentialsEncrypted = encryptJson(creds as unknown as Record<string, unknown>);
+
+  await db.locationChannel.upsert({
+    where: { locationId_channel: { locationId, channel: ChannelType.EMAIL_RESEND } },
+    create: {
+      locationId,
+      channel: ChannelType.EMAIL_RESEND,
+      enabled: true,
+      emailAddress: creds.fromEmail,
+      emailProvider: "resend",
+      credentialsEncrypted,
+    },
+    update: {
+      enabled: true,
+      emailAddress: creds.fromEmail,
+      emailProvider: "resend",
+      credentialsEncrypted,
+    },
+  });
+}
+
+export async function getResendCredentials(
+  locationId: string
+): Promise<ResendCredentials | null> {
+  const row = await db.locationChannel.findUnique({
+    where: { locationId_channel: { locationId, channel: ChannelType.EMAIL_RESEND } },
+  });
+
+  if (!row?.enabled || !row.credentialsEncrypted) return null;
+
+  try {
+    return decryptJson<ResendCredentials>(row.credentialsEncrypted);
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Generic channel status query
 // ---------------------------------------------------------------------------
 
@@ -365,6 +418,7 @@ export async function getLocationChannels(locationId: string) {
   const whatsapp = find(ChannelType.WHATSAPP);
   const smtp = find(ChannelType.EMAIL_SMTP);
   const gmail = find(ChannelType.EMAIL_GMAIL);
+  const resend = find(ChannelType.EMAIL_RESEND);
 
   return {
     telegram: telegram
@@ -383,10 +437,12 @@ export async function getLocationChannels(locationId: string) {
           pairingExpiresAt: whatsapp.pairingExpiresAt,
         }
       : null,
-    email: smtp?.enabled
-      ? { provider: "smtp" as const, address: smtp.emailAddress }
-      : gmail?.enabled
-        ? { provider: "gmail" as const, address: gmail.emailAddress }
-        : null,
+    email: gmail?.enabled
+      ? { provider: "gmail" as const, address: gmail.emailAddress }
+      : resend?.enabled
+        ? { provider: "resend" as const, address: resend.emailAddress }
+        : smtp?.enabled
+          ? { provider: "smtp" as const, address: smtp.emailAddress }
+          : null,
   };
 }

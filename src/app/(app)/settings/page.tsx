@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Cable, Mail, Settings2 } from "lucide-react";
 
 import {
+  connectResendEmailChannelAction,
   connectSquareAction,
   disconnectEmailChannelAction,
   runJobsAction,
@@ -63,7 +64,8 @@ export default async function SettingsPage({
   // setup, so we show a green-ready state and keep the Gmail OAuth
   // button as an optional upgrade behind a disclosure — no scary
   // "Sign in with Google" prompt on first visit.
-  const gmailConnected = Boolean(locationChannels?.email);
+  const gmailConnected = locationChannels?.email?.provider === "gmail";
+  const tenantResendConnected = locationChannels?.email?.provider === "resend";
   const emailReady = emailProvider.name !== "console";
   const emailSendingAs = (() => {
     if (emailProvider.name === "gmail" && emailProvider.email) return emailProvider.email;
@@ -203,60 +205,137 @@ export default async function SettingsPage({
           </form>
         </BrandCard>
 
-        {/* Email — ready by default via Resend; Gmail OAuth is an
-            optional upgrade hidden behind a <details> disclosure so
-            new cafés don't see the scary Google OAuth warning unless
-            they explicitly want to use their own address. */}
         <BrandCard
           logo={<Mail size={20} className="text-muted-foreground" />}
           name="Email"
           tagline={
             gmailConnected
               ? `PO emails send from your Gmail${emailSendingAs ? `: ${emailSendingAs}` : ""}.`
-              : emailReady && emailSendingAs
-                ? `Ready — POs send from ${emailSendingAs}. Suppliers reply to a StockPilot address that routes back to the matching order.`
-                : "Not configured yet — contact your admin to set up the sending provider."
+              : tenantResendConnected && emailSendingAs
+                ? `Ready — POs send from ${emailSendingAs} via Resend. Paste a new key below to rotate or change the From address.`
+                : emailReady && emailSendingAs
+                  ? `Ready — POs send from ${emailSendingAs}. Suppliers reply to a StockPilot address that routes back to the matching order.`
+                  : "One-time setup needed — paste a Resend API key below (free 100 emails/day)."
           }
           status={emailReady ? "Ready" : "Setup needed"}
           statusTone={emailReady ? "success" : "warning"}
         >
-          {gmailConnected ? (
+          {gmailConnected || tenantResendConnected ? (
             <form action={disconnectEmailChannelAction}>
-              <input type="hidden" name="provider" value={locationChannels.email!.provider} />
-              <Button type="submit" variant="ghost" size="sm" className="h-9 text-xs text-muted-foreground">
-                Disconnect Gmail
+              <input
+                type="hidden"
+                name="provider"
+                value={locationChannels.email!.provider}
+              />
+              <Button
+                type="submit"
+                variant="ghost"
+                size="sm"
+                className="h-9 text-xs text-muted-foreground"
+              >
+                {gmailConnected ? "Disconnect Gmail" : "Remove key"}
               </Button>
             </form>
           ) : null}
         </BrandCard>
 
-        {!gmailConnected && emailReady ? (
+        {!emailReady ? (
+          <form
+            action={connectResendEmailChannelAction}
+            className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5 space-y-4"
+          >
+            <div>
+              <p className="text-sm font-semibold">Set up email in 60 seconds</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Sign up free at{" "}
+                <a
+                  href="https://resend.com/signup"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  resend.com
+                </a>{" "}
+                (100 emails/day is plenty for one café). Create an API key at{" "}
+                <a
+                  href="https://resend.com/api-keys"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  resend.com/api-keys
+                </a>
+                , then paste it below. The app validates it live and starts
+                sending immediately — no Railway restart required.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-xs font-medium">
+                Resend API key
+                <input
+                  type="password"
+                  name="apiKey"
+                  required
+                  placeholder="re_XXXXXXXXXXXXXXXX"
+                  className="mt-1 w-full h-9 rounded-md border border-border/50 bg-background px-3 text-sm"
+                />
+              </label>
+              <label className="block text-xs font-medium">
+                From address
+                <input
+                  type="email"
+                  name="fromEmail"
+                  required
+                  placeholder="orders@yourcafe.com"
+                  className="mt-1 w-full h-9 rounded-md border border-border/50 bg-background px-3 text-sm"
+                />
+              </label>
+            </div>
+            <label className="block text-xs font-medium">
+              Display name (optional — defaults to your business name)
+              <input
+                type="text"
+                name="displayName"
+                placeholder="Sunny's Café"
+                className="mt-1 w-full h-9 rounded-md border border-border/50 bg-background px-3 text-sm"
+              />
+            </label>
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-muted-foreground">
+                Your key is encrypted (AES-256-GCM) before touching the
+                database. Never written to logs.
+              </p>
+              <Button type="submit" size="sm" className="h-9 text-xs">
+                Save &amp; verify
+              </Button>
+            </div>
+          </form>
+        ) : null}
+
+        {!gmailConnected ? (
           <details className="rounded-xl border border-border/50 bg-card/60 px-5 py-3 text-sm">
             <summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">
               Advanced · send POs from your own Gmail address
             </summary>
             <div className="mt-3 space-y-3 text-muted-foreground">
               <p>
-                By default, suppliers see <span className="font-medium text-foreground">
-                  {emailSendingAs ?? "a StockPilot-managed address"}
-                </span>{" "}
-                and their replies route straight back to the matching order.
-                That works out of the box — you don&apos;t need to connect anything.
-              </p>
-              <p>
-                If you&apos;d rather have PO emails go out from your own Gmail
-                account, connect it below. Google may show an{" "}
+                Google may show an{" "}
                 <span className="font-medium text-foreground">
                   &ldquo;unverified app&rdquo;
                 </span>{" "}
-                warning until we finish Google&apos;s verification process — that&apos;s
-                normal, and you can click{" "}
-                <span className="font-medium text-foreground">Advanced → Go to StockPilot (unsafe)</span>{" "}
-                to continue. We only request <code>gmail.send</code> — we never
-                read your inbox.
+                warning until we finish Google&apos;s verification process —
+                click{" "}
+                <span className="font-medium text-foreground">
+                  Advanced → Go to StockPilot (unsafe)
+                </span>{" "}
+                to continue. We only request <code>gmail.send</code> — we
+                never read your inbox.
               </p>
               <a href="/api/auth/google/gmail" className="inline-block">
-                <Button size="sm" className="h-9 gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs shadow-sm">
+                <Button
+                  size="sm"
+                  className="h-9 gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-xs shadow-sm"
+                >
                   <GoogleLogo size={16} />
                   Connect Gmail
                 </Button>

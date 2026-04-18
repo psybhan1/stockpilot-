@@ -4,7 +4,10 @@ import type { SupplierOrderProvider } from "@/providers/contracts";
 import { ConsoleEmailProvider } from "@/providers/email/console-email";
 import { GmailEmailProvider } from "@/providers/email/gmail-email";
 import { ResendEmailProvider } from "@/providers/email/resend-email";
-import { getGmailCredentials } from "@/modules/channels/service";
+import {
+  getGmailCredentials,
+  getResendCredentials,
+} from "@/modules/channels/service";
 
 /**
  * Global factory — used when no location context is available (e.g.
@@ -43,11 +46,29 @@ export function getSupplierOrderProvider(): SupplierOrderProvider {
 export async function getSupplierOrderProviderForLocation(
   locationId: string
 ): Promise<SupplierOrderProvider> {
+  // 1. Location's connected Gmail (OAuth, supplier sees owner's address)
   const gmail = await getGmailCredentials(locationId);
   if (gmail?.accessToken) {
     return new GmailEmailProvider(locationId);
   }
 
+  // 2. Location-level Resend creds pasted by the admin from Settings.
+  //    Preferred over the env-level key because it lets each café BYO
+  //    API key without a Railway redeploy.
+  const tenantResend = await getResendCredentials(locationId);
+  if (tenantResend?.apiKey) {
+    const displayName =
+      tenantResend.displayName ??
+      (await resolveLocationDisplayName(locationId));
+    return new ResendEmailProvider({
+      apiKey: tenantResend.apiKey,
+      fromEmail: tenantResend.fromEmail,
+      displayName,
+    });
+  }
+
+  // 3. App-wide env Resend (fallback for single-tenant deploys where
+  //    the app owner configures it globally once).
   if (env.DEFAULT_EMAIL_PROVIDER === "resend" && env.RESEND_API_KEY) {
     const displayName = await resolveLocationDisplayName(locationId);
     return new ResendEmailProvider({
@@ -63,14 +84,33 @@ export async function getSupplierOrderProviderForLocation(
 /** Human-readable name of whichever provider would be used for this location. */
 export async function describeSupplierOrderProvider(
   locationId: string
-): Promise<{ name: "gmail" | "resend" | "console"; email?: string; displayName?: string }> {
+): Promise<{
+  name: "gmail" | "resend" | "console";
+  email?: string;
+  displayName?: string;
+  source?: "gmail-oauth" | "tenant-resend" | "app-resend";
+}> {
   const gmail = await getGmailCredentials(locationId);
-  if (gmail?.accessToken) return { name: "gmail", email: gmail.email };
+  if (gmail?.accessToken)
+    return { name: "gmail", email: gmail.email, source: "gmail-oauth" };
+
+  const tenantResend = await getResendCredentials(locationId);
+  if (tenantResend?.apiKey) {
+    return {
+      name: "resend",
+      email: tenantResend.fromEmail,
+      displayName:
+        tenantResend.displayName ?? (await resolveLocationDisplayName(locationId)),
+      source: "tenant-resend",
+    };
+  }
+
   if (env.DEFAULT_EMAIL_PROVIDER === "resend" && env.RESEND_API_KEY) {
     return {
       name: "resend",
       email: env.RESEND_FROM_EMAIL,
       displayName: await resolveLocationDisplayName(locationId),
+      source: "app-resend",
     };
   }
   return { name: "console" };

@@ -1705,10 +1705,105 @@ export async function connectSmtpEmailChannelAction(formData: FormData) {
 export async function disconnectEmailChannelAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const provider = String(formData.get("provider") ?? "smtp");
-  const channel = provider === "gmail" ? ChannelType.EMAIL_GMAIL : ChannelType.EMAIL_SMTP;
+  const channel =
+    provider === "gmail"
+      ? ChannelType.EMAIL_GMAIL
+      : provider === "resend"
+        ? ChannelType.EMAIL_RESEND
+        : ChannelType.EMAIL_SMTP;
   await disconnectEmailChannel(session.locationId, channel);
   revalidateOperations();
   redirect("/settings?channelConnect=disconnected&channelType=email");
+}
+
+/**
+ * Admin pastes a Resend API key + From address in Settings. We:
+ *   1. Lightly validate the shape (keys start with `re_`).
+ *   2. Call Resend's /domains endpoint to confirm the key is live —
+ *      any valid key responds 200 or 401, never a network error.
+ *   3. Encrypt and persist via connectResendEmailChannel.
+ * On any failure we redirect back with a human-readable error banner;
+ * the Settings page already renders `channelConnect=error` states.
+ */
+export async function connectResendEmailChannelAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const apiKey = (readStringValue(formData, "apiKey") ?? "").trim();
+  const fromEmailRaw = (readStringValue(formData, "fromEmail") ?? "").trim();
+  const displayName = readNullableStringValue(formData, "displayName");
+
+  if (!apiKey.startsWith("re_") || apiKey.length < 20) {
+    redirect(
+      `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+        "That doesn't look like a Resend API key. Keys start with 're_' — copy yours from resend.com/api-keys."
+      )}`
+    );
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmailRaw)) {
+    redirect(
+      `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+        "From address looks invalid. Use a plain email like orders@yourcafe.com."
+      )}`
+    );
+  }
+
+  // Validate the key hits Resend before we persist it — avoids saving
+  // a typo that silently breaks every send for the next week.
+  try {
+    const check = await fetch("https://api.resend.com/domains", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (check.status === 401 || check.status === 403) {
+      redirect(
+        `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+          "Resend rejected that API key (401). Double-check you copied the full value from resend.com/api-keys."
+        )}`
+      );
+    }
+    if (!check.ok && check.status !== 404) {
+      redirect(
+        `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+          `Resend returned ${check.status} when we tested the key. Try again in a minute.`
+        )}`
+      );
+    }
+  } catch (err) {
+    // Swallow redirect()'s internal throw — only network errors land here.
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("NEXT_REDIRECT")) throw err;
+    redirect(
+      `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+        "Couldn't reach api.resend.com to verify the key. Check your network and try again."
+      )}`
+    );
+  }
+
+  const { connectResendEmailChannel } = await import(
+    "@/modules/channels/service"
+  );
+  await connectResendEmailChannel(session.locationId, {
+    apiKey,
+    fromEmail: fromEmailRaw,
+    displayName: displayName?.trim() || undefined,
+  });
+
+  await db.auditLog.create({
+    data: {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "integration.email.resend_connected",
+      entityType: "locationChannel",
+      entityId: session.locationId,
+      details: { fromEmail: fromEmailRaw },
+    },
+  });
+
+  revalidateOperations();
+  redirect(
+    `/settings?channelConnect=connected&channelType=email&channelDetail=${encodeURIComponent(
+      "Email ready — POs will send via Resend."
+    )}`
+  );
 }
 
 
