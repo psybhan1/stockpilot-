@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Cable, Mail, Settings2 } from "lucide-react";
+import { Cable, Settings2 } from "lucide-react";
 
 import {
   connectResendEmailChannelAction,
@@ -66,9 +66,8 @@ export default async function SettingsPage({
   // "Sign in with Google" prompt on first visit.
   const gmailConnected = locationChannels?.email?.provider === "gmail";
   const tenantResendConnected = locationChannels?.email?.provider === "resend";
-  const emailReady = emailProvider.name !== "console";
+  // Display string for Resend-connected rows: "Name <addr>".
   const emailSendingAs = (() => {
-    if (emailProvider.name === "gmail" && emailProvider.email) return emailProvider.email;
     if (emailProvider.name === "resend") {
       const addr = emailProvider.email?.match(/<([^>]+)>/)?.[1] ?? emailProvider.email ?? "";
       return emailProvider.displayName
@@ -206,19 +205,21 @@ export default async function SettingsPage({
         </BrandCard>
 
         <BrandCard
-          logo={<Mail size={20} className="text-muted-foreground" />}
-          name="Email"
+          logo={<GmailLogo />}
+          name="Gmail"
           tagline={
             gmailConnected
-              ? `Auto-send via your Gmail${emailSendingAs ? ` (${emailSendingAs})` : ""}.`
-              : tenantResendConnected && emailSendingAs
-                ? `Auto-send via Resend (${emailSendingAs}).`
-                : emailReady && emailSendingAs
-                  ? `Auto-send via ${emailSendingAs}.`
-                  : "Ready — your PO email opens pre-filled in your phone's mail app. Just tap Send."
+              ? `Connected as ${locationChannels.email?.address ?? "your Gmail"}`
+              : tenantResendConnected
+                ? `Auto-send via Resend${emailSendingAs ? ` (${emailSendingAs})` : ""}`
+                : "Tap Connect — POs send from your own Gmail automatically"
           }
-          status="Ready"
-          statusTone="success"
+          status={
+            gmailConnected || tenantResendConnected ? "Connected" : "Not connected"
+          }
+          statusTone={
+            gmailConnected || tenantResendConnected ? "success" : "info"
+          }
         >
           {gmailConnected || tenantResendConnected ? (
             <form action={disconnectEmailChannelAction}>
@@ -227,32 +228,6 @@ export default async function SettingsPage({
                 name="provider"
                 value={locationChannels.email!.provider}
               />
-              <Button
-                type="submit"
-                variant="ghost"
-                size="sm"
-                className="h-9 text-xs text-muted-foreground"
-              >
-                {gmailConnected ? "Disconnect Gmail" : "Remove key"}
-              </Button>
-            </form>
-          ) : null}
-        </BrandCard>
-
-        <BrandCard
-          logo={<GmailLogo />}
-          name="Gmail"
-          tagline={
-            gmailConnected
-              ? `Connected as ${locationChannels.email?.address ?? "your Gmail"}`
-              : "One-click connect — POs send from your own Gmail automatically"
-          }
-          status={gmailConnected ? "Connected" : "Not connected"}
-          statusTone={gmailConnected ? "success" : "info"}
-        >
-          {gmailConnected ? (
-            <form action={disconnectEmailChannelAction}>
-              <input type="hidden" name="provider" value="gmail" />
               <Button
                 type="submit"
                 variant="ghost"
