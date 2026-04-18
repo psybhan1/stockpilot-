@@ -94,6 +94,8 @@
     "src/modules/channels/pairing-codes.ts",
     "src/modules/channels/pairing-codes.test.ts",
     "src/modules/operator-bot/sniffer-helpers.ts",
-    "src/modules/operator-bot/sniffer-helpers.test.ts"
+    "src/modules/operator-bot/sniffer-helpers.test.ts",
+    "src/modules/purchasing/auto-approve-policy.ts",
+    "src/modules/purchasing/auto-approve-policy.test.ts"
   ]
 }
