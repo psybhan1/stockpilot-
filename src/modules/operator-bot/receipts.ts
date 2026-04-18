@@ -1,6 +1,10 @@
 import { BotChannel, Prisma } from "@/lib/prisma";
 
 import { db } from "@/lib/db";
+import {
+  mergeReceiptMetadata,
+  toReceiptMetadata,
+} from "./receipts-metadata";
 
 type ReceiptDuplicateResult = {
   kind: "duplicate";
@@ -144,34 +148,15 @@ export async function failBotMessageReceipt(input: {
       locationId: input.locationId ?? undefined,
       userId: input.userId ?? undefined,
       replyText: input.reply ?? null,
-      metadata: toInputJsonValue(
+      metadata: toReceiptMetadata(
         mergeReceiptMetadata(
-        {
-          error: input.errorMessage,
-        },
-        input.metadata
+          { error: input.errorMessage },
+          input.metadata
         )
-      ),
+      ) as Prisma.InputJsonValue,
       status: "FAILED",
       processedAt: new Date(),
     },
   });
 }
 
-function mergeReceiptMetadata(
-  base: Record<string, unknown>,
-  extra: Prisma.InputJsonValue | undefined
-) {
-  if (!extra || typeof extra !== "object" || Array.isArray(extra)) {
-    return base;
-  }
-
-  return {
-    ...extra,
-    ...base,
-  };
-}
-
-function toInputJsonValue(value: unknown) {
-  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
-}
