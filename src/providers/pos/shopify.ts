@@ -169,7 +169,7 @@ export class ShopifyProvider implements PosProvider {
     let url: string | null =
       `https://${shop}/admin/api/${env.SHOPIFY_API_VERSION}/products.json?limit=250`;
     while (url) {
-      const response = await fetch(url, {
+      const response: Response = await fetch(url, {
         headers: {
           "X-Shopify-Access-Token": accessToken,
           Accept: "application/json",
@@ -182,8 +182,9 @@ export class ShopifyProvider implements PosProvider {
       }
       const body = (await response.json()) as { products?: ShopifyProduct[] };
       products.push(...(body.products ?? []));
-      const link = response.headers.get("link");
-      const next = link?.match(/<([^>]+)>;\s*rel="next"/)?.[1] ?? null;
+      const link: string | null = response.headers.get("link");
+      const next: string | null =
+        link?.match(/<([^>]+)>;\s*rel="next"/)?.[1] ?? null;
       url = next;
       if (products.length > 5_000) break; // paranoia bound
     }

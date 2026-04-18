@@ -466,9 +466,7 @@ export default async function SettingsPage({
                         ? "Custom / other POS"
                         : provider === "LIGHTSPEED"
                           ? "Lightspeed"
-                          : provider === "SHOPIFY"
-                            ? "Shopify POS"
-                            : provider.charAt(0) + provider.slice(1).toLowerCase();
+                          : provider.charAt(0) + provider.slice(1).toLowerCase();
                     return (
                       <form
                         key={provider}
@@ -552,9 +550,7 @@ export default async function SettingsPage({
                               ? "https://zapier.com/apps/toast/integrations/webhook"
                               : provider === "LIGHTSPEED"
                                 ? "https://zapier.com/apps/lightspeed-retail/integrations/webhook"
-                                : provider === "SHOPIFY"
-                                  ? "https://zapier.com/apps/shopify/integrations/webhook"
-                                  : "https://zapier.com/app-directory";
+                                : "https://zapier.com/app-directory";
                           return (
                             <a
                               href={zapierUrl}
