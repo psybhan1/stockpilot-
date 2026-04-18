@@ -710,31 +710,8 @@ export async function queueSquareWebhookSyncs(input: {
   };
 }
 
-export function getSquareWebhookJobType(eventType?: string | null) {
-  const normalized = eventType?.trim().toLowerCase();
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (
-    normalized.startsWith("catalog.") ||
-    normalized.startsWith("item.") ||
-    normalized.startsWith("category.")
-  ) {
-    return "SYNC_CATALOG" as const;
-  }
-
-  if (
-    normalized.startsWith("order.") ||
-    normalized.startsWith("payment.") ||
-    normalized.startsWith("refund.")
-  ) {
-    return "SYNC_SALES" as const;
-  }
-
-  return null;
-}
+import { getSquareWebhookJobType } from "./square-webhook";
+export { getSquareWebhookJobType } from "./square-webhook";
 
 async function resolveMenuItemForCatalogItemTx(
   tx: Prisma.TransactionClient,
