@@ -100,6 +100,8 @@
     "src/modules/automation/sites/age-gate.ts",
     "src/modules/automation/sites/age-gate.test.ts",
     "src/modules/pos/parsing.ts",
-    "src/modules/pos/parsing.test.ts"
+    "src/modules/pos/parsing.test.ts",
+    "src/modules/automation/n8n-auth-core.ts",
+    "src/modules/automation/n8n-auth.test.ts"
   ]
 }
