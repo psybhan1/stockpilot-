@@ -66,6 +66,8 @@
     "src/lib/domain-enums.ts",
     "src/providers/contracts.ts",
     "src/providers/bot-language/local-bot-language.ts",
-    "src/providers/bot-language/n8n-bot-language.ts"
+    "src/providers/bot-language/n8n-bot-language.ts",
+    "src/modules/automation/browser-safety.ts",
+    "src/modules/automation/browser-safety.test.ts"
   ]
 }
