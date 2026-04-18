@@ -1,0 +1,120 @@
+name: Hourly tests
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: hourly-tests
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  DATABASE_URL: "file:./prisma/dev.db"
+  SESSION_SECRET: "ci-only-session-secret-not-used-for-auth-0123456789abcdef"
+  APP_URL: "http://127.0.0.1:3000"
+  DEFAULT_POS_PROVIDER: "fake-square"
+  DEFAULT_AI_PROVIDER: "mock"
+  DEFAULT_EMAIL_PROVIDER: "console"
+  DEFAULT_AUTOMATION_PROVIDER: "internal"
+  BOT_LLM_PROVIDER: "mock"
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  offline-integration:
+    name: Offline integration scripts
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: cart-links
+        run: npm run test:cart-links
+      - name: sniffer
+        run: npm run test:sniffer
+      - name: product-metadata
+        run: npm run test:product-metadata
+      - name: creative inputs
+        run: npm run test:creative
+      - name: extension endpoints
+        run: npm run test:extension
+      - name: bot nasty inputs
+        run: npm run test:bot-nasty
+
+  e2e:
+    name: Playwright e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Bootstrap SQLite + seed
+        run: |
+          node scripts/bootstrap-sqlite.mjs
+          npm run db:seed
+      - name: Build app
+        run: npm run build
+      - name: Start app
+        run: |
+          nohup npm start > app.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:3000/login > /dev/null; then
+              echo "app ready after ${i}s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "app did not come up in 120s"
+          cat app.log
+          exit 1
+        env:
+          PORT: "3000"
+          HOSTNAME: "127.0.0.1"
+      - name: Run e2e
+        run: npx playwright test
+        env:
+          PLAYWRIGHT_BASE_URL: "http://127.0.0.1:3000"
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+            app.log
+          retention-days: 7
+
+  notify-on-failure:
+    name: Summarize failures
+    runs-on: ubuntu-latest
+    needs: [unit, offline-integration, e2e]
+    if: failure()
+    steps:
+      - name: Write summary
+        run: |
+          echo "## Hourly test run failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- unit: ${{ needs.unit.result }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- offline-integration: ${{ needs.offline-integration.result }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- e2e: ${{ needs.e2e.result }}" >> "$GITHUB_STEP_SUMMARY"
