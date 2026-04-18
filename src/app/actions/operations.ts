@@ -209,6 +209,23 @@ export async function rotatePosWebhookSecretAction(formData: FormData) {
 
 export async function connectSquareAction() {
   const session = await requireSession(Role.MANAGER);
+
+  // Hard-fail with a human-readable message when the server doesn't
+  // have Square OAuth credentials configured. Previously the action
+  // silently fake-connected via FakeSquareProvider, which is what
+  // the user saw as "Reconnect doesn't work" — the UI said Connected
+  // but no Square OAuth flow ever opened.
+  const { hasRealSquareCredentials } = await import(
+    "@/providers/pos-provider"
+  );
+  if (!hasRealSquareCredentials()) {
+    redirect(
+      `/settings?channelConnect=error&channelType=pos&channelDetail=${encodeURIComponent(
+        "Square OAuth isn't configured yet. Ask the admin to register a Square OAuth app (developer.squareup.com) and set SQUARE_CLIENT_ID, SQUARE_CLIENT_SECRET, and SQUARE_WEBHOOK_SIGNATURE_KEY on Railway."
+      )}`
+    );
+  }
+
   const result = await ensureSquareIntegration(session.locationId, session.userId);
   if (result.requiresRedirect && result.authUrl) {
     redirect(result.authUrl);
