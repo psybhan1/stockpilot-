@@ -84,6 +84,8 @@
     "src/modules/suppliers/extension-cookies.ts",
     "src/modules/suppliers/extension-cookies.test.ts",
     "src/modules/suppliers/website-credentials.ts",
-    "src/modules/suppliers/website-credentials.test.ts"
+    "src/modules/suppliers/website-credentials.test.ts",
+    "src/lib/telegram-bot.ts",
+    "src/lib/telegram-bot.test.ts"
   ]
 }

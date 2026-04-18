@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { env } from "@/lib/env";
+import { env } from "./env";
 
 type TelegramWebhookInfo = {
   url: string;
