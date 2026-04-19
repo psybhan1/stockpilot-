@@ -483,3 +483,70 @@ test("sniffApproveOrCancel: 'sure thing' → approve", () => {
 test("sniffApproveOrCancel: 'not now' → cancel (negation)", () => {
   assert.equal(sniffApproveOrCancel("not now"), "cancel");
 });
+
+// Real user chat from Apr 16: "confirm" fell through to the LLM and the
+// agent replied "To complete the orders, please approve them:" instead of
+// actually approving. Sniffer now matches.
+test("sniffApproveOrCancel: 'confirm' → approve (real user case)", () => {
+  assert.equal(sniffApproveOrCancel("confirm"), "approve");
+  assert.equal(sniffApproveOrCancel("confirmed"), "approve");
+  assert.equal(sniffApproveOrCancel("confirms"), "approve");
+  assert.equal(sniffApproveOrCancel("Confirm!"), "approve");
+});
+
+// Real user chat from Apr 16: "aprove" (typo) hit a rate-limited LLM and
+// failed entirely. Sniffer now catches common approve typos.
+test("sniffApproveOrCancel: common approve typos → approve", () => {
+  assert.equal(sniffApproveOrCancel("aprove"), "approve");
+  assert.equal(sniffApproveOrCancel("approv"), "approve");
+  assert.equal(sniffApproveOrCancel("APROVE"), "approve");
+});
+
+test("sniffApproveOrCancel: 'approved' / 'approves' → approve", () => {
+  // The old regex only matched `approve` with an exact word boundary,
+  // so trailing 'd' or 's' (past tense / third person) slipped through.
+  assert.equal(sniffApproveOrCancel("approved"), "approve");
+  assert.equal(sniffApproveOrCancel("approves"), "approve");
+});
+
+test("sniffApproveOrCancel: 'proceed' / 'proceeds' → approve", () => {
+  assert.equal(sniffApproveOrCancel("proceed"), "approve");
+  assert.equal(sniffApproveOrCancel("proceeds"), "approve");
+});
+
+test("sniffApproveOrCancel: 'ship it' / 'submit' → approve", () => {
+  assert.equal(sniffApproveOrCancel("ship it"), "approve");
+  assert.equal(sniffApproveOrCancel("shipit"), "approve");
+  assert.equal(sniffApproveOrCancel("submit"), "approve");
+  assert.equal(sniffApproveOrCancel("submitted"), "approve");
+});
+
+// Guard against regressions: verify the new patterns don't get flipped
+// to cancel by the NEGATION sweeper. "confirm" does not contain any
+// \bno\b / \bnot\b / \bstop\b / etc., so it must resolve as approve.
+test("sniffApproveOrCancel: approve-words are not mistakenly flipped to cancel", () => {
+  assert.equal(sniffApproveOrCancel("confirm"), "approve");
+  assert.equal(sniffApproveOrCancel("proceed"), "approve");
+  assert.equal(sniffApproveOrCancel("submit"), "approve");
+  assert.equal(sniffApproveOrCancel("approved"), "approve");
+});
+
+// Cancel variations: "cancelled" / "cancels" seen in polite users.
+test("sniffApproveOrCancel: 'cancelled' / 'cancels' → cancel", () => {
+  assert.equal(sniffApproveOrCancel("cancelled"), "cancel");
+  assert.equal(sniffApproveOrCancel("canceled"), "cancel");
+  assert.equal(sniffApproveOrCancel("cancels"), "cancel");
+});
+
+// Regression: "dont cancel" is a nasty ambiguous case — both negation
+// and cancel-words fire. Current impl picks cancel (negation returns
+// first), which is the safe default: if a user says anything negative,
+// don't auto-approve a pending PO.
+test("sniffApproveOrCancel: 'dont cancel' → cancel (safe default on ambiguity)", () => {
+  assert.equal(sniffApproveOrCancel("dont cancel"), "cancel");
+});
+
+// Make sure "yes confirm" doesn't break from the combined pattern.
+test("sniffApproveOrCancel: 'yes confirm' → approve", () => {
+  assert.equal(sniffApproveOrCancel("yes confirm"), "approve");
+});

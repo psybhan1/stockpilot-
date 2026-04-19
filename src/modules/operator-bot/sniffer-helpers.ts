@@ -204,9 +204,14 @@ export function sniffApproveOrCancel(text: string): "approve" | "cancel" | null 
     .trim();
 
   const CANCEL_WORDS =
-    /\b(cancel|nvm|never\s*mind|scrap(?:\s*that)?|dont\s*send(?:\s*it)?|stop|abort|nope|nah|no(?:pe)?)\b/i;
+    /\b(cancel(?:led|ed|s)?|nvm|never\s*mind|scrap(?:\s*that)?|dont\s*send(?:\s*it)?|stop|abort|nope|nah|no(?:pe)?)\b/i;
+  // Accepts typos ("aprove", "approv") + variations ("approved", "confirm",
+  // "confirmed", "proceed", "ship it", "submit") seen in real user chats.
+  // Real cases from bot logs: "confirm" fell through to the LLM and got a
+  // confused clarification reply instead of approving the pending PO;
+  // "aprove" (typo) hit a rate-limited LLM and failed entirely.
   const APPROVE_WORDS =
-    /\b(approve(?:\s*(?:it|and\s*send))?|send\s*it|go\s*ahead|do\s*it|looks\s*good|lgtm|sure|yes|yep|yup|yeah|ok(?:ay)?)\b/i;
+    /\b(approve(?:d|s|\s*(?:it|and\s*send))?|aprove|approv|confirm(?:ed|s)?|proceed(?:s)?|ship\s*it|submit(?:ted)?|send\s*it|go\s*ahead|do\s*it|looks\s*good|lgtm|sure|yes|yep|yup|yeah|ok(?:ay)?)\b/i;
 
   const NEGATION = /\b(dont|do\s*not|no|not|nope|nah|nvm|never\s*mind|cancel|scrap|stop|abort)\b/i;
   const hasNegation = NEGATION.test(stripped);
