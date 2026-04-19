@@ -10,19 +10,18 @@ import {
   Zap,
 } from "lucide-react";
 
-import { MoneyPulseCard } from "@/components/app/money-pulse-card";
+import { MoneyThisWeekCard } from "@/components/app/money-this-week-card";
 import { PosActivityFeed } from "@/components/app/pos-activity-feed";
-import { ShrinkageCard } from "@/components/app/shrinkage-card";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Role } from "@/lib/domain-enums";
 import { formatRelativeDays } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { requireSession } from "@/modules/auth/session";
-import { getDashboardData, getMoneyPulse } from "@/modules/dashboard/queries";
+import { getDashboardData } from "@/modules/dashboard/queries";
+import { getMoneyThisWeek } from "@/modules/dashboard/money-this-week";
 import { formatQuantityBase } from "@/modules/inventory/units";
 import { getAnalyticsOverview } from "@/modules/analytics/queries";
 import { getMarginDashboard } from "@/modules/recipes/margin-dashboard";
-import { getVarianceReport } from "@/modules/variance/report";
 
 /**
  * Today — the task-first landing.
@@ -36,26 +35,17 @@ export default async function TodayPage() {
   const [{ getPosActivityFeed }] = await Promise.all([
     import("@/modules/pos/activity-feed"),
   ]);
-  const [
-    data,
-    analytics,
-    margins,
-    variance,
-    moneyPulse,
-    posActivity,
-  ] = await Promise.all([
-    getDashboardData(session.locationId),
-    getAnalyticsOverview(session.locationId),
-    // Margin + variance surface on the landing so managers see money
-    // issues without having to know the page exists. Both are fast
-    // single-query joins, so adding them to the dashboard load is ~
-    // a few ms each. .catch to null keeps the dashboard resilient if
-    // either query throws (e.g. a location with no recipes yet).
-    getMarginDashboard(session.locationId).catch(() => []),
-    getVarianceReport(session.locationId, { days: 7 }).catch(() => null),
-    getMoneyPulse(session.locationId).catch(() => null),
-    getPosActivityFeed(session.locationId, 10).catch(() => []),
-  ]);
+  const [data, analytics, margins, moneyThisWeek, posActivity] =
+    await Promise.all([
+      getDashboardData(session.locationId),
+      getAnalyticsOverview(session.locationId),
+      // Margin still used for the "menu item under 60% margin" task
+      // counter — keeps the actionable signal while the standalone
+      // margin card moved off the dashboard.
+      getMarginDashboard(session.locationId).catch(() => []),
+      getMoneyThisWeek(session.locationId).catch(() => null),
+      getPosActivityFeed(session.locationId, 10).catch(() => []),
+    ]);
   const firstName = session.userName.split(" ")[0];
   const topSuppliers = analytics.topSuppliers.slice(0, 3);
 
@@ -65,10 +55,13 @@ export default async function TodayPage() {
   const openAlerts = data.alerts.length;
   const itemsTotal = data.metrics.inventoryCount;
   const marginReviewCount = margins.filter((m) => m.severity === "review").length;
-  const shrinkageCents = variance?.shrinkageCents ?? 0;
-  const topShrinkItem = variance?.rows.find(
-    (r) => (r.shrinkageCents ?? 0) > 0
-  );
+  // Shrinkage math needs costed POS depletion to be meaningful — with
+  // no POS sales, everything looks like shrinkage. Gate the task by
+  // Money-this-week coverage so we never surface nonsense numbers.
+  const shrinkageCents =
+    moneyThisWeek && moneyThisWeek.costedLineCount >= 10
+      ? Math.max(0, moneyThisWeek.inventorySpendCents - moneyThisWeek.cogsCents)
+      : 0;
 
   // Compose prioritised task list
   type Task = {
@@ -146,9 +139,7 @@ export default async function TodayPage() {
     tasks.push({
       kind: "shrinkage",
       title: `$${dollars} in unexplained shrinkage this week`,
-      hint: topShrinkItem
-        ? `Biggest gap: ${topShrinkItem.itemName}. Drill in to see which movements drove it.`
-        : "Look at the per-item breakdown to find the leak.",
+      hint: "Ingredient spend outran what recipes accounted for — worth a shelf check.",
       cta: "Open variance",
       href: "/variance",
       tone: shrinkageCents >= 5000 ? "urgent" : "warn",
@@ -279,52 +270,15 @@ export default async function TodayPage() {
       <PosActivityFeed rows={posActivity} />
 
 
-      {/* ── Money pulse ─────────────────────────────────────────────
-          The MarginEdge-killer in one card — weekly spend, orders
-          sent, bot auto-approvals, pending approvals with $ total,
-          and a price-jump alert when a recent delivery came in N%
-          over estimate.
-
-          Only render when there's ACTUAL activity to report. The old
-          behaviour was to render a zero-state tombstone reading
-          "$0.00 · No orders sent" which trained users to distrust
-          the dashboard — it looked like the app was pretending to
-          work. Hide it entirely until real spend or real orders
-          exist; the card will reappear the moment something
-          happens, which feels honest. */}
-      {moneyPulse &&
-      (moneyPulse.weekSpentCents > 0 ||
-        moneyPulse.weekOrderCount > 0 ||
-        moneyPulse.pendingCount > 0) ? (
-        <MoneyPulseCard data={moneyPulse} />
-      ) : null}
-
-      {/* ── Shrinkage detector ──────────────────────────────────────
-          The revolutionary piece: paid competitors charge $300+/mo
-          for variance analysis. We surface it free, live, next to
-          today's tasks. Only renders when there IS shrinkage to
-          report — no point nagging about $0.00. */}
-      {variance && variance.shrinkageCents > 0 && variance.rows.length > 0 ? (
-        <ShrinkageCard
-          data={{
-            totalCents: variance.shrinkageCents,
-            itemCount: variance.flaggedCount,
-            rangeDays: 7,
-            worstItem: (() => {
-              const worst = variance.rows.find(
-                (r) => r.shrinkageCents != null && r.shrinkageCents > 0
-              );
-              return worst
-                ? {
-                    name: worst.itemName,
-                    cents: worst.shrinkageCents ?? 0,
-                    pctOfUsage: worst.shrinkagePct,
-                  }
-                : null;
-            })(),
-          }}
-        />
-      ) : null}
+      {/* ── Money this week ─────────────────────────────────────────
+          The single P&L card — revenue, COGS, gross profit, inventory
+          spend — answering the only money question a café owner
+          actually asks on a Monday morning ("am I making money?").
+          Replaces the old MoneyPulse (PO-spend only → looked broken
+          at $0 revenue) and Shrinkage (thin-data math → showed
+          meaningless 99900% figures). Self-adapts to empty + thin-data
+          states so it never lies about margins. */}
+      {moneyThisWeek ? <MoneyThisWeekCard data={moneyThisWeek} /> : null}
 
       {/* Jump-to cards and Supplier-pulse section used to live here.
           Both removed for the "one page, one question" rewrite — the
