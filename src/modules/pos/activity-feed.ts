@@ -61,6 +61,10 @@ export type PosActivityRow = {
   // to the quick-map UI with context.
   unmappedExternalProductId: string | null;
   integrationId: string | null;
+  // When a PosVariationMapping row exists but recipe is missing
+  // (status === "gap"), this is its id — lets the UI link directly
+  // into the AI-draft flow with context pre-loaded.
+  mappingId: string | null;
 };
 
 /**
@@ -103,6 +107,7 @@ export async function getPosActivityFeed(
           catalogItem: { select: { name: true } },
           mappings: {
             select: {
+              id: true,
               mappingStatus: true,
               recipe: { select: { id: true, status: true } },
             },
@@ -290,6 +295,7 @@ export async function getPosActivityFeed(
       triggeredReorders,
       unmappedExternalProductId: status === "unmapped" || status === "gap" ? externalProductId : null,
       integrationId: line.saleEvent.integrationId,
+      mappingId: line.posVariation?.mappings[0]?.id ?? null,
     };
   });
 }

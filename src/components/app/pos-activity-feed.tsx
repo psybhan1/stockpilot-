@@ -106,13 +106,19 @@ export function PosActivityFeed({ rows }: { rows: PosActivityRow[] }) {
             ) : null}
 
             {/* Gap: Square/Clover/Shopify sale with no recipe wired.
-                One-click jump to /pos-mapping preserves context. */}
+                Jumps straight into the AI-draft flow with the mapping
+                pre-loaded — one click from "I saw a sale" to "draft
+                me a recipe from my inventory". */}
             {row.status === "gap" ? (
               <Link
-                href={`/pos-mapping?q=${encodeURIComponent(row.productName)}`}
+                href={
+                  row.mappingId
+                    ? `/pos-mapping/${row.mappingId}/draft`
+                    : `/pos-mapping?q=${encodeURIComponent(row.productName)}`
+                }
                 className="ml-6 inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/5 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/15"
               >
-                Wire a recipe so this sale depletes inventory
+                ✨ Draft a recipe with AI
                 <ArrowRight className="size-3" />
               </Link>
             ) : null}
