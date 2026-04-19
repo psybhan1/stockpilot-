@@ -224,6 +224,14 @@ export async function completeSquareOAuth(input: {
     type: "SYNC_CATALOG",
     payload: { integrationId: integration.id },
   });
+  // Also backfill the last 14 days of sales so the dashboard has real
+  // revenue immediately — without this the merchant connects, sees
+  // "no sales", and assumes we're broken.
+  await enqueueJob({
+    locationId: integration.locationId,
+    type: "SYNC_SALES",
+    payload: { integrationId: integration.id },
+  });
 
   await db.$transaction(async (tx) => {
     await createAuditLogTx(tx, {
@@ -342,6 +350,11 @@ export async function ensureCloverIntegration(
     type: "SYNC_CATALOG",
     payload: { integrationId: updated.id, userId },
   });
+  await enqueueJob({
+    locationId,
+    type: "SYNC_SALES",
+    payload: { integrationId: updated.id, userId },
+  });
 
   return { integration: updated, requiresRedirect: false };
 }
@@ -394,6 +407,11 @@ export async function completeCloverOAuth(input: {
   await enqueueJob({
     locationId: integration.locationId,
     type: "SYNC_CATALOG",
+    payload: { integrationId: integration.id },
+  });
+  await enqueueJob({
+    locationId: integration.locationId,
+    type: "SYNC_SALES",
     payload: { integrationId: integration.id },
   });
 
@@ -1023,6 +1041,11 @@ export async function completeShopifyOAuth(input: {
     type: "SYNC_CATALOG",
     payload: { integrationId: integration.id },
   });
+  await enqueueJob({
+    locationId: integration.locationId,
+    type: "SYNC_SALES",
+    payload: { integrationId: integration.id },
+  });
 
   await db.$transaction(async (tx) => {
     await createAuditLogTx(tx, {
@@ -1128,6 +1151,31 @@ export async function disconnectPosIntegration(input: {
   });
 
   return { ok: true, revokedAtVendor };
+}
+
+/**
+ * Enqueue a SYNC_SALES job for every currently-CONNECTED POS integration.
+ * Safety net against missed webhooks — if Square/Clover/Shopify never
+ * POST us (webhook not registered, network hiccup, vendor outage), this
+ * keeps sales + inventory fresh with a short poll cadence.
+ *
+ * Returns the number of integrations it queued a sync for.
+ */
+export async function pollConnectedPosIntegrationsForSales(): Promise<{
+  queued: number;
+}> {
+  const integrations = await db.posIntegration.findMany({
+    where: { status: IntegrationStatus.CONNECTED },
+    select: { id: true, locationId: true },
+  });
+  for (const integration of integrations) {
+    await enqueueJob({
+      locationId: integration.locationId,
+      type: "SYNC_SALES",
+      payload: { integrationId: integration.id },
+    });
+  }
+  return { queued: integrations.length };
 }
 
 /**

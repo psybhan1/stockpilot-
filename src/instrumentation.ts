@@ -145,9 +145,14 @@ export async function register() {
         const SUPPLIER_REPLY_INTERVAL_MS = 5 * 60 * 1000;
         const NUDGE_INTERVAL_MS = 60 * 60 * 1000; // hourly
         const POS_TOKEN_REFRESH_MS = 12 * 60 * 60 * 1000; // twice a day
+        // Poll Square/Clover/Shopify for new sales every 2 min — acts
+        // as a safety net if webhooks aren't registered or fail. Short
+        // enough that inventory depletion feels near-real-time.
+        const POS_SALES_POLL_MS = 2 * 60 * 1000;
         let lastSupplierReplyAt = 0;
         let lastNudgeAt = 0;
         let lastTokenRefreshAt = 0;
+        let lastPosSalesPollAt = 0;
         let running = false;
 
         const tick = async () => {
@@ -187,6 +192,27 @@ export async function register() {
               ) {
                 console.log(
                   `[in-proc-worker] nudges: ${nudgeResult.stuckReplyNudgesSent} reply-followups, ${nudgeResult.lateDeliveryPromptsSent} delivery-prompts`
+                );
+              }
+            }
+            // Poll connected POS integrations for new sales. Enqueues
+            // a SYNC_SALES job per CONNECTED integration; the job runs
+            // on the next job tick. This is the webhook-failure safety
+            // net — without it, missed webhooks = silent data loss.
+            if (now - lastPosSalesPollAt >= POS_SALES_POLL_MS) {
+              lastPosSalesPollAt = now;
+              const { pollConnectedPosIntegrationsForSales } = await import(
+                "@/modules/pos/service"
+              );
+              const pollResult = await pollConnectedPosIntegrationsForSales().catch(
+                (err) => {
+                  console.error("[in-proc-worker] pos sales poll", err);
+                  return null;
+                }
+              );
+              if (pollResult && pollResult.queued > 0) {
+                console.log(
+                  `[in-proc-worker] pos sales poll: queued ${pollResult.queued} SYNC_SALES`
                 );
               }
             }
