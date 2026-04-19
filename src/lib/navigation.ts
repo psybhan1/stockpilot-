@@ -17,7 +17,6 @@ import {
   Scale,
   Settings,
   ShoppingCart,
-  Store,
   Users,
   Workflow,
 } from "lucide-react";
@@ -135,13 +134,6 @@ export const secondaryNav: readonly NavItem[] = [
     icon: Workflow,
     minimumRole: Role.MANAGER,
     description: "Automated ordering queue.",
-  },
-  {
-    href: "/pos-mapping",
-    label: "Sales link",
-    icon: Store,
-    minimumRole: Role.MANAGER,
-    description: "Connect menu items to POS products.",
   },
   {
     href: "/margins",

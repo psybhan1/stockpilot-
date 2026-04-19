@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { MenuChatPanel } from "@/components/app/menu-chat-panel";
 import { RecipeDraftChat } from "@/components/app/recipe-draft-chat";
 import { Role } from "@/lib/domain-enums";
 import { requireSession } from "@/modules/auth/session";
@@ -74,6 +75,7 @@ export default async function PosMappingDraftPage({
         menuItemName={menuItemName}
         variationName={variationName || menuItemName}
       />
+      <MenuChatPanel />
     </div>
   );
 }

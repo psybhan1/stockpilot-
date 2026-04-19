@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { updatePosMappingAction } from "@/app/actions/operations";
+import { MenuChatPanel } from "@/components/app/menu-chat-panel";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -218,6 +219,7 @@ export default async function PosMappingDetailPage({
           </Card>
         </div>
       </div>
+      <MenuChatPanel />
     </div>
   );
 }
