@@ -123,12 +123,15 @@ export function parsePackSize(text: string, baseUnit: BaseUnit): PackSizeResult 
     return { packSizeBase: Math.round(parseFloat(gMatch[1])), purchaseUnit: MeasurementUnit.BAG };
   }
 
-  // box / bag / bottle with count
-  const countMatch = lower.match(/(\d+)\s*(?:pack|box|bag|bottle|can|jar|sachet)/);
+  // container with count — order matches the bare-container fallback below
+  // so "12 cases" / "6 cartons" / "3 trays" don't drop through to the plain
+  // number branch and come back as COUNT when the user clearly said CASE/BOX.
+  const countMatch = lower.match(/(\d+)\s*(?:pack|box|bag|bottle|can|jar|sachet|case|crate|tray|carton)/);
   if (countMatch) {
     const n = parseInt(countMatch[1]);
+    if (/case|crate|tray/.test(lower)) return { packSizeBase: n, purchaseUnit: MeasurementUnit.CASE };
     if (/bottle|can|jar/.test(lower)) return { packSizeBase: n, purchaseUnit: MeasurementUnit.BOTTLE };
-    if (/box/.test(lower)) return { packSizeBase: n, purchaseUnit: MeasurementUnit.BOX };
+    if (/box|carton/.test(lower)) return { packSizeBase: n, purchaseUnit: MeasurementUnit.BOX };
     return { packSizeBase: n, purchaseUnit: MeasurementUnit.BAG };
   }
 

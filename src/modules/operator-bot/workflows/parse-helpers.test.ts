@@ -321,6 +321,60 @@ test("parsePackSize: N boxes → BOX, N", () => {
   });
 });
 
+test("parsePackSize: N cases / crates / trays → CASE, N (regression)", () => {
+  // BUG FIX: the count-with-container regex only listed pack|box|bag|bottle|
+  // can|jar|sachet, so "12 cases", "5 crates", "3 trays" fell through to the
+  // plain-number branch and came back as COUNT — even though bare "case" /
+  // "crate" / "tray" already mapped to CASE. Now case/crate/tray are in the
+  // container list and map to CASE with the quantity the user typed.
+  assert.deepEqual(parsePackSize("12 cases", BaseUnit.COUNT), {
+    packSizeBase: 12,
+    purchaseUnit: MeasurementUnit.CASE,
+  });
+  assert.deepEqual(parsePackSize("5 crates", BaseUnit.COUNT), {
+    packSizeBase: 5,
+    purchaseUnit: MeasurementUnit.CASE,
+  });
+  assert.deepEqual(parsePackSize("3 trays", BaseUnit.COUNT), {
+    packSizeBase: 3,
+    purchaseUnit: MeasurementUnit.CASE,
+  });
+  // singular container word also works with quantity
+  assert.deepEqual(parsePackSize("1 case", BaseUnit.COUNT), {
+    packSizeBase: 1,
+    purchaseUnit: MeasurementUnit.CASE,
+  });
+});
+
+test("parsePackSize: N cartons → BOX, N (regression)", () => {
+  // BUG FIX: "carton" wasn't in the count-with-container regex, so
+  // "6 cartons" came back as { 6, COUNT } even though bare "carton"
+  // already mapped to BOX. Now cartons map to BOX with the quantity.
+  assert.deepEqual(parsePackSize("6 cartons", BaseUnit.COUNT), {
+    packSizeBase: 6,
+    purchaseUnit: MeasurementUnit.BOX,
+  });
+  assert.deepEqual(parsePackSize("2 carton", BaseUnit.COUNT), {
+    packSizeBase: 2,
+    purchaseUnit: MeasurementUnit.BOX,
+  });
+});
+
+test("parsePackSize: 'case of N' still wins over 'N case' when both patterns present", () => {
+  // Regression: caseMatch (/case[s]?\s+of\s+(\d+)/) must fire before the
+  // enriched countMatch, so "case of 12" and "cases of 24" still return
+  // the N items per case the user described, not 1 case of the trailing
+  // digits.
+  assert.deepEqual(parsePackSize("case of 12", BaseUnit.COUNT), {
+    packSizeBase: 12,
+    purchaseUnit: MeasurementUnit.CASE,
+  });
+  assert.deepEqual(parsePackSize("cases of 24", BaseUnit.COUNT), {
+    packSizeBase: 24,
+    purchaseUnit: MeasurementUnit.CASE,
+  });
+});
+
 test("parsePackSize: bare container words (no quantity) → 1 of that unit", () => {
   assert.deepEqual(parsePackSize("bottle", BaseUnit.MILLILITER), {
     packSizeBase: 1,
