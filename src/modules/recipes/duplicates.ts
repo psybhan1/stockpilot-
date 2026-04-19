@@ -148,18 +148,33 @@ export async function findDuplicateRecipeCandidates(
       const [canonical, duplicate] =
         a.componentCount >= b.componentCount ? [a, b] : [b, a];
 
+      // When two recipes share the EXACT same display name (common
+      // after a Square catalog double-sync), suffix each with the
+      // last 4 chars of its id so the user can tell them apart.
+      let canonicalLabel = canonical.displayName;
+      let duplicateLabel = duplicate.displayName;
+      if (canonicalLabel === duplicateLabel) {
+        canonicalLabel = `${canonical.displayName} (#${canonical.id.slice(-4)})`;
+        duplicateLabel = `${duplicate.displayName} (#${duplicate.id.slice(-4)})`;
+      }
+
       const shared = [...canonical.ingredientIds].filter((x) =>
         duplicate.ingredientIds.has(x)
       ).length;
 
       candidates.push({
         canonicalRecipeId: canonical.id,
-        canonicalName: canonical.displayName,
+        canonicalName: canonicalLabel,
         duplicateRecipeId: duplicate.id,
-        duplicateName: duplicate.displayName,
+        duplicateName: duplicateLabel,
         similarity: score,
         sharedIngredientsCount: shared,
-        rationale: buildRationale(canonical, duplicate, nameSim, shared),
+        rationale: buildRationale(
+          { ...canonical, displayName: canonicalLabel },
+          { ...duplicate, displayName: duplicateLabel },
+          nameSim,
+          shared
+        ),
       });
     }
   }
