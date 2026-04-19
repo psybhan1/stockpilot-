@@ -1169,6 +1169,7 @@ export async function pollConnectedPosIntegrationsForSales(): Promise<{
     where: {
       status: IntegrationStatus.CONNECTED,
       accessTokenEncrypted: { not: null },
+      externalLocationId: { not: null },
       provider: {
         in: [
           PosProviderType.SQUARE,
