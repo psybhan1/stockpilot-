@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AlertCircle, ArrowRight, HeartPulse } from "lucide-react";
 
+import { CalibrationSuggestionsCard } from "@/components/app/calibration-suggestions-card";
 import type { RecipeHealthSummary } from "@/modules/recipes/health";
 
 /**
@@ -13,7 +14,13 @@ import type { RecipeHealthSummary } from "@/modules/recipes/health";
  * minute rather than navigating the /recipes editor.
  */
 export function RecipeHealthCard({ data }: { data: RecipeHealthSummary }) {
-  if (data.totalRecipes === 0 || data.rows.every((r) => r.salesCount === 0)) {
+  const hasCalibrationSuggestions = data.calibrationSuggestions.length > 0;
+  // Render only when there's SOMETHING interesting — either active
+  // recipes doing volume OR at least one tune-up to show.
+  if (
+    !hasCalibrationSuggestions &&
+    (data.totalRecipes === 0 || data.rows.every((r) => r.salesCount === 0))
+  ) {
     return null;
   }
 
@@ -85,6 +92,14 @@ export function RecipeHealthCard({ data }: { data: RecipeHealthSummary }) {
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {/* Self-correcting recipe suggestions. Purely plain English —
+          confidence, weeks, std-dev all computed server-side but
+          never surfaced. User sees only "looks about X% off, bump
+          from A to B" and picks Apply or Not this time. */}
+      {hasCalibrationSuggestions ? (
+        <CalibrationSuggestionsCard rows={data.calibrationSuggestions} />
       ) : null}
 
       {/* Healthy hero — when nothing needs review, celebrate the top

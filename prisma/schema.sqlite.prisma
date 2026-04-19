@@ -267,6 +267,7 @@ model User {
   countEntries                StockCountEntry[]       @relation("CountEntryCreatedBy")
   botConnectRequests          BotConnectRequest[]
   botMessageReceipts          BotMessageReceipt[]
+  appliedCalibrationSuggestions RecipeCalibrationSuggestion[] @relation("CalibrationSuggestionAppliedBy")
 }
 
 model Business {
@@ -313,6 +314,8 @@ model Location {
   botMessageReceipts    BotMessageReceipt[]
   botConversationStates BotConversationState[]
   locationChannels      LocationChannel[]
+  calibrationWeeks      InventoryCalibrationWeek[]
+  calibrationSuggestions RecipeCalibrationSuggestion[]
 }
 
 model UserLocationRole {
@@ -388,6 +391,7 @@ model InventoryItem {
   reorderRecommendations  ReorderRecommendation[]
   purchaseOrderLines      PurchaseOrderLine[]
   alerts                  Alert[]
+  calibrationWeeks        InventoryCalibrationWeek[]
 
   @@unique([locationId, sku])
 }
@@ -631,6 +635,7 @@ model RecipeComponent {
   notes                String?
   recipe               Recipe              @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   inventoryItem        InventoryItem       @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  calibrationSuggestions RecipeCalibrationSuggestion[]
 }
 
 model PosIntegration {
@@ -959,4 +964,55 @@ model LocationChannel {
 
   @@unique([locationId, channel])
   @@index([pairingCode])
+}
+
+model InventoryCalibrationWeek {
+  id                   String        @id @default(cuid())
+  locationId           String
+  inventoryItemId      String
+  weekStart            DateTime
+  weekEnd              DateTime
+  deliveredBase        Int
+  recipePredictedBase  Int
+  wasteLoggedBase      Int           @default(0)
+  observedExcessBase   Int
+  deliveryCount        Int           @default(0)
+  salesCount           Int           @default(0)
+  computedAt           DateTime      @default(now())
+  location             Location      @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  inventoryItem        InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@unique([inventoryItemId, weekStart])
+  @@index([locationId, weekStart])
+}
+
+model RecipeCalibrationSuggestion {
+  id                      String                            @id @default(cuid())
+  locationId              String
+  recipeComponentId       String
+  currentQuantityBase     Int
+  suggestedQuantityBase   Int
+  excessPct               Float
+  weeksOfData             Int
+  confidenceScore         Float
+  status                  RecipeCalibrationSuggestionStatus @default(PENDING)
+  rationalePlain          String
+  evidenceJson            Json
+  createdAt               DateTime                          @default(now())
+  appliedAt               DateTime?
+  appliedById             String?
+  dismissedAt             DateTime?
+  location                Location                          @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  recipeComponent         RecipeComponent                   @relation(fields: [recipeComponentId], references: [id], onDelete: Cascade)
+  appliedBy               User?                             @relation("CalibrationSuggestionAppliedBy", fields: [appliedById], references: [id], onDelete: SetNull)
+
+  @@index([locationId, status])
+  @@index([recipeComponentId])
+}
+
+enum RecipeCalibrationSuggestionStatus {
+  PENDING
+  APPLIED
+  DISMISSED
+  SUPERSEDED
 }

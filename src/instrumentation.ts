@@ -149,10 +149,15 @@ export async function register() {
         // as a safety net if webhooks aren't registered or fail. Short
         // enough that inventory depletion feels near-real-time.
         const POS_SALES_POLL_MS = 2 * 60 * 1000;
+        // Calibration: roll up just-finished weeks + re-derive
+        // suggestions every 6 hours. Cheap to run, idempotent, and
+        // keeps the dashboard fresh within a daily cadence.
+        const CALIBRATION_INTERVAL_MS = 6 * 60 * 60 * 1000;
         let lastSupplierReplyAt = 0;
         let lastNudgeAt = 0;
         let lastTokenRefreshAt = 0;
         let lastPosSalesPollAt = 0;
+        let lastCalibrationAt = 0;
         let running = false;
 
         const tick = async () => {
@@ -214,6 +219,57 @@ export async function register() {
                 console.log(
                   `[in-proc-worker] pos sales poll: queued ${pollResult.queued} SYNC_SALES`
                 );
+              }
+            }
+            // Recipe calibration — walk every location, roll up the
+            // just-finished week into InventoryCalibrationWeek, then
+            // derive fresh RecipeCalibrationSuggestions. Cheap math,
+            // idempotent, and the only way the self-correcting recipe
+            // loop stays warm without a dedicated cron service.
+            if (now - lastCalibrationAt >= CALIBRATION_INTERVAL_MS) {
+              lastCalibrationAt = now;
+              try {
+                const [
+                  { rollUpCalibrationWeek, deriveCalibrationSuggestions, getWeekStartUtc },
+                  { db },
+                ] = await Promise.all([
+                  import("@/modules/recipes/calibration"),
+                  import("@/lib/db"),
+                ]);
+                const locations = await db.location.findMany({
+                  select: { id: true },
+                });
+                const nowDate = new Date();
+                const thisWeekStart = getWeekStartUtc(nowDate);
+                const lastWeekStart = new Date(
+                  thisWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000
+                );
+                let totalWritten = 0;
+                let totalSuggestions = 0;
+                for (const loc of locations) {
+                  const lastWeek = await rollUpCalibrationWeek({
+                    locationId: loc.id,
+                    weekStart: lastWeekStart,
+                    weekEnd: thisWeekStart,
+                  });
+                  const thisWeek = await rollUpCalibrationWeek({
+                    locationId: loc.id,
+                    weekStart: thisWeekStart,
+                    weekEnd: new Date(
+                      thisWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000
+                    ),
+                  });
+                  totalWritten += lastWeek.rowsWritten + thisWeek.rowsWritten;
+                  const derive = await deriveCalibrationSuggestions(loc.id);
+                  totalSuggestions += derive.suggestionsCreated;
+                }
+                if (totalWritten > 0 || totalSuggestions > 0) {
+                  console.log(
+                    `[in-proc-worker] calibration: weekRows=${totalWritten} suggestionsCreated=${totalSuggestions}`
+                  );
+                }
+              } catch (err) {
+                console.error("[in-proc-worker] calibration", err);
               }
             }
             // POS OAuth token refresh — Square tokens expire ~30d,

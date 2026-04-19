@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles, Send, Check, X, MessageCircle } from "lucide-react";
 
@@ -41,6 +41,48 @@ export function RecipeDraftChat({
     null
   );
   const [isPending, startTransition] = useTransition();
+
+  // ── Auto-save + restore draft (Build #2) ──────────────────────────
+  // Stores the current draft + chat history under a per-mapping key
+  // so a tab close / refresh doesn't nuke in-flight work. Lives purely
+  // in the browser — zero server cost, no half-baked rows in the DB.
+  // Cleared on approve, or when the user hits Redraft (empty draft).
+  const storageKey = `stockpilot:recipe-draft:${mappingId}`;
+
+  // Restore once on mount.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        draft: DraftState | null;
+        history: ChatTurn[];
+      };
+      if (parsed.draft) setDraft(parsed.draft);
+      if (Array.isArray(parsed.history)) setHistory(parsed.history);
+    } catch {
+      // Corrupt storage — ignore and start fresh.
+    }
+    // We intentionally run only on initial mount — once we've decided
+    // to restore (or not), subsequent changes come from server actions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save on every draft/history change.
+  useEffect(() => {
+    try {
+      if (!draft) {
+        window.localStorage.removeItem(storageKey);
+        return;
+      }
+      window.localStorage.setItem(
+        storageKey,
+        JSON.stringify({ draft, history })
+      );
+    } catch {
+      // Quota exceeded / private mode — silently fall through.
+    }
+  }, [storageKey, draft, history]);
 
   const handleDraft = useCallback(() => {
     setErrorMessage(null);
@@ -107,9 +149,14 @@ export function RecipeDraftChat({
         return;
       }
       setCommittedRecipeId(result.recipeId);
+      try {
+        window.localStorage.removeItem(storageKey);
+      } catch {
+        // ignore — storage may be unavailable
+      }
       router.refresh();
     });
-  }, [draft, mappingId, router]);
+  }, [draft, mappingId, router, storageKey]);
 
   const handleRemoveComponent = useCallback(
     (idx: number) => {

@@ -38,11 +38,22 @@ export type RecipeHealthRow = {
   reviewReason: string | null;
 };
 
+export type CalibrationSuggestionRow = {
+  id: string;
+  rationalePlain: string;
+  currentQuantityBase: number;
+  suggestedQuantityBase: number;
+  inventoryItemName: string;
+  recipeName: string;
+  displayUnit: string;
+};
+
 export type RecipeHealthSummary = {
   rows: RecipeHealthRow[];
   totalRecipes: number;
   needsReviewCount: number;
   windowDays: number;
+  calibrationSuggestions: CalibrationSuggestionRow[];
 };
 
 export async function getRecipeHealth(
@@ -77,7 +88,13 @@ export async function getRecipeHealth(
   });
 
   if (recipes.length === 0) {
-    return { rows: [], totalRecipes: 0, needsReviewCount: 0, windowDays };
+    return {
+      rows: [],
+      totalRecipes: 0,
+      needsReviewCount: 0,
+      windowDays,
+      calibrationSuggestions: [],
+    };
   }
 
   // One batch query: POS sale lines for the location in the window,
@@ -158,10 +175,58 @@ export async function getRecipeHealth(
     return b.salesCount - a.salesCount;
   });
 
+  // Pull PENDING calibration suggestions for this location. Already
+  // gated by confidence threshold at creation time, so everything
+  // here is safe to surface.
+  const suggestions = await db.recipeCalibrationSuggestion.findMany({
+    where: { locationId, status: "PENDING" },
+    select: {
+      id: true,
+      rationalePlain: true,
+      currentQuantityBase: true,
+      suggestedQuantityBase: true,
+      recipeComponent: {
+        select: {
+          displayUnit: true,
+          inventoryItem: { select: { name: true } },
+          recipe: {
+            select: {
+              menuItemVariant: {
+                select: { name: true, menuItem: { select: { name: true } } },
+              },
+            },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 5,
+  });
+
+  const calibrationSuggestions: CalibrationSuggestionRow[] = suggestions.map(
+    (s) => {
+      const variant = s.recipeComponent.recipe.menuItemVariant;
+      const recipeName =
+        variant.menuItem.name === variant.name
+          ? variant.name
+          : `${variant.menuItem.name} · ${variant.name}`;
+      return {
+        id: s.id,
+        rationalePlain: s.rationalePlain,
+        currentQuantityBase: s.currentQuantityBase,
+        suggestedQuantityBase: s.suggestedQuantityBase,
+        inventoryItemName: s.recipeComponent.inventoryItem.name,
+        recipeName,
+        displayUnit: String(s.recipeComponent.displayUnit),
+      };
+    }
+  );
+
   return {
     rows,
     totalRecipes: rows.length,
     needsReviewCount: rows.filter((r) => r.needsReview).length,
     windowDays,
+    calibrationSuggestions,
   };
 }
