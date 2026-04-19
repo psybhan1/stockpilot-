@@ -30,6 +30,7 @@ import {
   extractModifierKeys,
   sumNegativeUsageBase,
 } from "@/modules/inventory/ledger-primitives";
+import { inferModifierKeysFromVariationName } from "@/modules/recipes/consolidation";
 
 export async function postStockMovementTx(
   tx: Prisma.TransactionClient,
@@ -703,7 +704,22 @@ export async function processSaleEventById(saleEventId: string, userId?: string)
   await db.$transaction(async (tx) => {
     for (const line of saleEvent.lines) {
       const mapping = line.posVariation?.mappings[0];
-      const lineModifierKeys = extractModifierKeys(line.modifierKeys, line.rawData);
+      const explicitKeys = extractModifierKeys(line.modifierKeys, line.rawData);
+      // Infer modifier keys from the variant name too. This is the
+      // post-consolidation shim: a Square item named "Medium Iced
+      // Vanilla Latte" arrives with NO modifier keys on the sale line,
+      // but the merged recipe tree has size:medium + temp:iced +
+      // syrup:vanilla options. We scan the name against those option
+      // labels and union the matches with the explicit keys.
+      const inferredKeys = mapping?.recipe
+        ? inferModifierKeysFromVariationName(
+            line.posVariation?.name,
+            mapping.recipe.choiceGroups
+          )
+        : [];
+      const lineModifierKeys = [
+        ...new Set([...explicitKeys, ...inferredKeys]),
+      ];
 
       if (!mapping || mapping.mappingStatus !== MappingStatus.READY || !mapping.recipe) {
         await tx.alert.create({

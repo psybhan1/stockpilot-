@@ -10,6 +10,7 @@ import {
   Zap,
 } from "lucide-react";
 
+import { ConsolidateRecipesCard } from "@/components/app/consolidate-recipes-card";
 import { DuplicateRecipesCard } from "@/components/app/duplicate-recipes-card";
 import { InventoryDuplicatesCard } from "@/components/app/inventory-duplicates-card";
 import { MoneyThisWeekCard } from "@/components/app/money-this-week-card";
@@ -23,6 +24,7 @@ import { requireSession } from "@/modules/auth/session";
 import { getDashboardData } from "@/modules/dashboard/queries";
 import { getMoneyThisWeek } from "@/modules/dashboard/money-this-week";
 import { findInventoryDuplicates } from "@/modules/inventory/duplicates";
+import { findConsolidationCandidates } from "@/modules/recipes/consolidation";
 import { findDuplicateRecipeCandidates } from "@/modules/recipes/duplicates";
 import { getRecipeHealth } from "@/modules/recipes/health";
 import { formatQuantityBase } from "@/modules/inventory/units";
@@ -50,6 +52,7 @@ export default async function TodayPage() {
     recipeHealth,
     duplicateCandidates,
     inventoryDuplicateGroups,
+    consolidateCandidates,
   ] = await Promise.all([
     getDashboardData(session.locationId),
     getAnalyticsOverview(session.locationId),
@@ -59,6 +62,7 @@ export default async function TodayPage() {
     getRecipeHealth(session.locationId).catch(() => null),
     findDuplicateRecipeCandidates(session.locationId).catch(() => []),
     findInventoryDuplicates(session.locationId).catch(() => []),
+    findConsolidationCandidates(session.locationId).catch(() => []),
   ]);
   const firstName = session.userName.split(" ")[0];
   const topSuppliers = analytics.topSuppliers.slice(0, 3);
@@ -293,6 +297,13 @@ export default async function TodayPage() {
           meaningless 99900% figures). Self-adapts to empty + thin-data
           states so it never lies about margins. */}
       {moneyThisWeek ? <MoneyThisWeekCard data={moneyThisWeek} /> : null}
+
+      {/* ── Consolidate look-alike recipes ──────────────────────────
+          Collapses N recipes for the "same drink" (e.g. Latte + Medium
+          Latte + Large Iced Vanilla Latte) into ONE canonical recipe
+          with size/milk/syrup/temp modifiers. Uses Groq to infer the
+          modifier tree from the recipes' differences. */}
+      <ConsolidateRecipesCard groups={consolidateCandidates} />
 
       {/* ── Duplicate-inventory-item detection ──────────────────────
           Bulk-ingest flows (Amazon order parsing, invoice OCR, seed
