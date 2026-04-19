@@ -15,6 +15,13 @@ export type DraftComponent = {
   confidenceScore: number;
   optional: boolean;
   conditionServiceMode: ServiceMode | null;
+  // When set, this component only applies to POS sales that carry
+  // the matching modifier key (e.g. "milk:oat", "temp:iced"). Used
+  // for modifier-aware composition: one Latte recipe with components
+  // like Whole Milk (no key), Oat Milk (milk:oat), Ice (temp:iced)
+  // etc. The depletion engine already honours this via
+  // componentMatchesModifierKey in processSaleEventById.
+  modifierKey: string | null;
   notes: string | null;
 };
 
@@ -199,6 +206,7 @@ export async function commitDraftedRecipe(input: {
         confidenceScore: c.confidenceScore,
         optional: c.optional,
         conditionServiceMode: c.conditionServiceMode,
+        modifierKey: c.modifierKey,
         notes: c.notes,
       })),
     });
@@ -235,6 +243,7 @@ Output JSON schema:
       "confidenceScore": <0-1>,
       "optional": <bool>,
       "conditionServiceMode": "DINE_IN" | "TO_GO" | null,
+      "modifierKey": "<string or null>",
       "notes": "<short note or null>"
     }
   ]
@@ -243,7 +252,14 @@ Output JSON schema:
 Rules:
 - Use inventoryItemId from catalog only.
 - Base units: GRAM=1g, MILLILITER=1ml, COUNT=1 each.
-- Include packaging (cup, lid) when service mode is TO_GO.`;
+- Include packaging (cup, lid) when service mode is TO_GO.
+- ModifierKey semantics: when a component only applies IF a POS modifier is
+  selected, set modifierKey to a stable key like "milk:oat", "temp:iced",
+  "size:large", "shot:extra". Leave null for components that ALWAYS apply.
+- For an initial draft, default to modifierKey=null on every component —
+  modifiers get added by the user via chat ("make iced swap hot cup for
+  cold cup"). Don't invent modifiers unless the menu name makes them
+  obvious (e.g. "Iced Latte" → temp:iced on cold cup + ice).`;
 }
 
 function buildDraftUserPrompt(input: {
@@ -268,12 +284,31 @@ Output JSON:
 {
   "reply": "one sentence",
   "summary": "...",
-  "components": [<same shape as draft>]
+  "components": [<same shape as draft, includes "modifierKey" field>]
 }
 
 Rules:
 - Use catalog inventoryItemId values verbatim.
-- Preserve unchanged components exactly.`;
+- Preserve unchanged components exactly (including their modifierKey).
+
+Modifier-aware composition:
+- The manager may add modifier-conditional components — components that
+  ONLY deplete when a matching POS modifier is present. Set the
+  "modifierKey" field to link them.
+- Examples the manager might say:
+  - "When iced, swap hot cup for cold cup and add ice"
+    → Keep hot cup with modifierKey="temp:hot", add cold cup with
+      modifierKey="temp:iced", add ice with modifierKey="temp:iced".
+  - "If oat milk is selected, use oat milk instead of whole milk"
+    → Whole milk gets modifierKey="milk:dairy" (or null if dairy is
+      the default), oat milk gets modifierKey="milk:oat".
+  - "Extra shot adds 18g espresso"
+    → Add espresso component with modifierKey="shot:extra".
+- Use consistent key patterns: "<category>:<value>". Common ones:
+  milk:oat, milk:almond, milk:dairy, temp:iced, temp:hot,
+  shot:extra, shot:decaf, size:small, size:large.
+- Leave modifierKey null for components that should ALWAYS apply
+  regardless of modifiers (the default path).`;
 }
 
 function buildEditUserPrompt(input: {
@@ -368,6 +403,10 @@ function coerceDraftState(raw: unknown, catalog: CatalogItem[]): DraftState {
       typeof rc.notes === "string" && rc.notes.trim()
         ? rc.notes.trim().slice(0, 250)
         : null;
+    const modifierKey =
+      typeof rc.modifierKey === "string" && rc.modifierKey.trim()
+        ? rc.modifierKey.trim().slice(0, 64)
+        : null;
 
     components.push({
       inventoryItemId: id,
@@ -378,6 +417,7 @@ function coerceDraftState(raw: unknown, catalog: CatalogItem[]): DraftState {
       confidenceScore: confidence,
       optional,
       conditionServiceMode,
+      modifierKey,
       notes,
     });
   }

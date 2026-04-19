@@ -235,6 +235,14 @@ export function RecipeDraftChat({
                         ? ` · ${c.conditionServiceMode}`
                         : ""}
                     </span>
+                    {c.modifierKey ? (
+                      <span
+                        className="ml-2 inline-flex items-center rounded-full bg-violet-500/15 px-2 py-[1px] font-mono text-[10px] font-semibold text-violet-700 dark:text-violet-300"
+                        title="Only depletes when this POS modifier is selected"
+                      >
+                        if {c.modifierKey}
+                      </span>
+                    ) : null}
                   </p>
                   {c.notes ? (
                     <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
@@ -346,9 +354,11 @@ export function RecipeDraftChat({
           </Button>
         </form>
         <p className="text-[10px] text-muted-foreground">
-          Try: &ldquo;use oat milk as default&rdquo; · &ldquo;add paper
-          straw&rdquo; · &ldquo;bump coffee to 20g&rdquo; · &ldquo;make
-          the cup optional for dine-in&rdquo;
+          Try: &ldquo;use oat milk as default&rdquo; · &ldquo;bump coffee
+          to 20g&rdquo; · &ldquo;when iced, swap hot cup for cold cup and
+          add ice&rdquo; · &ldquo;if oat milk is selected, use oat
+          instead of whole&rdquo; · &ldquo;extra shot adds 18g
+          espresso&rdquo;
         </p>
       </section>
 
