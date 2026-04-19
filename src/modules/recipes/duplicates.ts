@@ -91,13 +91,30 @@ export async function findDuplicateRecipeCandidates(
   if (recipes.length < 2) return [];
 
   const enriched = recipes.map((r) => {
-    const name = r.menuItemVariant.menuItem.name === r.menuItemVariant.name
-      ? r.menuItemVariant.name
-      : `${r.menuItemVariant.menuItem.name} ${r.menuItemVariant.name}`;
+    const menuName = r.menuItemVariant.menuItem.name.trim();
+    const variantName = r.menuItemVariant.name.trim();
+    // Pick whichever is longer / more specific. When variant contains
+    // the menu name ("Medium Latte" vs "Latte") we keep the variant.
+    // When the menu name is the richer label, use that. Prevents
+    // "Latte Medium Latte" duplication in the UI.
+    let displayName = variantName || menuName || "Recipe";
+    if (menuName && variantName && menuName !== variantName) {
+      const lowerMenu = menuName.toLowerCase();
+      const lowerVar = variantName.toLowerCase();
+      if (lowerVar.includes(lowerMenu)) {
+        displayName = variantName;
+      } else if (lowerMenu.includes(lowerVar)) {
+        displayName = menuName;
+      } else {
+        displayName = `${menuName} · ${variantName}`;
+      }
+    } else if (menuName) {
+      displayName = menuName;
+    }
     return {
       id: r.id,
-      displayName: name,
-      bareName: stripModifiers(name),
+      displayName,
+      bareName: stripModifiers(displayName),
       ingredientIds: new Set(r.components.map((c) => c.inventoryItemId)),
       componentCount: r._count.components,
     };
