@@ -10,6 +10,7 @@ import {
   Zap,
 } from "lucide-react";
 
+import { DuplicateRecipesCard } from "@/components/app/duplicate-recipes-card";
 import { MoneyThisWeekCard } from "@/components/app/money-this-week-card";
 import { PosActivityFeed } from "@/components/app/pos-activity-feed";
 import { RecipeHealthCard } from "@/components/app/recipe-health-card";
@@ -20,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { requireSession } from "@/modules/auth/session";
 import { getDashboardData } from "@/modules/dashboard/queries";
 import { getMoneyThisWeek } from "@/modules/dashboard/money-this-week";
+import { findDuplicateRecipeCandidates } from "@/modules/recipes/duplicates";
 import { getRecipeHealth } from "@/modules/recipes/health";
 import { formatQuantityBase } from "@/modules/inventory/units";
 import { getAnalyticsOverview } from "@/modules/analytics/queries";
@@ -44,16 +46,15 @@ export default async function TodayPage() {
     moneyThisWeek,
     posActivity,
     recipeHealth,
+    duplicateCandidates,
   ] = await Promise.all([
     getDashboardData(session.locationId),
     getAnalyticsOverview(session.locationId),
-    // Margin still used for the "menu item under 60% margin" task
-    // counter — keeps the actionable signal while the standalone
-    // margin card moved off the dashboard.
     getMarginDashboard(session.locationId).catch(() => []),
     getMoneyThisWeek(session.locationId).catch(() => null),
     getPosActivityFeed(session.locationId, 10).catch(() => []),
     getRecipeHealth(session.locationId).catch(() => null),
+    findDuplicateRecipeCandidates(session.locationId).catch(() => []),
   ]);
   const firstName = session.userName.split(" ")[0];
   const topSuppliers = analytics.topSuppliers.slice(0, 3);
@@ -288,6 +289,13 @@ export default async function TodayPage() {
           meaningless 99900% figures). Self-adapts to empty + thin-data
           states so it never lies about margins. */}
       {moneyThisWeek ? <MoneyThisWeekCard data={moneyThisWeek} /> : null}
+
+      {/* ── Duplicate-recipe detection (Phase 4) ────────────────────
+          StockBuddy finds likely-duplicate recipes ("Latte" + "Medium
+          Latte" sharing 6 ingredients) and proposes a one-click merge.
+          Renders above Recipe Health so reducing recipe sprawl is the
+          first thing the manager sees when it's relevant. */}
+      <DuplicateRecipesCard rows={duplicateCandidates} />
 
       {/* ── Recipe health (Build #3 MVP) ────────────────────────────
           Surfaces high-volume + low-confidence (or stale) recipes

@@ -24,9 +24,13 @@ type SquareCatalogObject = {
   category_data?: {
     name?: string;
   };
+  image_data?: {
+    url?: string;
+  };
   item_data?: {
     name?: string;
     category_id?: string;
+    image_ids?: string[];
     variations?: Array<{
       id: string;
       item_variation_data?: {
@@ -214,6 +218,14 @@ export class SquareProvider implements PosProvider {
         .filter((object) => object.type === "CATEGORY")
         .map((object) => [object.id, object.category_data?.name ?? undefined])
     );
+    // Square returns IMAGE objects separately; items reference them
+    // by id in item_data.image_ids. Build a lookup once so we can
+    // resolve the first image url per item on the fly.
+    const imagesById = new Map(
+      objects
+        .filter((object) => object.type === "IMAGE" && object.image_data?.url)
+        .map((object) => [object.id, object.image_data!.url!])
+    );
 
     return objects
       .filter((object) => object.type === "ITEM" && object.item_data?.name)
@@ -237,12 +249,15 @@ export class SquareProvider implements PosProvider {
             };
           }) ?? [];
 
+        const firstImageId = item.item_data?.image_ids?.[0];
+        const imageUrl = firstImageId ? imagesById.get(firstImageId) : undefined;
         return {
           externalItemId: item.id,
           name: item.item_data?.name ?? "Unnamed item",
           category: item.item_data?.category_id
             ? categories.get(item.item_data.category_id)
             : undefined,
+          imageUrl,
           variations,
         };
       });
@@ -360,7 +375,9 @@ export class SquareProvider implements PosProvider {
 
     do {
       const searchParams = new URLSearchParams({
-        types: "ITEM,CATEGORY",
+        // Pull IMAGE + MODIFIER_LIST too so catalog sync populates
+        // product photos and the modifier tree in one pass.
+        types: "ITEM,CATEGORY,IMAGE,MODIFIER_LIST",
       });
 
       if (cursor) {

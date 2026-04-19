@@ -274,6 +274,10 @@ model Business {
   id        String     @id @default(cuid())
   name      String
   slug      String     @unique
+  brandIdentity       Json?
+  brandIdentityAt     DateTime?
+  streetAddress       String?
+  postalCode          String?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   locations Location[]
@@ -378,6 +382,10 @@ model InventoryItem {
   latestCostNote          String?
   notes                   String?
   confidenceScore         Float                   @default(0.8)
+  imageBytes              Bytes?
+  imageContentType        String?
+  imageSource             String?                 @default("none")
+  imageGeneratedAt        DateTime?
   createdAt               DateTime                @default(now())
   updatedAt               DateTime                @updatedAt
   location                Location                @relation(fields: [locationId], references: [id], onDelete: Cascade)

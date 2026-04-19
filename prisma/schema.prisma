@@ -279,6 +279,20 @@ model Business {
   id        String     @id @default(cuid())
   name      String
   slug      String     @unique
+  /// Auto-derived brand identity from web research (Brave Search +
+  /// Google Places + vision analysis). Used as the prompt template
+  /// for AI-generated product images so every café's generated
+  /// photos match their own vibe. Shape: { vibe, palette, plating,
+  /// logoImageUrl?, customPromptSuffix? }.
+  brandIdentity       Json?
+  /// Timestamp of the last successful brand-research run. If older
+  /// than ~90 days, we re-research on next image-gen request.
+  brandIdentityAt     DateTime?
+  /// Street + postal code captured at signup so the brand agent can
+  /// disambiguate the business (avoids picking a different "Northside
+  /// Coffee" in another city).
+  streetAddress       String?
+  postalCode          String?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   locations Location[]
@@ -385,6 +399,14 @@ model InventoryItem {
   latestCostNote          String?
   notes                   String?
   confidenceScore         Float                   @default(0.8)
+  /// Image cascade. `imageUrl` wins first; fallback is imageBytes
+  /// served via /api/inventory/[id]/image. imageSource lets us tell
+  /// the UI where the image came from (pos/upload/ai) so we can
+  /// explain it + offer a "regenerate" button for AI ones.
+  imageBytes              Bytes?
+  imageContentType        String?
+  imageSource             String?                 @default("none")
+  imageGeneratedAt        DateTime?
   createdAt               DateTime                @default(now())
   updatedAt               DateTime                @updatedAt
   location                Location                @relation(fields: [locationId], references: [id], onDelete: Cascade)
