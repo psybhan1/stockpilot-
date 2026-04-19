@@ -30,21 +30,11 @@ export type InventoryDuplicateGroup = {
 export async function findInventoryDuplicates(
   locationId: string
 ): Promise<InventoryDuplicateGroup[]> {
-  const groups = await db.inventoryItem.groupBy({
-    by: ["name"],
-    where: { locationId },
-    _count: true,
-    having: { name: { _count: { gt: 1 } } },
-    orderBy: { _count: { name: "desc" } },
-  });
-
-  if (groups.length === 0) return [];
-
+  // Pull all items once, group locally. Avoids Prisma groupBy + having
+  // quirks across versions and keeps the function's memory footprint
+  // bounded to the (at-most-few-hundred) items per location.
   const allItems = await db.inventoryItem.findMany({
-    where: {
-      locationId,
-      name: { in: groups.map((g) => g.name) },
-    },
+    where: { locationId },
     select: {
       id: true,
       name: true,
@@ -63,23 +53,32 @@ export async function findInventoryDuplicates(
     byName.set(item.name, arr);
   }
 
-  return groups.map((g) => ({
-    canonicalName: g.name,
-    items: (byName.get(g.name) ?? [])
-      .sort(
-        (a, b) =>
-          b.stockOnHandBase - a.stockOnHandBase ||
-          a.createdAt.getTime() - b.createdAt.getTime()
-      )
-      .map((i) => ({
-        id: i.id,
-        sku: i.sku,
-        stockOnHandBase: i.stockOnHandBase,
-        primarySupplierName: i.primarySupplier?.name ?? null,
-        createdAt: i.createdAt,
-        hasImage: Boolean(i.imageBytes && i.imageBytes.length > 0),
-      })),
-  }));
+  const groups: InventoryDuplicateGroup[] = [];
+  for (const [name, items] of byName) {
+    if (items.length < 2) continue;
+    groups.push({
+      canonicalName: name,
+      items: items
+        .slice()
+        .sort(
+          (a, b) =>
+            b.stockOnHandBase - a.stockOnHandBase ||
+            a.createdAt.getTime() - b.createdAt.getTime()
+        )
+        .map((i) => ({
+          id: i.id,
+          sku: i.sku,
+          stockOnHandBase: i.stockOnHandBase,
+          primarySupplierName: i.primarySupplier?.name ?? null,
+          createdAt: i.createdAt,
+          hasImage: Boolean(i.imageBytes && i.imageBytes.length > 0),
+        })),
+    });
+  }
+
+  // Biggest groups first — pay down the most dupe-debt fastest.
+  groups.sort((a, b) => b.items.length - a.items.length);
+  return groups;
 }
 
 /**
