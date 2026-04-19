@@ -25,9 +25,26 @@ export type DraftComponent = {
   notes: string | null;
 };
 
+export type ProposedNewItem = {
+  // Stable id the UI uses to correlate a "Create" click back to the
+  // draft slot. Shape: "proposed:<slug>". Never hits the DB.
+  proposalKey: string;
+  name: string;
+  category: string; // InventoryCategory enum string
+  baseUnit: string; // GRAM | MILLILITER | COUNT
+  displayUnit: string; // matches MeasurementUnit
+  componentType: "INGREDIENT" | "PACKAGING";
+  quantityBase: number; // how much of this proposed item the recipe needs
+  modifierKey: string | null;
+  conditionServiceMode: ServiceMode | null;
+  optional: boolean;
+  reason: string; // one-line explanation for the user
+};
+
 export type DraftState = {
   summary: string;
   components: DraftComponent[];
+  proposedNewItems: ProposedNewItem[];
 };
 
 export type CatalogItem = {
@@ -79,6 +96,7 @@ export async function draftRecipeForMapping(input: {
       summary:
         "Your inventory is empty — add a few items (milk, espresso beans, cups) then try again.",
       components: [],
+      proposedNewItems: [],
     };
   }
 
@@ -87,6 +105,7 @@ export async function draftRecipeForMapping(input: {
     return {
       summary: `AI is offline — fill the recipe manually below. Menu item: ${input.menuItemName}.`,
       components: [],
+      proposedNewItems: [],
     };
   }
 
@@ -104,6 +123,7 @@ export async function draftRecipeForMapping(input: {
       summary:
         "We couldn't reach the AI drafter this time — add components manually, the chat edit will retry.",
       components: [],
+      proposedNewItems: [],
     };
   }
 }
@@ -259,7 +279,11 @@ Rules:
 - For an initial draft, default to modifierKey=null on every component —
   modifiers get added by the user via chat ("make iced swap hot cup for
   cold cup"). Don't invent modifiers unless the menu name makes them
-  obvious (e.g. "Iced Latte" → temp:iced on cold cup + ice).`;
+  obvious (e.g. "Iced Latte" → temp:iced on cold cup + ice).
+- Always return "proposedNewItems": [] on the initial draft. The
+  initial pass should only use items already in the catalog. Proposals
+  happen during chat edits when the manager explicitly asks for
+  something missing.`;
 }
 
 function buildDraftUserPrompt(input: {
@@ -284,12 +308,41 @@ Output JSON:
 {
   "reply": "one sentence",
   "summary": "...",
-  "components": [<same shape as draft, includes "modifierKey" field>]
+  "components": [<same shape as draft, includes "modifierKey" field>],
+  "proposedNewItems": [
+    {
+      "proposalKey": "proposed:<short-slug>",
+      "name": "<human name, Title Case>",
+      "category": "COFFEE" | "DAIRY" | "ALT_DAIRY" | "SYRUP" | "BAKERY_INGREDIENT" | "PACKAGING" | "CLEANING" | "PAPER_GOODS" | "RETAIL" | "SEASONAL" | "SUPPLY",
+      "baseUnit": "GRAM" | "MILLILITER" | "COUNT",
+      "displayUnit": "GRAM" | "KILOGRAM" | "MILLILITER" | "LITER" | "COUNT",
+      "componentType": "INGREDIENT" | "PACKAGING",
+      "quantityBase": <int, how much the recipe needs in base units>,
+      "modifierKey": "<string or null>",
+      "conditionServiceMode": "DINE_IN" | "TO_GO" | null,
+      "optional": <bool>,
+      "reason": "<one-line explanation for the user>"
+    }
+  ]
 }
 
 Rules:
-- Use catalog inventoryItemId values verbatim.
+- Use catalog inventoryItemId values verbatim in "components".
 - Preserve unchanged components exactly (including their modifierKey).
+
+Missing inventory items:
+- If the manager asks for something NOT in the catalog (e.g. "add 12 oz
+  cup" when only 16 oz exists, "add paper straw" when no straw exists),
+  DO NOT invent a fake inventoryItemId. Instead put it in
+  "proposedNewItems" so the user can create it with one click.
+- Keep "components" only for items that already exist in the catalog.
+- Match category sensibly: cups/lids/sleeves/straws → PACKAGING,
+  milks → DAIRY/ALT_DAIRY, coffee beans → COFFEE, syrups → SYRUP.
+- Base units: a cup/lid/bottle → COUNT; milk/syrup → MILLILITER;
+  beans/powder → GRAM.
+- proposalKey should be short and kebab-case, prefixed with "proposed:",
+  e.g. "proposed:12oz-hot-cup".
+- If the user adds nothing new, return proposedNewItems: [].
 
 Modifier-aware composition:
 - The manager may add modifier-conditional components — components that
@@ -427,7 +480,91 @@ function coerceDraftState(raw: unknown, catalog: CatalogItem[]): DraftState {
       ? obj.summary.trim().slice(0, 500)
       : "Draft recipe.";
 
-  return { summary, components };
+  const proposedNewItems: ProposedNewItem[] = [];
+  const rawProposed = Array.isArray(obj.proposedNewItems)
+    ? obj.proposedNewItems
+    : [];
+  for (const rp of rawProposed) {
+    if (!isObj(rp)) continue;
+    const name =
+      typeof rp.name === "string" && rp.name.trim()
+        ? rp.name.trim().slice(0, 80)
+        : null;
+    if (!name) continue;
+
+    const proposalKey =
+      typeof rp.proposalKey === "string" && rp.proposalKey.trim()
+        ? rp.proposalKey.trim().slice(0, 96)
+        : `proposed:${slugify(name)}`;
+    const category = coerceCategory(rp.category);
+    const baseUnit = coerceBaseUnit(rp.baseUnit);
+    const displayUnit = coerceMeasurementUnit(rp.displayUnit, baseUnit);
+    const componentType =
+      rp.componentType === "PACKAGING" ? "PACKAGING" : "INGREDIENT";
+    const quantityBase = Math.max(1, Math.round(Number(rp.quantityBase) || 1));
+    const modifierKey =
+      typeof rp.modifierKey === "string" && rp.modifierKey.trim()
+        ? rp.modifierKey.trim().slice(0, 64)
+        : null;
+    const conditionServiceMode =
+      rp.conditionServiceMode === "DINE_IN"
+        ? ServiceMode.DINE_IN
+        : rp.conditionServiceMode === "TO_GO"
+          ? ServiceMode.TO_GO
+          : null;
+    const optional = rp.optional === true;
+    const reason =
+      typeof rp.reason === "string" && rp.reason.trim()
+        ? rp.reason.trim().slice(0, 200)
+        : `Manager asked to include ${name}.`;
+
+    proposedNewItems.push({
+      proposalKey,
+      name,
+      category,
+      baseUnit,
+      displayUnit,
+      componentType,
+      quantityBase,
+      modifierKey,
+      conditionServiceMode,
+      optional,
+      reason,
+    });
+  }
+
+  return { summary, components, proposedNewItems };
+}
+
+function slugify(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+function coerceCategory(raw: unknown): string {
+  const valid = [
+    "COFFEE",
+    "DAIRY",
+    "ALT_DAIRY",
+    "SYRUP",
+    "BAKERY_INGREDIENT",
+    "PACKAGING",
+    "CLEANING",
+    "PAPER_GOODS",
+    "RETAIL",
+    "SEASONAL",
+    "SUPPLY",
+  ];
+  if (typeof raw === "string" && valid.includes(raw)) return raw;
+  return "SUPPLY";
+}
+
+function coerceBaseUnit(raw: unknown): string {
+  if (raw === "GRAM" || raw === "MILLILITER" || raw === "COUNT") return raw;
+  return "COUNT";
 }
 
 function isObj(x: unknown): x is Record<string, unknown> {

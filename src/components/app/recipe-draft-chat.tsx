@@ -6,6 +6,7 @@ import { Sparkles, Send, Check, X, MessageCircle } from "lucide-react";
 
 import {
   commitDraftedRecipeAction,
+  createInventoryItemForDraftAction,
   draftRecipeAction,
   editDraftChatAction,
 } from "@/app/actions/ai-recipe";
@@ -15,6 +16,7 @@ import type {
   DraftState,
 } from "@/modules/recipes/ai-draft";
 import { Button } from "@/components/ui/button";
+import { Plus } from "lucide-react";
 
 /**
  * AI recipe draft + chat editor. Client-only because the draft lives
@@ -131,6 +133,33 @@ export function RecipeDraftChat({
       });
     },
     [draft]
+  );
+
+  const handleCreateProposedItem = useCallback(
+    (proposalKey: string) => {
+      if (!draft) return;
+      setErrorMessage(null);
+      startTransition(async () => {
+        const result = await createInventoryItemForDraftAction({
+          mappingId,
+          draft,
+          proposalKey,
+        });
+        if (!result.ok) {
+          setErrorMessage(result.reason);
+          return;
+        }
+        setDraft(result.draft);
+        setHistory((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Created ${result.createdItemName} in your inventory and added it to the recipe.`,
+          },
+        ]);
+      });
+    },
+    [draft, mappingId]
   );
 
   // ── Post-commit success view ─────────────────────────────────────
@@ -276,6 +305,52 @@ export function RecipeDraftChat({
             ))}
           </ul>
         )}
+
+        {/* Proposed new items — StockBuddy wants to create these
+            inventory items to satisfy the last chat instruction.
+            One click = row in InventoryItem + component added to
+            the current draft. */}
+        {draft.proposedNewItems.length > 0 ? (
+          <div className="space-y-2 rounded-xl border border-dashed border-violet-500/50 bg-violet-500/5 p-3">
+            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-600 dark:text-violet-300">
+              StockBuddy wants to create {draft.proposedNewItems.length} new
+              inventory item{draft.proposedNewItems.length === 1 ? "" : "s"}
+            </p>
+            {draft.proposedNewItems.map((p) => (
+              <div
+                key={p.proposalKey}
+                className="flex items-start justify-between gap-3 rounded-lg border border-violet-500/30 bg-background/40 p-2.5"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">
+                    {p.name}
+                    <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                      {p.category} · {p.baseUnit}
+                    </span>
+                    {p.modifierKey ? (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-violet-500/15 px-2 py-[1px] font-mono text-[10px] font-semibold text-violet-700 dark:text-violet-300">
+                        if {p.modifierKey}
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    {p.reason} · recipe uses {p.quantityBase} {p.displayUnit.toLowerCase()}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => handleCreateProposedItem(p.proposalKey)}
+                  disabled={isPending}
+                  className="h-7 gap-1 bg-violet-500 text-white hover:bg-violet-500/90 text-[11px]"
+                >
+                  <Plus className="size-3" />
+                  Create
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         <div className="flex items-center justify-between gap-3 border-t border-border/40 pt-3">
           <p className="text-[11px] text-muted-foreground">

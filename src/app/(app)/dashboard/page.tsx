@@ -12,6 +12,7 @@ import {
 
 import { MoneyThisWeekCard } from "@/components/app/money-this-week-card";
 import { PosActivityFeed } from "@/components/app/pos-activity-feed";
+import { RecipeHealthCard } from "@/components/app/recipe-health-card";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Role } from "@/lib/domain-enums";
 import { formatRelativeDays } from "@/lib/format";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { requireSession } from "@/modules/auth/session";
 import { getDashboardData } from "@/modules/dashboard/queries";
 import { getMoneyThisWeek } from "@/modules/dashboard/money-this-week";
+import { getRecipeHealth } from "@/modules/recipes/health";
 import { formatQuantityBase } from "@/modules/inventory/units";
 import { getAnalyticsOverview } from "@/modules/analytics/queries";
 import { getMarginDashboard } from "@/modules/recipes/margin-dashboard";
@@ -35,17 +37,24 @@ export default async function TodayPage() {
   const [{ getPosActivityFeed }] = await Promise.all([
     import("@/modules/pos/activity-feed"),
   ]);
-  const [data, analytics, margins, moneyThisWeek, posActivity] =
-    await Promise.all([
-      getDashboardData(session.locationId),
-      getAnalyticsOverview(session.locationId),
-      // Margin still used for the "menu item under 60% margin" task
-      // counter — keeps the actionable signal while the standalone
-      // margin card moved off the dashboard.
-      getMarginDashboard(session.locationId).catch(() => []),
-      getMoneyThisWeek(session.locationId).catch(() => null),
-      getPosActivityFeed(session.locationId, 10).catch(() => []),
-    ]);
+  const [
+    data,
+    analytics,
+    margins,
+    moneyThisWeek,
+    posActivity,
+    recipeHealth,
+  ] = await Promise.all([
+    getDashboardData(session.locationId),
+    getAnalyticsOverview(session.locationId),
+    // Margin still used for the "menu item under 60% margin" task
+    // counter — keeps the actionable signal while the standalone
+    // margin card moved off the dashboard.
+    getMarginDashboard(session.locationId).catch(() => []),
+    getMoneyThisWeek(session.locationId).catch(() => null),
+    getPosActivityFeed(session.locationId, 10).catch(() => []),
+    getRecipeHealth(session.locationId).catch(() => null),
+  ]);
   const firstName = session.userName.split(" ")[0];
   const topSuppliers = analytics.topSuppliers.slice(0, 3);
 
@@ -279,6 +288,13 @@ export default async function TodayPage() {
           meaningless 99900% figures). Self-adapts to empty + thin-data
           states so it never lies about margins. */}
       {moneyThisWeek ? <MoneyThisWeekCard data={moneyThisWeek} /> : null}
+
+      {/* ── Recipe health (Build #3 MVP) ────────────────────────────
+          Surfaces high-volume + low-confidence (or stale) recipes
+          with one-click jump into the AI-draft tune flow. Foundation
+          for real sell-through calibration once count cadence is
+          mature enough to compute variance. */}
+      {recipeHealth ? <RecipeHealthCard data={recipeHealth} /> : null}
 
       {/* Jump-to cards and Supplier-pulse section used to live here.
           Both removed for the "one page, one question" rewrite — the
