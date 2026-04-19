@@ -7,6 +7,7 @@ import { requireSession } from "@/modules/auth/session";
 import {
   applyConsolidationPlan,
   planConsolidation,
+  repairConsolidatedRecipe,
   type ConsolidationPlan,
 } from "@/modules/recipes/consolidation";
 
@@ -36,5 +37,21 @@ export async function applyRecipeConsolidationAction(input: {
   });
   revalidatePath("/recipes");
   revalidatePath("/dashboard");
+  return result;
+}
+
+export async function repairConsolidatedRecipeAction(input: {
+  recipeId: string;
+}): Promise<
+  | { ok: true; addedComponents: number; sourceSiblings: number }
+  | { ok: false; reason: string }
+> {
+  const session = await requireSession(Role.MANAGER);
+  const result = await repairConsolidatedRecipe({
+    locationId: session.locationId,
+    recipeId: input.recipeId,
+  });
+  revalidatePath("/recipes");
+  revalidatePath(`/recipes/${input.recipeId}`);
   return result;
 }

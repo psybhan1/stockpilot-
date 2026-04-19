@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { ChefHat, PackageCheck, Sparkles } from "lucide-react";
 
 import { approveRecipeAction } from "@/app/actions/operations";
+import { RecipeRepairButton } from "@/components/app/recipe-repair-button";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -99,7 +100,13 @@ export default async function RecipeDetailPage({
               </div>
             ))}
 
-            <div className="flex justify-end">
+            <div className="flex items-end justify-between gap-3">
+              {session.role === Role.MANAGER &&
+              recipe.aiSummary?.toLowerCase().includes("consolidat") ? (
+                <RecipeRepairButton recipeId={recipe.id} />
+              ) : (
+                <span />
+              )}
               {session.role === Role.MANAGER ? (
                 <Button type="submit" className="rounded-2xl">
                   Approve recipe

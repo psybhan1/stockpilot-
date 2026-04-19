@@ -246,6 +246,15 @@ export async function planConsolidation(input: {
       stripModifiers(canonical.menuItemVariant.name) || "Merged recipe"
     ),
     catalog,
+    allSiblingComponents: recipes.flatMap((r) =>
+      r.components.map((c) => ({
+        inventoryItemId: c.inventoryItemId,
+        inventoryItemName: c.inventoryItem.name,
+        componentType: c.componentType as "INGREDIENT" | "PACKAGING",
+        quantityBase: c.quantityBase,
+        displayUnit: c.displayUnit as MeasurementUnit,
+      })),
+    ),
   });
 }
 
@@ -362,6 +371,114 @@ export async function applyConsolidationPlan(input: {
   });
 
   return { ok: true, archivedCount: input.plan.siblingRecipeIds.length };
+}
+
+// ── Repair: rescue ingredients from archived siblings ──────────────
+
+/**
+ * Pre-fix merges silently dropped ingredients the planner didn't
+ * re-derive. This re-hydrates a canonical recipe by unioning every
+ * archived sibling's components (matched by bare name) and appending
+ * anything the canonical is missing as base components.
+ *
+ * Scope: only ADDS missing components; never removes or reshapes
+ * existing ones. Safe to run repeatedly. Does not call Groq.
+ */
+export async function repairConsolidatedRecipe(input: {
+  locationId: string;
+  recipeId: string;
+}): Promise<
+  | { ok: true; addedComponents: number; sourceSiblings: number }
+  | { ok: false; reason: string }
+> {
+  const canonical = await db.recipe.findFirst({
+    where: { id: input.recipeId, locationId: input.locationId },
+    include: {
+      menuItemVariant: { include: { menuItem: true } },
+      components: true,
+      choiceGroups: { include: { options: true } },
+    },
+  });
+  if (!canonical) return { ok: false, reason: "Recipe not found." };
+  const bare = stripModifiers(canonical.menuItemVariant.name);
+  if (!bare) return { ok: false, reason: "Can't derive a bare name." };
+
+  const siblings = await db.recipe.findMany({
+    where: {
+      locationId: input.locationId,
+      status: "ARCHIVED",
+      id: { not: canonical.id },
+    },
+    include: {
+      menuItemVariant: true,
+      components: { include: { inventoryItem: true } },
+    },
+  });
+  const matching = siblings.filter(
+    (s) => stripModifiers(s.menuItemVariant.name) === bare,
+  );
+  if (matching.length === 0) {
+    return { ok: false, reason: "No archived siblings found to pull from." };
+  }
+
+  // What's already on the canonical (base components OR placed inside
+  // a choice-group option) — we don't want to double up.
+  const placed = new Set<string>();
+  for (const c of canonical.components) placed.add(c.inventoryItemId);
+  for (const g of canonical.choiceGroups) {
+    for (const o of g.options) {
+      if (o.inventoryItemId) placed.add(o.inventoryItemId);
+    }
+  }
+
+  const byInv = new Map<
+    string,
+    {
+      componentType: "INGREDIENT" | "PACKAGING";
+      quantities: number[];
+      displayUnit: MeasurementUnit;
+    }
+  >();
+  for (const s of matching) {
+    for (const c of s.components) {
+      if (placed.has(c.inventoryItemId)) continue;
+      const prev = byInv.get(c.inventoryItemId);
+      if (prev) {
+        prev.quantities.push(c.quantityBase);
+      } else {
+        byInv.set(c.inventoryItemId, {
+          componentType: c.componentType as "INGREDIENT" | "PACKAGING",
+          quantities: [c.quantityBase],
+          displayUnit: c.displayUnit as MeasurementUnit,
+        });
+      }
+    }
+  }
+
+  if (byInv.size === 0) {
+    return { ok: true, addedComponents: 0, sourceSiblings: matching.length };
+  }
+
+  const rows = [...byInv.entries()].map(([invId, agg]) => {
+    const sorted = [...agg.quantities].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    return {
+      recipeId: canonical.id,
+      inventoryItemId: invId,
+      componentType: agg.componentType,
+      quantityBase: Math.max(1, Math.round(median)),
+      displayUnit: agg.displayUnit,
+      confidenceScore: 0.75,
+      optional: false,
+    };
+  });
+  await db.recipeComponent.createMany({ data: rows });
+
+  return {
+    ok: true,
+    addedComponents: rows.length,
+    sourceSiblings: matching.length,
+  };
 }
 
 // ── Depletion helper: infer modifier keys from a variant name ──────
@@ -550,6 +667,13 @@ function shapePlanFromGroq(input: {
   siblingRecipeIds: string[];
   displayLabel: string;
   catalog: Array<{ id: string; name: string; displayUnit: string }>;
+  allSiblingComponents: Array<{
+    inventoryItemId: string;
+    inventoryItemName: string;
+    componentType: "INGREDIENT" | "PACKAGING";
+    quantityBase: number;
+    displayUnit: MeasurementUnit;
+  }>;
 }): ConsolidationPlan {
   const catalogById = new Map(input.catalog.map((c) => [c.id, c]));
   const raw = input.raw;
@@ -645,6 +769,57 @@ function shapePlanFromGroq(input: {
       modifierCategory,
       required: g.required === true,
       options,
+    });
+  }
+
+  // Safety net: if Groq dropped ingredients that exist in the siblings,
+  // append them to `base` using the median sibling quantity. Losing an
+  // ingredient during merge silently destroys the recipe's accuracy —
+  // depletion would stop working for that component. We'd rather keep
+  // a noisy base than lose data.
+  const placedIds = new Set<string>();
+  for (const c of base) placedIds.add(c.inventoryItemId);
+  for (const g of choiceGroups) {
+    for (const o of g.options) {
+      if (o.inventoryItemId) placedIds.add(o.inventoryItemId);
+    }
+  }
+  const byInvId = new Map<
+    string,
+    {
+      componentType: "INGREDIENT" | "PACKAGING";
+      quantities: number[];
+      displayUnit: MeasurementUnit;
+      name: string;
+    }
+  >();
+  for (const sc of input.allSiblingComponents) {
+    if (placedIds.has(sc.inventoryItemId)) continue;
+    if (!input.catalog.some((c) => c.id === sc.inventoryItemId)) continue;
+    const existing = byInvId.get(sc.inventoryItemId);
+    if (existing) {
+      existing.quantities.push(sc.quantityBase);
+    } else {
+      byInvId.set(sc.inventoryItemId, {
+        componentType: sc.componentType,
+        quantities: [sc.quantityBase],
+        displayUnit: sc.displayUnit,
+        name: sc.inventoryItemName,
+      });
+    }
+  }
+  for (const [invId, agg] of byInvId) {
+    const sorted = [...agg.quantities].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    base.push({
+      inventoryItemId: invId,
+      inventoryItemName: agg.name,
+      componentType: agg.componentType,
+      quantityBase: Math.max(1, Math.round(median)),
+      displayUnit: agg.displayUnit,
+      modifierKey: null,
+      conditionServiceMode: null,
+      optional: false,
     });
   }
 
