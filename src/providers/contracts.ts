@@ -7,11 +7,46 @@ import {
   SupplierOrderingMode,
 } from "../lib/prisma";
 
+/**
+ * Hints from the POS catalog for building recipe choice groups. When
+ * present, the recipe-draft AI treats these as the starting tree for
+ * choiceGroups[] so the user doesn't have to type "add size small,
+ * medium, large" from scratch.
+ */
+export type ProviderModifierHint = {
+  // Stable key for de-duping across sync cycles.
+  externalModifierListId: string;
+  // Human-readable group label ("Milk", "Size", "Syrup").
+  name: string;
+  // Normalised category we use everywhere ("milk" | "size" | "syrup" |
+  // "temp" | "shot"…). If the POS modifier name doesn't match a known
+  // category, fall back to slug of name.
+  modifierCategory: string;
+  required: boolean;
+  // If true, the POS treats this as a size-variation (multi-size drinks
+  // rather than a modifier group). Different behaviour in depletion —
+  // scales quantities rather than adds a separate ingredient.
+  isSizeGroup: boolean;
+  options: Array<{
+    externalModifierId: string;
+    label: string;
+    modifierKey: string; // "<category>:<slug>"
+    isDefault: boolean;
+    // Only set for size groups where we've inferred a numeric scale
+    // factor (e.g. 12oz vs 16oz → 1.0 vs 1.33).
+    sizeScaleFactor?: number;
+    // Price delta the POS charges for this option — not used for
+    // depletion but nice context for the draft AI.
+    priceCents?: number;
+  }>;
+};
+
 export type ProviderCatalogItem = {
   externalItemId: string;
   name: string;
   category?: string;
   imageUrl?: string;
+  modifierHints?: ProviderModifierHint[];
   variations: Array<{
     externalVariationId: string;
     name: string;

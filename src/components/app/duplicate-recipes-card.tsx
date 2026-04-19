@@ -4,7 +4,10 @@ import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { GitMerge, X } from "lucide-react";
 
-import { mergeDuplicateRecipesAction } from "@/app/actions/duplicates";
+import {
+  dismissDuplicatePairAction,
+  mergeDuplicateRecipesAction,
+} from "@/app/actions/duplicates";
 import { Button } from "@/components/ui/button";
 
 export type DuplicateRow = {
@@ -27,6 +30,13 @@ export function DuplicateRecipesCard({ rows }: { rows: DuplicateRow[] }) {
         canonicalRecipeId,
         duplicateRecipeId,
       });
+      router.refresh();
+    });
+  }
+
+  function dismiss(recipeAId: string, recipeBId: string) {
+    startTransition(async () => {
+      await dismissDuplicatePairAction({ recipeAId, recipeBId });
       router.refresh();
     });
   }
@@ -72,9 +82,9 @@ export function DuplicateRecipesCard({ rows }: { rows: DuplicateRow[] }) {
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled
-                className="h-7 gap-1 text-[11px] text-muted-foreground"
-                title="Dismiss on the next dashboard load — no explicit track yet"
+                onClick={() => dismiss(r.canonicalRecipeId, r.duplicateRecipeId)}
+                disabled={isPending}
+                className="h-7 gap-1 text-[11px]"
               >
                 <X className="size-3" />
                 Keep separate

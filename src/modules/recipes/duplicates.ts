@@ -70,6 +70,19 @@ export type DuplicateCandidate = {
 export async function findDuplicateRecipeCandidates(
   locationId: string
 ): Promise<DuplicateCandidate[]> {
+  // Skip pairs the manager has explicitly dismissed (either direction)
+  // within the last 90 days. After that we re-surface so recipe drift
+  // can cause a fresh suggestion.
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const dismissedRows = await db.recipeDuplicateDismissal.findMany({
+    where: { locationId, dismissedAt: { gte: ninetyDaysAgo } },
+    select: { recipeAId: true, recipeBId: true },
+  });
+  const dismissedKeys = new Set<string>();
+  for (const d of dismissedRows) {
+    dismissedKeys.add(dismissalKey(d.recipeAId, d.recipeBId));
+  }
+
   const recipes = await db.recipe.findMany({
     where: { locationId, status: "APPROVED" },
     select: {
@@ -129,6 +142,7 @@ export async function findDuplicateRecipeCandidates(
       const ingOverlap = jaccard(a.ingredientIds, b.ingredientIds);
       const score = 0.5 * nameSim + 0.5 * ingOverlap;
       if (score < MIN_SIMILARITY) continue;
+      if (dismissedKeys.has(dismissalKey(a.id, b.id))) continue;
 
       // The fuller recipe wins as canonical.
       const [canonical, duplicate] =
@@ -194,6 +208,47 @@ export async function mergeDuplicateRecipes(input: {
 }
 
 // ── Internals ───────────────────────────────────────────────────────
+
+/** Canonical key so the dismiss table is symmetric: (A,B) == (B,A). */
+function dismissalKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+export async function dismissDuplicatePair(input: {
+  locationId: string;
+  recipeAId: string;
+  recipeBId: string;
+  userId: string | null;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (input.recipeAId === input.recipeBId) {
+    return { ok: false, reason: "Pair must be two different recipes." };
+  }
+  // Normalise order so the unique index catches A/B and B/A as same.
+  const [aId, bId] =
+    input.recipeAId < input.recipeBId
+      ? [input.recipeAId, input.recipeBId]
+      : [input.recipeBId, input.recipeAId];
+  await db.recipeDuplicateDismissal.upsert({
+    where: {
+      locationId_recipeAId_recipeBId: {
+        locationId: input.locationId,
+        recipeAId: aId,
+        recipeBId: bId,
+      },
+    },
+    update: {
+      dismissedAt: new Date(),
+      dismissedById: input.userId,
+    },
+    create: {
+      locationId: input.locationId,
+      recipeAId: aId,
+      recipeBId: bId,
+      dismissedById: input.userId,
+    },
+  });
+  return { ok: true };
+}
 
 function stripModifiers(name: string): string {
   return name

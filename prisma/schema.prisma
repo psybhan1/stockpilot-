@@ -1173,3 +1173,20 @@ enum RecipeCalibrationSuggestionStatus {
   DISMISSED
   SUPERSEDED
 }
+
+/// Records which (canonical, duplicate) recipe pairs a manager has
+/// told us to leave alone. The duplicate-detection scan skips any
+/// pair (in either direction) already dismissed. Lets us re-surface
+/// after 90 days in case the recipes drift enough that it's worth a
+/// second look.
+model RecipeDuplicateDismissal {
+  id                  String   @id @default(cuid())
+  locationId          String
+  recipeAId           String
+  recipeBId           String
+  dismissedAt         DateTime @default(now())
+  dismissedById       String?
+
+  @@unique([locationId, recipeAId, recipeBId])
+  @@index([locationId, dismissedAt])
+}

@@ -6,6 +6,7 @@ import {
   recordInventoryMovementAction,
   updateInventoryItemAction,
 } from "@/app/actions/operations";
+import { InventoryImageManager } from "@/components/app/inventory-image-manager";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -87,6 +88,14 @@ export default async function InventoryItemPage({
               }
             />
           </div>
+
+          <InventoryImageManager
+            itemId={item.id}
+            itemName={item.name}
+            imageSource={item.imageSource ?? null}
+            hasStoredBytes={Boolean(item.imageBytes && item.imageBytes.length > 0)}
+            posCatalogImageUrl={item.imageUrl ?? null}
+          />
 
           <div className="grid gap-3 md:grid-cols-4">
             <MetricCard

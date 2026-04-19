@@ -688,6 +688,18 @@ enum RecipeChoiceGroupType {
   SIZE_SCALE
 }
 
+model RecipeDuplicateDismissal {
+  id                  String   @id @default(cuid())
+  locationId          String
+  recipeAId           String
+  recipeBId           String
+  dismissedAt         DateTime @default(now())
+  dismissedById       String?
+
+  @@unique([locationId, recipeAId, recipeBId])
+  @@index([locationId, dismissedAt])
+}
+
 model PosIntegration {
   id                    String           @id @default(cuid())
   locationId            String

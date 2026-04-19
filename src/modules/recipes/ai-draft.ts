@@ -107,6 +107,10 @@ export async function draftRecipeForMapping(input: {
   menuItemName: string;
   variationName: string;
   serviceMode: ServiceMode | null;
+  // Optional Phase-2 hints from the POS catalog (Square modifier
+  // lists etc). When present, the AI auto-populates choiceGroups[]
+  // so the user doesn't have to type "add milk as oat/whole/almond".
+  modifierHints?: unknown[];
 }): Promise<DraftState> {
   const catalog = await loadInventoryCatalog(input.locationId);
 
@@ -131,7 +135,7 @@ export async function draftRecipeForMapping(input: {
   }
 
   const systemPrompt = buildDraftSystemPrompt(catalog);
-  const userPrompt = buildDraftUserPrompt(input);
+  const userPrompt = buildDraftUserPrompt(input, input.modifierHints ?? []);
 
   try {
     const response = await callGroqJson({
@@ -339,20 +343,43 @@ Rules:
   initial pass should only use items already in the catalog. Proposals
   happen during chat edits when the manager explicitly asks for
   something missing.
-- Always return "choiceGroups": [] on the initial draft. Choice groups
-  (Milk / Syrup / Size / Temp) get added by the manager via chat
-  ("make size a choice: small, medium, large"). Don't invent them up
-  front — too much guesswork.`;
+- When the user prompt carries "POS modifier hints", DO populate
+  choiceGroups[] from them — they're the Square/Clover/Shopify
+  modifier structure already defined by the café. For each hint:
+    * name = hint.name
+    * modifierCategory = hint.modifierCategory
+    * groupType = "SIZE_SCALE" if hint.isSizeGroup, otherwise
+      "SINGLE_SELECT" (rename to MULTI_SELECT if the hint name is
+      plural like "Syrups" or "Toppings")
+    * required = hint.required
+    * options[].label = hint.option.label
+    * options[].modifierKey = hint.option.modifierKey (use verbatim)
+    * options[].sizeScaleFactor = hint.option.sizeScaleFactor ?? 1.0
+    * options[].isDefault = hint.option.isDefault
+    * options[].inventoryItemId = catalog match on the option label
+      (e.g. "Oat Milk" → the inventoryItem whose name contains "oat")
+      or null if no catalog match
+    * options[].quantityBase: reasonable default per category
+      (milk = 250ml, syrup = 30ml, shot = 18g, size-only = 0)
+- When NO POS hints are given, leave choiceGroups: [] and let the
+  manager build them via chat.`;
 }
 
-function buildDraftUserPrompt(input: {
-  menuItemName: string;
-  variationName: string;
-  serviceMode: ServiceMode | null;
-}): string {
+function buildDraftUserPrompt(
+  input: {
+    menuItemName: string;
+    variationName: string;
+    serviceMode: ServiceMode | null;
+  },
+  modifierHints: unknown[]
+): string {
+  const hintSection =
+    modifierHints.length > 0
+      ? `\n\nPOS modifier hints (use these to pre-populate choiceGroups[]; you may still need to set inventoryItemId per option):\n${JSON.stringify(modifierHints)}`
+      : "";
   return `Menu item: ${input.menuItemName}
 Variation: ${input.variationName}
-Service mode: ${input.serviceMode ?? "unknown"}
+Service mode: ${input.serviceMode ?? "unknown"}${hintSection}
 
 Draft a recipe.`;
 }

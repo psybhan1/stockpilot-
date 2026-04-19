@@ -5,6 +5,7 @@ import { env } from "@/lib/env";
 import type {
   PosProvider,
   ProviderCatalogItem,
+  ProviderModifierHint,
   ProviderSaleEvent,
 } from "@/providers/contracts";
 
@@ -27,10 +28,28 @@ type SquareCatalogObject = {
   image_data?: {
     url?: string;
   };
+  modifier_list_data?: {
+    name?: string;
+    selection_type?: "SINGLE" | "MULTIPLE";
+    modifiers?: Array<{
+      id: string;
+      modifier_data?: {
+        name?: string;
+        price_money?: { amount?: number };
+        on_by_default?: boolean;
+      };
+    }>;
+  };
   item_data?: {
     name?: string;
     category_id?: string;
     image_ids?: string[];
+    modifier_list_info?: Array<{
+      modifier_list_id: string;
+      enabled?: boolean;
+      min_selected_modifiers?: number;
+      max_selected_modifiers?: number;
+    }>;
     variations?: Array<{
       id: string;
       item_variation_data?: {
@@ -226,6 +245,45 @@ export class SquareProvider implements PosProvider {
         .filter((object) => object.type === "IMAGE" && object.image_data?.url)
         .map((object) => [object.id, object.image_data!.url!])
     );
+    // MODIFIER_LIST objects are the tree the user cares about —
+    // "Milk", "Size", "Syrup". Each item references them via
+    // item_data.modifier_list_info[]. Build a normalised hint per
+    // list once so we can attach to each item that uses it.
+    const modifierHintsById = new Map<string, ProviderModifierHint>();
+    for (const obj of objects) {
+      if (obj.type !== "MODIFIER_LIST") continue;
+      const data = obj.modifier_list_data;
+      if (!data?.name) continue;
+      const name = data.name.trim();
+      const category = slugCategory(name);
+      const isSizeGroup = /size|sizes/i.test(name);
+      const options = (data.modifiers ?? [])
+        .filter((m) => m.modifier_data?.name)
+        .map((m) => {
+          const label = m.modifier_data!.name!.trim();
+          const slug = slugValue(label);
+          const sizeScaleFactor = isSizeGroup
+            ? inferSizeScale(label)
+            : undefined;
+          return {
+            externalModifierId: m.id,
+            label,
+            modifierKey: `${category}:${slug}`,
+            isDefault: m.modifier_data!.on_by_default === true,
+            sizeScaleFactor,
+            priceCents: m.modifier_data!.price_money?.amount,
+          };
+        });
+      if (options.length === 0) continue;
+      modifierHintsById.set(obj.id, {
+        externalModifierListId: obj.id,
+        name,
+        modifierCategory: category,
+        required: false, // per-item enablement carries minimums; keep simple
+        isSizeGroup,
+        options,
+      });
+    }
 
     return objects
       .filter((object) => object.type === "ITEM" && object.item_data?.name)
@@ -251,6 +309,20 @@ export class SquareProvider implements PosProvider {
 
         const firstImageId = item.item_data?.image_ids?.[0];
         const imageUrl = firstImageId ? imagesById.get(firstImageId) : undefined;
+        // Attach enabled modifier list hints so the recipe-draft AI
+        // can auto-populate choiceGroups[] from the POS tree.
+        const modifierHints: ProviderModifierHint[] = [];
+        for (const ref of item.item_data?.modifier_list_info ?? []) {
+          if (ref.enabled === false) continue;
+          const hint = modifierHintsById.get(ref.modifier_list_id);
+          if (!hint) continue;
+          modifierHints.push({
+            ...hint,
+            required:
+              typeof ref.min_selected_modifiers === "number" &&
+              ref.min_selected_modifiers > 0,
+          });
+        }
         return {
           externalItemId: item.id,
           name: item.item_data?.name ?? "Unnamed item",
@@ -258,6 +330,7 @@ export class SquareProvider implements PosProvider {
             ? categories.get(item.item_data.category_id)
             : undefined,
           imageUrl,
+          modifierHints: modifierHints.length > 0 ? modifierHints : undefined,
           variations,
         };
       });
@@ -494,6 +567,48 @@ function inferSizeLabel(name: string) {
   if (lowerName.includes("small")) return "Small";
   if (lowerName.includes("medium")) return "Medium";
   if (lowerName.includes("large")) return "Large";
+  return undefined;
+}
+
+/** Map a modifier-list name to the <category> half of modifier keys. */
+function slugCategory(name: string): string {
+  const lower = name.toLowerCase();
+  if (/milk/.test(lower)) return "milk";
+  if (/size|sizes/.test(lower)) return "size";
+  if (/syrup|flavou?r/.test(lower)) return "syrup";
+  if (/shot|espresso/.test(lower)) return "shot";
+  if (/temp|iced|hot/.test(lower)) return "temp";
+  if (/sweet|sugar/.test(lower)) return "sweet";
+  if (/topping|add.?on/.test(lower)) return "topping";
+  if (/prep|style/.test(lower)) return "prep";
+  return lower.replace(/[^a-z0-9]+/g, "-").slice(0, 32) || "modifier";
+}
+
+function slugValue(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+/**
+ * Best-effort size-scale inference. Parses "8oz/12oz/16oz/20oz" or
+ * "small/medium/large" and returns a multiplier anchored at medium/12oz
+ * = 1.0. Used as a starting hint — the user can tweak in chat.
+ */
+function inferSizeScale(label: string): number | undefined {
+  const lower = label.toLowerCase();
+  const ozMatch = lower.match(/(\d{1,2})\s*oz/);
+  if (ozMatch) {
+    const oz = Number(ozMatch[1]);
+    if (oz > 0) return oz / 12; // 12oz = 1.0
+  }
+  if (/xs|extra small/.test(lower)) return 0.67;
+  if (/small/.test(lower)) return 0.83;
+  if (/medium|reg|regular/.test(lower)) return 1.0;
+  if (/large/.test(lower)) return 1.25;
+  if (/xl|extra large/.test(lower)) return 1.5;
   return undefined;
 }
 

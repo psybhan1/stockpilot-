@@ -37,7 +37,7 @@ export async function draftRecipeAction(
         select: {
           name: true,
           serviceMode: true,
-          catalogItem: { select: { name: true } },
+          catalogItem: { select: { name: true, rawData: true } },
         },
       },
       menuItemVariant: {
@@ -60,11 +60,25 @@ export async function draftRecipeAction(
     mapping.posVariation.catalogItem.name ||
     menuItemName;
 
+  // Extract modifier hints captured during POS catalog sync. They're
+  // stored in rawData (whole ProviderCatalogItem) so Square's modifier
+  // tree ends up in the hands of the draft AI and auto-populates
+  // choiceGroups[] without the user typing "add size, small/med/lg".
+  const rawItem = mapping.posVariation.catalogItem.rawData;
+  const modifierHints =
+    rawItem &&
+    typeof rawItem === "object" &&
+    !Array.isArray(rawItem) &&
+    Array.isArray((rawItem as Record<string, unknown>).modifierHints)
+      ? ((rawItem as Record<string, unknown>).modifierHints as unknown[])
+      : [];
+
   const draft = await draftRecipeForMapping({
     locationId: session.locationId,
     menuItemName,
     variationName,
     serviceMode: mapping.posVariation.serviceMode ?? null,
+    modifierHints,
   });
 
   return { ok: true, draft, menuItemName, variationName };
