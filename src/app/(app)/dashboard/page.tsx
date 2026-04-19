@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { MoneyPulseCard } from "@/components/app/money-pulse-card";
+import { PosActivityFeed } from "@/components/app/pos-activity-feed";
 import { ShrinkageCard } from "@/components/app/shrinkage-card";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Role } from "@/lib/domain-enums";
@@ -32,9 +33,8 @@ import { getVarianceReport } from "@/modules/variance/report";
  */
 export default async function TodayPage() {
   const session = await requireSession(Role.STAFF);
-  const [{ getUnmappedPosProducts }, { getRecentPosSales }] = await Promise.all([
-    import("@/modules/pos/unmapped"),
-    import("@/modules/pos/recent-activity"),
+  const [{ getPosActivityFeed }] = await Promise.all([
+    import("@/modules/pos/activity-feed"),
   ]);
   const [
     data,
@@ -42,8 +42,7 @@ export default async function TodayPage() {
     margins,
     variance,
     moneyPulse,
-    unmappedPosProducts,
-    recentPosSales,
+    posActivity,
   ] = await Promise.all([
     getDashboardData(session.locationId),
     getAnalyticsOverview(session.locationId),
@@ -55,8 +54,7 @@ export default async function TodayPage() {
     getMarginDashboard(session.locationId).catch(() => []),
     getVarianceReport(session.locationId, { days: 7 }).catch(() => null),
     getMoneyPulse(session.locationId).catch(() => null),
-    getUnmappedPosProducts(session.locationId).catch(() => []),
-    getRecentPosSales(session.locationId, 6).catch(() => []),
+    getPosActivityFeed(session.locationId, 10).catch(() => []),
   ]);
   const firstName = session.userName.split(" ")[0];
   const topSuppliers = analytics.topSuppliers.slice(0, 3);
@@ -272,101 +270,34 @@ export default async function TodayPage() {
         </section>
       )}
 
-      {/* Unmapped-POS nudge: when the webhook has queued products
-          waiting for a mapping, surface it on the primary screen so
-          the café owner can't miss it. Links straight to the quick-
-          map form on /pos-mapping. Only renders when there's work. */}
-      {unmappedPosProducts.length > 0 ? (
-        <Link
-          href="/pos-mapping"
-          className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm hover:bg-amber-500/15"
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <ShoppingCart className="size-5 shrink-0 text-amber-700 dark:text-amber-300" />
-            <div className="min-w-0">
-              <p className="font-semibold">
-                {unmappedPosProducts.length} POS product
-                {unmappedPosProducts.length === 1 ? "" : "s"} waiting for
-                mapping
-              </p>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                Your POS keeps selling{" "}
-                {unmappedPosProducts
-                  .slice(0, 3)
-                  .map((p) => p.externalProductName ?? p.externalProductId)
-                  .join(" · ")}
-                {unmappedPosProducts.length > 3 ? " · …" : ""} — wire each
-                to an inventory item and past sales backfill automatically.
-              </p>
-            </div>
-          </div>
-          <span className="font-mono text-xs">map →</span>
-        </Link>
-      ) : null}
+      {/* ── POS activity feed ─────────────────────────────────────
+          The core workflow view: every recent POS sale + WHAT it
+          depleted + WHICH reorders it triggered. Subsumes the old
+          "unmapped products" nudge and the "recent sales" card —
+          one place that shows the full chain POS → inventory →
+          reorder, with one-click fixes inline. */}
+      <PosActivityFeed rows={posActivity} />
 
-      {/* Recent POS sales — live activity from the generic webhook
-          path so the owner visibly sees their POS is firing. Silent
-          failure mode (connected but nothing coming through) becomes
-          immediately obvious by the absence of this card. */}
-      {recentPosSales.length > 0 ? (
-        <section className="notif-card p-5 sm:p-6">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Recent POS sales · last 7 days
-              </p>
-              <p className="mt-1 text-lg font-semibold leading-tight">
-                {recentPosSales.length} sale
-                {recentPosSales.length === 1 ? "" : "s"} flowing in
-              </p>
-            </div>
-            <Link
-              href="/pos-mapping"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-border/60 bg-background/50 px-3 py-2 text-xs font-semibold"
-            >
-              <span className="text-muted-foreground">Manage mappings</span>
-              <ArrowRight className="size-3 text-muted-foreground" />
-            </Link>
-          </div>
-          <ul className="mt-4 divide-y divide-border/40">
-            {recentPosSales.map((sale) => (
-              <li
-                key={sale.id}
-                className="flex items-center justify-between gap-3 py-2.5"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">
-                    {sale.externalProductName ?? sale.externalProductId}{" "}
-                    <span className="font-mono text-xs text-muted-foreground">
-                      ×{sale.quantity}
-                    </span>
-                  </p>
-                  <p className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                    {sale.provider} · {sale.occurredAt.toLocaleString()}
-                  </p>
-                </div>
-                {sale.mapped ? (
-                  <span className="shrink-0 font-mono text-[10px] text-emerald-700 dark:text-emerald-300">
-                    −{sale.inventoryDeltaBase}{" "}
-                    {sale.inventoryDeltaUnit?.toLowerCase()} · {sale.inventoryItemName}
-                  </span>
-                ) : (
-                  <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-900 dark:text-amber-200">
-                    UNMAPPED
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
 
       {/* ── Money pulse ─────────────────────────────────────────────
           The MarginEdge-killer in one card — weekly spend, orders
           sent, bot auto-approvals, pending approvals with $ total,
           and a price-jump alert when a recent delivery came in N%
-          over estimate. Honest zero-state for brand-new users. */}
-      {moneyPulse ? <MoneyPulseCard data={moneyPulse} /> : null}
+          over estimate.
+
+          Only render when there's ACTUAL activity to report. The old
+          behaviour was to render a zero-state tombstone reading
+          "$0.00 · No orders sent" which trained users to distrust
+          the dashboard — it looked like the app was pretending to
+          work. Hide it entirely until real spend or real orders
+          exist; the card will reappear the moment something
+          happens, which feels honest. */}
+      {moneyPulse &&
+      (moneyPulse.weekSpentCents > 0 ||
+        moneyPulse.weekOrderCount > 0 ||
+        moneyPulse.pendingCount > 0) ? (
+        <MoneyPulseCard data={moneyPulse} />
+      ) : null}
 
       {/* ── Shrinkage detector ──────────────────────────────────────
           The revolutionary piece: paid competitors charge $300+/mo
