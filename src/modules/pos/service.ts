@@ -1154,18 +1154,29 @@ export async function disconnectPosIntegration(input: {
 }
 
 /**
- * Enqueue a SYNC_SALES job for every currently-CONNECTED POS integration.
- * Safety net against missed webhooks — if Square/Clover/Shopify never
- * POST us (webhook not registered, network hiccup, vendor outage), this
- * keeps sales + inventory fresh with a short poll cadence.
+ * Enqueue a SYNC_SALES job for every currently-CONNECTED POS integration
+ * that has an OAuth access token. Safety net against missed webhooks.
  *
- * Returns the number of integrations it queued a sync for.
+ * Skips Zapier-bridge rows (GENERIC_WEBHOOK, or any CONNECTED row
+ * without an encrypted access token) because those providers push to
+ * us over our inbound webhook — polling their syncOrders would just
+ * fail with "no access token" every tick.
  */
 export async function pollConnectedPosIntegrationsForSales(): Promise<{
   queued: number;
 }> {
   const integrations = await db.posIntegration.findMany({
-    where: { status: IntegrationStatus.CONNECTED },
+    where: {
+      status: IntegrationStatus.CONNECTED,
+      accessTokenEncrypted: { not: null },
+      provider: {
+        in: [
+          PosProviderType.SQUARE,
+          PosProviderType.CLOVER,
+          PosProviderType.SHOPIFY,
+        ],
+      },
+    },
     select: { id: true, locationId: true },
   });
   for (const integration of integrations) {
