@@ -392,6 +392,7 @@ model InventoryItem {
   purchaseOrderLines      PurchaseOrderLine[]
   alerts                  Alert[]
   calibrationWeeks        InventoryCalibrationWeek[]
+  recipeChoiceOptions     RecipeChoiceOption[]
 
   @@unique([locationId, sku])
 }
@@ -614,6 +615,7 @@ model Recipe {
   menuItemVariant   MenuItemVariant      @relation(fields: [menuItemVariantId], references: [id], onDelete: Cascade)
   approvedBy        User?                @relation("RecipeApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
   components        RecipeComponent[]
+  choiceGroups      RecipeChoiceGroup[]
   mappings          PosVariationMapping[]
 
   @@unique([menuItemVariantId, version])
@@ -636,6 +638,46 @@ model RecipeComponent {
   recipe               Recipe              @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   inventoryItem        InventoryItem       @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
   calibrationSuggestions RecipeCalibrationSuggestion[]
+}
+
+model RecipeChoiceGroup {
+  id               String                  @id @default(cuid())
+  recipeId         String
+  name             String
+  groupType        RecipeChoiceGroupType   @default(SINGLE_SELECT)
+  modifierCategory String
+  required         Boolean                 @default(false)
+  sortOrder        Int                     @default(0)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  recipe           Recipe                  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  options          RecipeChoiceOption[]
+
+  @@index([recipeId])
+}
+
+model RecipeChoiceOption {
+  id               String            @id @default(cuid())
+  choiceGroupId    String
+  inventoryItemId  String?
+  label            String
+  modifierKey      String
+  quantityBase     Int               @default(0)
+  sizeScaleFactor  Float             @default(1.0)
+  displayUnit      MeasurementUnit   @default(COUNT)
+  isDefault        Boolean           @default(false)
+  sortOrder        Int               @default(0)
+  choiceGroup      RecipeChoiceGroup @relation(fields: [choiceGroupId], references: [id], onDelete: Cascade)
+  inventoryItem    InventoryItem?    @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+
+  @@index([choiceGroupId])
+  @@index([modifierKey])
+}
+
+enum RecipeChoiceGroupType {
+  SINGLE_SELECT
+  MULTI_SELECT
+  SIZE_SCALE
 }
 
 model PosIntegration {

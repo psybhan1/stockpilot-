@@ -161,6 +161,7 @@ export async function createInventoryItemForDraftAction(input: {
   // item, remove the proposal so it doesn't reappear.
   const newDraft: DraftState = {
     summary: input.draft.summary,
+    choiceGroups: input.draft.choiceGroups,
     components: [
       ...input.draft.components,
       {

@@ -675,6 +675,14 @@ export async function processSaleEventById(saleEventId: string, userId?: string)
                   recipe: {
                     include: {
                       components: true,
+                      // Hierarchical recipe tree: choice groups +
+                      // options. Depletion walks this in addition to
+                      // the flat components[] so old flat recipes
+                      // keep working unchanged.
+                      choiceGroups: {
+                        include: { options: true },
+                        orderBy: { sortOrder: "asc" },
+                      },
                     },
                   },
                 },
@@ -710,6 +718,23 @@ export async function processSaleEventById(saleEventId: string, userId?: string)
         continue;
       }
 
+      // Resolve size-scale factor for this sale. If the recipe has a
+      // SIZE_SCALE choice group, pick the matching option's
+      // sizeScaleFactor; otherwise 1.0. Applied uniformly to all base
+      // components (liquids, cups, everything tracks menu size).
+      const sizeGroup = mapping.recipe.choiceGroups.find(
+        (g) => g.groupType === "SIZE_SCALE"
+      );
+      let sizeScale = 1.0;
+      if (sizeGroup) {
+        const chosen =
+          sizeGroup.options.find((o) =>
+            lineModifierKeys.includes(o.modifierKey)
+          ) ?? sizeGroup.options.find((o) => o.isDefault) ?? null;
+        if (chosen) sizeScale = chosen.sizeScaleFactor;
+      }
+
+      // 1. Walk base components (always-applied), scaled by size.
       for (const component of mapping.recipe.components) {
         if (!componentMatchesServiceMode(line.serviceMode, component.conditionServiceMode)) {
           continue;
@@ -719,7 +744,14 @@ export async function processSaleEventById(saleEventId: string, userId?: string)
           continue;
         }
 
-        const quantityDeltaBase = -1 * component.quantityBase * line.quantity;
+        // Only scale INGREDIENTS by size; packaging (cups/lids) size
+        // is handled by the SIZE_SCALE group's per-size cup options.
+        const effectiveQty =
+          component.componentType === "INGREDIENT"
+            ? component.quantityBase * sizeScale
+            : component.quantityBase;
+        const quantityDeltaBase = -1 * Math.round(effectiveQty) * line.quantity;
+        if (quantityDeltaBase === 0) continue;
         touchedItemIds.add(component.inventoryItemId);
 
         await postStockMovementTx(tx, {
@@ -733,9 +765,63 @@ export async function processSaleEventById(saleEventId: string, userId?: string)
             saleEventId: saleEvent.id,
             quantity: line.quantity,
             modifiers: lineModifierKeys,
+            sizeScale,
+            source: "base-component",
           },
           userId,
         });
+      }
+
+      // 2. Walk choice-group tree. For each group, pick matching
+      //    option(s) from the line's modifier keys. SIZE_SCALE groups
+      //    only deplete if the option has an inventoryItemId (e.g.
+      //    a specific-sized cup); otherwise they're pure multipliers.
+      for (const group of mapping.recipe.choiceGroups) {
+        const matched: Array<(typeof group.options)[number]> = [];
+        if (group.groupType === "SINGLE_SELECT" || group.groupType === "SIZE_SCALE") {
+          const choice =
+            group.options.find((o) =>
+              lineModifierKeys.includes(o.modifierKey)
+            ) ?? group.options.find((o) => o.isDefault) ?? null;
+          if (choice) matched.push(choice);
+        } else if (group.groupType === "MULTI_SELECT") {
+          for (const o of group.options) {
+            if (lineModifierKeys.includes(o.modifierKey)) matched.push(o);
+          }
+        }
+
+        for (const option of matched) {
+          if (!option.inventoryItemId || option.quantityBase <= 0) continue;
+          // SINGLE_SELECT options (like milk) get size-scaled too —
+          // a large oat milk latte uses more oat milk than a small.
+          const effectiveQty =
+            group.groupType === "SINGLE_SELECT"
+              ? option.quantityBase * sizeScale
+              : option.quantityBase;
+          const quantityDeltaBase =
+            -1 * Math.round(effectiveQty) * line.quantity;
+          if (quantityDeltaBase === 0) continue;
+          touchedItemIds.add(option.inventoryItemId);
+
+          await postStockMovementTx(tx, {
+            locationId: saleEvent.locationId,
+            inventoryItemId: option.inventoryItemId,
+            quantityDeltaBase,
+            movementType: MovementType.POS_DEPLETION,
+            sourceType: "pos_sale_line",
+            sourceId: line.id,
+            metadata: {
+              saleEventId: saleEvent.id,
+              quantity: line.quantity,
+              modifiers: lineModifierKeys,
+              sizeScale,
+              source: "choice-option",
+              groupName: group.name,
+              optionLabel: option.label,
+            },
+            userId,
+          });
+        }
       }
     }
 

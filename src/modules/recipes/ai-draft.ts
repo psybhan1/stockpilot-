@@ -41,9 +41,28 @@ export type ProposedNewItem = {
   reason: string; // one-line explanation for the user
 };
 
+export type DraftChoiceOption = {
+  label: string;
+  modifierKey: string;
+  inventoryItemId: string | null; // null for pure size-scale options
+  quantityBase: number;
+  sizeScaleFactor: number;
+  displayUnit: MeasurementUnit;
+  isDefault: boolean;
+};
+
+export type DraftChoiceGroup = {
+  name: string;
+  groupType: "SINGLE_SELECT" | "MULTI_SELECT" | "SIZE_SCALE";
+  modifierCategory: string;
+  required: boolean;
+  options: DraftChoiceOption[];
+};
+
 export type DraftState = {
   summary: string;
   components: DraftComponent[];
+  choiceGroups: DraftChoiceGroup[];
   proposedNewItems: ProposedNewItem[];
 };
 
@@ -96,6 +115,7 @@ export async function draftRecipeForMapping(input: {
       summary:
         "Your inventory is empty — add a few items (milk, espresso beans, cups) then try again.",
       components: [],
+      choiceGroups: [],
       proposedNewItems: [],
     };
   }
@@ -105,6 +125,7 @@ export async function draftRecipeForMapping(input: {
     return {
       summary: `AI is offline — fill the recipe manually below. Menu item: ${input.menuItemName}.`,
       components: [],
+      choiceGroups: [],
       proposedNewItems: [],
     };
   }
@@ -123,6 +144,7 @@ export async function draftRecipeForMapping(input: {
       summary:
         "We couldn't reach the AI drafter this time — add components manually, the chat edit will retry.",
       components: [],
+      choiceGroups: [],
       proposedNewItems: [],
     };
   }
@@ -231,6 +253,39 @@ export async function commitDraftedRecipe(input: {
       })),
     });
 
+    // Persist the hierarchical modifier tree — groups + their options.
+    // Done in a loop (not createMany) because nested creates require
+    // parent id resolution.
+    for (let gi = 0; gi < input.draft.choiceGroups.length; gi += 1) {
+      const group = input.draft.choiceGroups[gi];
+      const createdGroup = await tx.recipeChoiceGroup.create({
+        data: {
+          recipeId: created.id,
+          name: group.name,
+          groupType: group.groupType,
+          modifierCategory: group.modifierCategory,
+          required: group.required,
+          sortOrder: gi,
+        },
+        select: { id: true },
+      });
+      if (group.options.length > 0) {
+        await tx.recipeChoiceOption.createMany({
+          data: group.options.map((o, oi) => ({
+            choiceGroupId: createdGroup.id,
+            inventoryItemId: o.inventoryItemId,
+            label: o.label,
+            modifierKey: o.modifierKey,
+            quantityBase: o.quantityBase,
+            sizeScaleFactor: o.sizeScaleFactor,
+            displayUnit: o.displayUnit,
+            isDefault: o.isDefault,
+            sortOrder: oi,
+          })),
+        });
+      }
+    }
+
     await tx.posVariationMapping.update({
       where: { id: input.mappingId },
       data: {
@@ -283,7 +338,11 @@ Rules:
 - Always return "proposedNewItems": [] on the initial draft. The
   initial pass should only use items already in the catalog. Proposals
   happen during chat edits when the manager explicitly asks for
-  something missing.`;
+  something missing.
+- Always return "choiceGroups": [] on the initial draft. Choice groups
+  (Milk / Syrup / Size / Temp) get added by the manager via chat
+  ("make size a choice: small, medium, large"). Don't invent them up
+  front — too much guesswork.`;
 }
 
 function buildDraftUserPrompt(input: {
@@ -309,6 +368,25 @@ Output JSON:
   "reply": "one sentence",
   "summary": "...",
   "components": [<same shape as draft, includes "modifierKey" field>],
+  "choiceGroups": [
+    {
+      "name": "Milk" | "Syrup" | "Size" | "Temp" | "Shot" | …,
+      "groupType": "SINGLE_SELECT" | "MULTI_SELECT" | "SIZE_SCALE",
+      "modifierCategory": "milk" | "syrup" | "size" | "temp" | …,
+      "required": <bool>,
+      "options": [
+        {
+          "label": "Oat" | "Medium" | "Vanilla" | …,
+          "modifierKey": "milk:oat" | "size:medium" | "syrup:vanilla" | …,
+          "inventoryItemId": "<catalog id or null>",
+          "quantityBase": <int, amount this option adds in base units>,
+          "sizeScaleFactor": <float, only for SIZE_SCALE groups: 0.75 small, 1.0 med, 1.5 large>,
+          "displayUnit": "MILLILITER" | "GRAM" | "COUNT",
+          "isDefault": <bool — picks this when no modifier is specified>
+        }
+      ]
+    }
+  ],
   "proposedNewItems": [
     {
       "proposalKey": "proposed:<short-slug>",
@@ -329,6 +407,22 @@ Output JSON:
 Rules:
 - Use catalog inventoryItemId values verbatim in "components".
 - Preserve unchanged components exactly (including their modifierKey).
+
+Hierarchical modifier tree:
+- If the manager says "make milk a choice" or "add size options" or
+  "add optional syrups", create a RecipeChoiceGroup with options.
+- SINGLE_SELECT: pick one (Milk, Size, Temp). Exactly one option
+  applies per sale.
+- MULTI_SELECT: pick zero-or-many (Syrups, Toppings). Each matching
+  modifier adds its quantity.
+- SIZE_SCALE: SINGLE_SELECT with scale factors that multiply the base
+  INGREDIENT components. Use for "small / medium / large". Still set
+  an inventoryItemId on each size option if it maps to a specific-
+  sized cup; leave null if the option is pure multiplier.
+- Use the standard "<category>:<value>" modifierKey format from
+  docs/modifier-keys.md: milk:oat, size:medium, syrup:vanilla, etc.
+- Mark ONE option in every SINGLE_SELECT / SIZE_SCALE group as
+  isDefault=true so sales with no modifier still deplete correctly.
 
 Missing inventory items:
 - If the manager asks for something NOT in the catalog (e.g. "add 12 oz
@@ -533,7 +627,82 @@ function coerceDraftState(raw: unknown, catalog: CatalogItem[]): DraftState {
     });
   }
 
-  return { summary, components, proposedNewItems };
+  const choiceGroups: DraftChoiceGroup[] = [];
+  const rawGroups = Array.isArray(obj.choiceGroups) ? obj.choiceGroups : [];
+  for (const rg of rawGroups) {
+    if (!isObj(rg)) continue;
+    const name =
+      typeof rg.name === "string" && rg.name.trim()
+        ? rg.name.trim().slice(0, 60)
+        : null;
+    if (!name) continue;
+    const gt =
+      rg.groupType === "MULTI_SELECT"
+        ? "MULTI_SELECT"
+        : rg.groupType === "SIZE_SCALE"
+          ? "SIZE_SCALE"
+          : "SINGLE_SELECT";
+    const modifierCategory =
+      typeof rg.modifierCategory === "string" && rg.modifierCategory.trim()
+        ? rg.modifierCategory.trim().toLowerCase().slice(0, 32)
+        : name.toLowerCase().replace(/\s+/g, "");
+    const required = rg.required === true;
+    const options: DraftChoiceOption[] = [];
+    const rawOptions = Array.isArray(rg.options) ? rg.options : [];
+    for (const ro of rawOptions) {
+      if (!isObj(ro)) continue;
+      const label =
+        typeof ro.label === "string" && ro.label.trim()
+          ? ro.label.trim().slice(0, 50)
+          : null;
+      const modifierKey =
+        typeof ro.modifierKey === "string" && ro.modifierKey.trim()
+          ? ro.modifierKey.trim().slice(0, 64)
+          : null;
+      if (!label || !modifierKey) continue;
+      const inventoryItemId =
+        typeof ro.inventoryItemId === "string" && ro.inventoryItemId.trim()
+          ? ro.inventoryItemId.trim()
+          : null;
+      // Drop hallucinated ids — only accept items actually in catalog.
+      const resolvedItemId =
+        inventoryItemId && catalogById.has(inventoryItemId)
+          ? inventoryItemId
+          : null;
+      const quantityBase = Math.max(
+        0,
+        Math.round(Number(ro.quantityBase) || 0)
+      );
+      const sizeScaleFactor =
+        typeof ro.sizeScaleFactor === "number" && ro.sizeScaleFactor > 0
+          ? Math.min(5, ro.sizeScaleFactor)
+          : 1.0;
+      const displayUnit = coerceMeasurementUnit(
+        ro.displayUnit,
+        resolvedItemId ? catalogById.get(resolvedItemId)!.displayUnit : "COUNT"
+      );
+      const isDefault = ro.isDefault === true;
+      options.push({
+        label,
+        modifierKey,
+        inventoryItemId: resolvedItemId,
+        quantityBase,
+        sizeScaleFactor,
+        displayUnit,
+        isDefault,
+      });
+    }
+    if (options.length === 0) continue;
+    choiceGroups.push({
+      name,
+      groupType: gt,
+      modifierCategory,
+      required,
+      options,
+    });
+  }
+
+  return { summary, components, choiceGroups, proposedNewItems };
 }
 
 function slugify(raw: string): string {

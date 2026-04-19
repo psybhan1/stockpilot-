@@ -353,6 +353,62 @@ export function RecipeDraftChat({
           </ul>
         )}
 
+        {/* Hierarchical modifier tree — choice groups + options.
+            One recipe handles "Medium Oat Latte with Vanilla" via:
+              - base components (always applied)
+              - Milk / Syrup / Size choice groups
+            Each group renders as a collapsible sub-card. */}
+        {draft.choiceGroups.length > 0 ? (
+          <div className="space-y-2">
+            {draft.choiceGroups.map((g, gi) => (
+              <div
+                key={`${g.name}-${gi}`}
+                className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3"
+              >
+                <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-700 dark:text-violet-300">
+                  {g.name}
+                  <span className="ml-2 text-muted-foreground">
+                    {g.groupType === "SIZE_SCALE"
+                      ? "scale"
+                      : g.groupType === "MULTI_SELECT"
+                        ? "pick any"
+                        : "pick one"}
+                    {g.required ? " · required" : " · optional"}
+                  </span>
+                </p>
+                <ul className="mt-1.5 space-y-1">
+                  {g.options.map((o, oi) => (
+                    <li
+                      key={`${o.modifierKey}-${oi}`}
+                      className="flex items-center gap-2 text-xs"
+                    >
+                      <span
+                        className={
+                          o.isDefault
+                            ? "inline-block size-1.5 rounded-full bg-emerald-500"
+                            : "inline-block size-1.5 rounded-full bg-muted-foreground/40"
+                        }
+                        title={o.isDefault ? "default" : undefined}
+                      />
+                      <span className="font-medium">{o.label}</span>
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        {o.modifierKey}
+                      </span>
+                      <span className="ml-auto font-mono text-[10px] text-muted-foreground">
+                        {g.groupType === "SIZE_SCALE"
+                          ? `×${o.sizeScaleFactor}`
+                          : o.quantityBase > 0
+                            ? `+${o.quantityBase} ${o.displayUnit.toLowerCase()}`
+                            : "—"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         {/* Proposed new items — StockBuddy wants to create these
             inventory items to satisfy the last chat instruction.
             One click = row in InventoryItem + component added to

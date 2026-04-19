@@ -400,6 +400,7 @@ model InventoryItem {
   alerts                  Alert[]
   posSimpleMappings       PosSimpleMapping[]
   calibrationWeeks        InventoryCalibrationWeek[]
+  recipeChoiceOptions     RecipeChoiceOption[]
 
   @@unique([locationId, sku])
 }
@@ -634,6 +635,7 @@ model Recipe {
   menuItemVariant   MenuItemVariant      @relation(fields: [menuItemVariantId], references: [id], onDelete: Cascade)
   approvedBy        User?                @relation("RecipeApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
   components        RecipeComponent[]
+  choiceGroups      RecipeChoiceGroup[]
   mappings          PosVariationMapping[]
 
   @@unique([menuItemVariantId, version])
@@ -656,6 +658,56 @@ model RecipeComponent {
   recipe               Recipe              @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   inventoryItem        InventoryItem       @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
   calibrationSuggestions RecipeCalibrationSuggestion[]
+}
+
+/// Hierarchical-recipe unlock. A Recipe can now have zero or more
+/// ChoiceGroups (Milk / Syrup / Size / Temp…). Each group contains
+/// ChoiceOptions (Oat, Whole, Almond…). At sale time,
+/// `processSaleEventById` walks each group and deplets only the
+/// option that matches one of the line's modifierKeys.
+///
+/// groupType hints how the group scales or selects:
+///   - SINGLE_SELECT: pick one option (Milk, Size, Temp)
+///   - MULTI_SELECT: pick zero-or-many (Syrups, Toppings)
+///   - SIZE_SCALE: treats options as multipliers applied to BASE components
+model RecipeChoiceGroup {
+  id               String                  @id @default(cuid())
+  recipeId         String
+  name             String
+  groupType        RecipeChoiceGroupType   @default(SINGLE_SELECT)
+  modifierCategory String                  // "milk", "syrup", "size", "temp"
+  required         Boolean                 @default(false)
+  sortOrder        Int                     @default(0)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  recipe           Recipe                  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  options          RecipeChoiceOption[]
+
+  @@index([recipeId])
+}
+
+model RecipeChoiceOption {
+  id               String            @id @default(cuid())
+  choiceGroupId    String
+  inventoryItemId  String?           // null for SIZE_SCALE options that only scale, don't deplete themselves
+  label            String            // "Oat", "Medium", "Vanilla"
+  modifierKey      String            // e.g. "milk:oat" — must match PosSaleLine.modifierKeys
+  quantityBase     Int               @default(0)   // amount this option adds when selected (base units)
+  sizeScaleFactor  Float             @default(1.0) // for SIZE_SCALE groups: multiplies base components
+  displayUnit      MeasurementUnit   @default(COUNT)
+  isDefault        Boolean           @default(false) // surfaces when no modifier arrives
+  sortOrder        Int               @default(0)
+  choiceGroup      RecipeChoiceGroup @relation(fields: [choiceGroupId], references: [id], onDelete: Cascade)
+  inventoryItem    InventoryItem?    @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+
+  @@index([choiceGroupId])
+  @@index([modifierKey])
+}
+
+enum RecipeChoiceGroupType {
+  SINGLE_SELECT
+  MULTI_SELECT
+  SIZE_SCALE
 }
 
 model PosIntegration {
