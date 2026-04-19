@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { DuplicateRecipesCard } from "@/components/app/duplicate-recipes-card";
+import { InventoryDuplicatesCard } from "@/components/app/inventory-duplicates-card";
 import { MoneyThisWeekCard } from "@/components/app/money-this-week-card";
 import { PosActivityFeed } from "@/components/app/pos-activity-feed";
 import { RecipeHealthCard } from "@/components/app/recipe-health-card";
@@ -21,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { requireSession } from "@/modules/auth/session";
 import { getDashboardData } from "@/modules/dashboard/queries";
 import { getMoneyThisWeek } from "@/modules/dashboard/money-this-week";
+import { findInventoryDuplicates } from "@/modules/inventory/duplicates";
 import { findDuplicateRecipeCandidates } from "@/modules/recipes/duplicates";
 import { getRecipeHealth } from "@/modules/recipes/health";
 import { formatQuantityBase } from "@/modules/inventory/units";
@@ -47,6 +49,7 @@ export default async function TodayPage() {
     posActivity,
     recipeHealth,
     duplicateCandidates,
+    inventoryDuplicateGroups,
   ] = await Promise.all([
     getDashboardData(session.locationId),
     getAnalyticsOverview(session.locationId),
@@ -55,6 +58,7 @@ export default async function TodayPage() {
     getPosActivityFeed(session.locationId, 10).catch(() => []),
     getRecipeHealth(session.locationId).catch(() => null),
     findDuplicateRecipeCandidates(session.locationId).catch(() => []),
+    findInventoryDuplicates(session.locationId).catch(() => []),
   ]);
   const firstName = session.userName.split(" ")[0];
   const topSuppliers = analytics.topSuppliers.slice(0, 3);
@@ -289,6 +293,14 @@ export default async function TodayPage() {
           meaningless 99900% figures). Self-adapts to empty + thin-data
           states so it never lies about margins. */}
       {moneyThisWeek ? <MoneyThisWeekCard data={moneyThisWeek} /> : null}
+
+      {/* ── Duplicate-inventory-item detection ──────────────────────
+          Bulk-ingest flows (Amazon order parsing, invoice OCR, seed
+          scripts) historically created fresh InventoryItem rows
+          instead of reusing same-named ones. Result: 15 copies of
+          "Espresso Machine Cleaner" at 0 stock, polluting every
+          query. Merge re-points every FK + sums stock in one tx. */}
+      <InventoryDuplicatesCard groups={inventoryDuplicateGroups} />
 
       {/* ── Duplicate-recipe detection (Phase 4) ────────────────────
           StockBuddy finds likely-duplicate recipes ("Latte" + "Medium
