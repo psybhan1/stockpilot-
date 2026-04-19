@@ -166,26 +166,52 @@ export async function mergeInventoryDuplicates(input: {
       data: { inventoryItemId: canonical },
     });
 
-    // SupplierItem has @@unique([supplierId, inventoryItemId]) — if a
-    // duplicate had a SupplierItem for the same supplierId as canonical,
-    // simply re-pointing would collide. For each colliding row, delete
-    // the duplicate's SupplierItem (canonical's wins, it's probably the
-    // authoritative price row anyway).
+    // SupplierItem has @@unique([supplierId, inventoryItemId]). Three
+    // collision cases to handle:
+    //   (a) canonical already has a SupplierItem for supplierId X — delete
+    //       every duplicate's row for X (canonical wins).
+    //   (b) multiple duplicates each have a SupplierItem for supplierId Y
+    //       which canonical doesn't — keep the first one, delete the rest,
+    //       then re-point the survivor.
+    //   (c) non-colliding rows — just re-point.
     const canonicalSuppliers = await tx.supplierItem.findMany({
       where: { inventoryItemId: canonical },
       select: { supplierId: true },
     });
-    const existingSupplierIds = new Set(
+    const canonicalSupplierIds = new Set(
       canonicalSuppliers.map((s) => s.supplierId)
     );
-    if (existingSupplierIds.size > 0) {
+    // (a) drop duplicate rows that collide with canonical.
+    if (canonicalSupplierIds.size > 0) {
       await tx.supplierItem.deleteMany({
         where: {
           inventoryItemId: { in: dupIds },
-          supplierId: { in: [...existingSupplierIds] },
+          supplierId: { in: [...canonicalSupplierIds] },
         },
       });
     }
+    // (b) among remaining duplicate rows, dedupe by supplierId.
+    const remaining = await tx.supplierItem.findMany({
+      where: { inventoryItemId: { in: dupIds } },
+      select: { id: true, supplierId: true, lastUnitCostCents: true },
+      orderBy: [{ lastUnitCostCents: "desc" }], // prefer the row with
+      // a known cost — more likely to be the authoritative pricing row.
+    });
+    const keepBySupplier = new Map<string, string>();
+    const redundantIds: string[] = [];
+    for (const row of remaining) {
+      if (keepBySupplier.has(row.supplierId)) {
+        redundantIds.push(row.id);
+      } else {
+        keepBySupplier.set(row.supplierId, row.id);
+      }
+    }
+    if (redundantIds.length > 0) {
+      await tx.supplierItem.deleteMany({
+        where: { id: { in: redundantIds } },
+      });
+    }
+    // (c) re-point whatever's left.
     await tx.supplierItem.updateMany({
       where: { inventoryItemId: { in: dupIds } },
       data: { inventoryItemId: canonical },
