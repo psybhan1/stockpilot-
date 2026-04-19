@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 
 import { approveRecipeAction } from "@/app/actions/operations";
+import { RecipeChatPanel } from "@/components/app/recipe-chat-panel";
 import { RecipeEditor } from "@/components/app/recipe-editor";
 import { RecipeRepairButton } from "@/components/app/recipe-repair-button";
 import { StatusBadge } from "@/components/app/status-badge";
@@ -112,6 +113,8 @@ export default async function RecipeDetailPage({
         }))}
         canEdit={canEdit}
       />
+
+      {canEdit ? <RecipeChatPanel recipeId={recipe.id} /> : null}
 
       {canEdit ? (
         <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-4">

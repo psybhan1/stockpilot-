@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 
+import { MenuChatPanel } from "@/components/app/menu-chat-panel";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Role } from "@/lib/domain-enums";
 import { requireSession } from "@/modules/auth/session";
@@ -119,6 +120,7 @@ export default async function RecipesPage({
           })}
         </section>
       )}
+      {session.role === Role.MANAGER ? <MenuChatPanel /> : null}
     </div>
   );
 }
