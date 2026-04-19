@@ -187,12 +187,20 @@ async function searchBraveImages(
   apiKey: string
 ): Promise<Array<{ url: string }>> {
   const url = `${BRAVE_IMAGE_URL}?q=${encodeURIComponent(query)}&count=10&safesearch=strict`;
-  const response = await fetch(url, {
-    headers: {
-      "X-Subscription-Token": apiKey,
-      Accept: "application/json",
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "X-Subscription-Token": apiKey,
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) {
     console.warn(
       `[stock-image] Brave search returned ${response.status} for query "${query}"`
@@ -227,13 +235,23 @@ async function searchBraveImages(
 async function tryDownload(
   url: string
 ): Promise<{ bytes: Buffer; contentType: string } | null> {
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
-      Accept: "image/jpeg,image/png,image/webp,image/*",
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
+        Accept: "image/jpeg,image/png,image/webp,image/*",
+      },
+      signal: controller.signal,
+    });
+  } catch {
+    clearTimeout(timeout);
+    return null;
+  }
+  clearTimeout(timeout);
   if (!response.ok) return null;
   const contentType =
     response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() ??
