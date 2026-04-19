@@ -140,15 +140,27 @@ export async function getStockCountPageData(locationId: string) {
   return { items, openSession };
 }
 
-export async function getRecipesPageData(locationId: string) {
+export async function getRecipesPageData(
+  locationId: string,
+  { includeArchived = false }: { includeArchived?: boolean } = {},
+) {
   return db.recipe.findMany({
-    where: { locationId },
+    where: {
+      locationId,
+      ...(includeArchived ? {} : { status: { not: "ARCHIVED" } }),
+    },
     include: {
       menuItemVariant: { include: { menuItem: true } },
       components: { include: { inventoryItem: true } },
       approvedBy: true,
     },
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
+  });
+}
+
+export async function getArchivedRecipeCount(locationId: string) {
+  return db.recipe.count({
+    where: { locationId, status: "ARCHIVED" },
   });
 }
 

@@ -5,14 +5,28 @@ import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Role } from "@/lib/domain-enums";
 import { requireSession } from "@/modules/auth/session";
-import { getRecipesPageData } from "@/modules/dashboard/queries";
+import {
+  getArchivedRecipeCount,
+  getRecipesPageData,
+} from "@/modules/dashboard/queries";
 
-export default async function RecipesPage() {
+export default async function RecipesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ archived?: string }>;
+}) {
   const session = await requireSession(Role.SUPERVISOR);
-  const recipes = await getRecipesPageData(session.locationId);
+  const { archived } = await searchParams;
+  const showArchived = archived === "1";
+  const [recipes, archivedCount] = await Promise.all([
+    getRecipesPageData(session.locationId, { includeArchived: showArchived }),
+    getArchivedRecipeCount(session.locationId),
+  ]);
 
   const approvedCount = recipes.filter((r) => r.status === "APPROVED").length;
-  const draftCount = recipes.filter((r) => r.status !== "APPROVED").length;
+  const draftCount = recipes.filter(
+    (r) => r.status !== "APPROVED" && r.status !== "ARCHIVED",
+  ).length;
 
   return (
     <div className="space-y-10">
@@ -27,6 +41,21 @@ export default async function RecipesPage() {
           { label: "Needs review", value: String(draftCount).padStart(2, "0"), highlight: draftCount > 0 },
         ]}
       />
+
+      {archivedCount > 0 ? (
+        <div className="flex items-center justify-between rounded-xl border border-muted-foreground/20 bg-muted/30 px-4 py-2 text-xs">
+          <span className="text-muted-foreground">
+            {archivedCount} recipe{archivedCount === 1 ? "" : "s"} archived by
+            previous merges (reversible for 30 days).
+          </span>
+          <Link
+            href={showArchived ? "/recipes" : "/recipes?archived=1"}
+            className="font-medium text-violet-600 hover:underline dark:text-violet-400"
+          >
+            {showArchived ? "Hide archived" : "Show archived"}
+          </Link>
+        </div>
+      ) : null}
 
       {/* Recipe list */}
       {recipes.length === 0 ? (
@@ -57,8 +86,20 @@ export default async function RecipesPage() {
                 </p>
               </div>
               <StatusBadge
-                label={recipe.status === "APPROVED" ? "Approved" : "Review"}
-                tone={recipe.status === "APPROVED" ? "success" : "warning"}
+                label={
+                  recipe.status === "APPROVED"
+                    ? "Approved"
+                    : recipe.status === "ARCHIVED"
+                      ? "Archived"
+                      : "Review"
+                }
+                tone={
+                  recipe.status === "APPROVED"
+                    ? "success"
+                    : recipe.status === "ARCHIVED"
+                      ? "neutral"
+                      : "warning"
+                }
               />
             </div>
 
