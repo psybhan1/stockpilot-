@@ -43,21 +43,40 @@ export async function findStockProductImage(input: {
   category?: string | null;
 }): Promise<StockImageResult | null> {
   const braveKey = process.env.BRAVE_SEARCH_API_KEY;
-  if (!braveKey) return null;
-
-  const query = buildSearchQuery(input);
-  const hits = await searchBraveImages(query, braveKey).catch(() => []);
-  if (hits.length === 0) return null;
-
-  // Try each hit until we get a usable image. Brave ranks by
-  // relevance so the first one is usually fine; we just need to
-  // survive the occasional HEAD 403 / HTML-instead-of-image.
-  for (const hit of hits.slice(0, 4)) {
-    const dl = await tryDownload(hit.url).catch(() => null);
-    if (dl) {
-      return { ...dl, sourceUrl: hit.url, provider: "brave" };
-    }
+  if (!braveKey) {
+    console.warn("[stock-image] BRAVE_SEARCH_API_KEY not set");
+    return null;
   }
+
+  // Try progressively broader queries. Starts with supplier-scoped,
+  // falls back to name-only if no hits — works whether your supplier
+  // name is a real brand (Costco) or a generic placeholder.
+  const queries = buildQueryLadder(input);
+
+  for (const query of queries) {
+    const hits = await searchBraveImages(query, braveKey).catch((err) => {
+      console.error("[stock-image] Brave search error", err);
+      return [] as Array<{ url: string }>;
+    });
+    console.log(
+      `[stock-image] query="${query}" → ${hits.length} hits`
+    );
+    if (hits.length === 0) continue;
+
+    for (const hit of hits.slice(0, 6)) {
+      const dl = await tryDownload(hit.url).catch(() => null);
+      if (dl) {
+        console.log(
+          `[stock-image] downloaded ${dl.bytes.length}B ${dl.contentType} from ${hit.url.slice(0, 100)}`
+        );
+        return { ...dl, sourceUrl: hit.url, provider: "brave" };
+      }
+    }
+    console.warn(
+      `[stock-image] all ${hits.length} hits failed to download for query "${query}"`
+    );
+  }
+
   return null;
 }
 
@@ -113,28 +132,54 @@ export async function findAndPersistStockImage(input: {
 
 // ── Internals ───────────────────────────────────────────────────────
 
-function buildSearchQuery(input: {
+/**
+ * Build a ladder of queries to try in order. First pass uses the
+ * supplier brand for specificity; if that returns nothing, subsequent
+ * passes loosen the terms until we're down to just the item name +
+ * generic category hint. This matters because supplier names in the
+ * DB can range from real brands ("Costco") to vague distributor names
+ * ("DairyFlow Wholesale") that don't search well.
+ */
+function buildQueryLadder(input: {
   itemName: string;
   supplierName?: string | null;
-  sku?: string | null;
   category?: string | null;
-}): string {
-  const parts: string[] = [];
-  if (input.supplierName) {
-    // Supplier name (e.g. "Kirkland Signature") pins the brand.
-    parts.push(input.supplierName);
+}): string[] {
+  const name = input.itemName.trim();
+  const categoryHint = categoryToSearchWord(input.category);
+  const supplier = (input.supplierName ?? "").trim();
+  // Skip supplier if it's clearly a generic distributor name — these
+  // pollute image results with logos rather than products.
+  const skipSupplier =
+    !supplier ||
+    /wholesale|supply|distribution|distributors|warehouse/i.test(supplier);
+
+  const ladder: string[] = [];
+  if (!skipSupplier) ladder.push(`${supplier} ${name} ${categoryHint}`);
+  if (!skipSupplier) ladder.push(`${supplier} ${name}`);
+  ladder.push(`${name} ${categoryHint}`);
+  ladder.push(name);
+  // De-dupe while preserving order.
+  return [...new Set(ladder.map((q) => q.replace(/\s+/g, " ").trim()))];
+}
+
+function categoryToSearchWord(category?: string | null): string {
+  switch (category) {
+    case "DAIRY":
+    case "ALT_DAIRY":
+      return "carton";
+    case "COFFEE":
+      return "bag";
+    case "SYRUP":
+      return "bottle";
+    case "PACKAGING":
+    case "PAPER_GOODS":
+      return "product";
+    case "BAKERY_INGREDIENT":
+      return "package";
+    default:
+      return "product";
   }
-  parts.push(input.itemName);
-  // Category word helps disambiguate generic names — a bare "Oat Milk"
-  // returns a sea of recipes; "Oat Milk dairy product" surfaces cartons.
-  if (input.category === "DAIRY" || input.category === "ALT_DAIRY") {
-    parts.push("product carton");
-  } else if (input.category === "PACKAGING" || input.category === "PAPER_GOODS") {
-    parts.push("product");
-  } else {
-    parts.push("product packaging");
-  }
-  return parts.join(" ").replace(/\s+/g, " ").trim();
 }
 
 async function searchBraveImages(
@@ -148,22 +193,35 @@ async function searchBraveImages(
       Accept: "application/json",
     },
   });
-  if (!response.ok) return [];
+  if (!response.ok) {
+    console.warn(
+      `[stock-image] Brave search returned ${response.status} for query "${query}"`
+    );
+    return [];
+  }
   const body = (await response.json().catch(() => null)) as {
-    results?: Array<{
-      properties?: { url?: string };
-      thumbnail?: { src?: string };
-    }>;
+    results?: Array<Record<string, unknown>>;
   } | null;
   const results = body?.results ?? [];
-  return results
-    .map((r) => ({
-      url:
-        r.properties?.url ??
-        r.thumbnail?.src ??
-        "",
-    }))
-    .filter((r) => r.url.startsWith("http"));
+  // Brave's image API field shape varies by version. Try a few paths
+  // in priority order so we're robust to shape drift.
+  const urls = results
+    .map((r) => {
+      const props = (r.properties ?? {}) as Record<string, unknown>;
+      const thumb = (r.thumbnail ?? {}) as Record<string, unknown>;
+      const direct = typeof r.image === "string" ? r.image : null;
+      const imageObj = (r.image ?? {}) as Record<string, unknown>;
+      return (
+        (typeof props.url === "string" && props.url) ||
+        (typeof imageObj.url === "string" && imageObj.url) ||
+        (typeof thumb.src === "string" && thumb.src) ||
+        (typeof r.url === "string" && (r.url as string)) ||
+        direct ||
+        ""
+      );
+    })
+    .filter((u) => typeof u === "string" && u.startsWith("http"));
+  return urls.map((u) => ({ url: u as string }));
 }
 
 async function tryDownload(
