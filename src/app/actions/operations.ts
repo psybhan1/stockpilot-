@@ -2128,10 +2128,12 @@ export async function startTelegramBotConnectAction() {
     );
   }
 
-  if (!env.TELEGRAM_BOT_TOKEN) {
+  const telegramBotUsername = await getTelegramBotUsername();
+
+  if (!env.TELEGRAM_BOT_TOKEN || !telegramBotUsername) {
     redirect(
       `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
-        "Telegram bot token is missing."
+        "Telegram bot credentials are missing or the bot username could not be resolved."
       )}`
     );
   }
@@ -2152,7 +2154,7 @@ export async function startTelegramBotConnectAction() {
     );
   }
 
-  redirect(`/settings/telegram/connect?token=${encodeURIComponent(request.token)}`);
+  redirect(buildTelegramConnectUrl(telegramBotUsername, request.token));
 }
 
 export async function startLocalWhatsAppBotConnectAction() {
