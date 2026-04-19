@@ -494,6 +494,43 @@
   }
 }
 
+/* ── Mobile / tablet: skip the blur-reveal machinery ────────────────
+   iOS Safari (iPhone + iPad) doesn't support `animation-timeline:
+   view()` until Safari 26, so cards fall back to the IntersectionObserver
+   path — which runs inside useEffect and only fires AFTER client hydration.
+   On a slow mobile connection that window is long enough that users see
+   a screen of blurred, invisible cards ("all blurry", "doesn't open up").
+   Below the lg breakpoint, force cards and page transitions to render
+   immediately visible — no reveal animation at all. */
+@media (max-width: 1023px), (hover: none) and (pointer: coarse) {
+  .notif-card, .brutal-card, [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+    transition:
+      background 280ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 280ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 280ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+    animation: none !important;
+  }
+  .page-transition-enter,
+  .page-transition-enter > * > * {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+  /* SVG displacement filter is expensive + flaky on mobile Safari; the
+     remaining blur/saturate stack is enough for the glass effect. */
+  .notif-card,
+  .dark .notif-card,
+  .brutal-card,
+  .dark .brutal-card {
+    backdrop-filter: blur(14px) saturate(160%) !important;
+    -webkit-backdrop-filter: blur(14px) saturate(160%) !important;
+  }
+}
+
 /* ── Liquid-glass notification card ───────────────────────────────── */
 /* A proper glossy liquid-glass treatment inspired by iOS / macOS Aqua:
    - Vertical gradient background (brighter at top, soft at bottom)
