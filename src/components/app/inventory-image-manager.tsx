@@ -2,11 +2,11 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ImageIcon, RefreshCw, Sparkles, Upload, X } from "lucide-react";
+import { ImageIcon, RefreshCw, Search, Upload, X } from "lucide-react";
 
 import {
   clearInventoryImageAction,
-  generateInventoryImageAction,
+  findInventoryImageAction,
   uploadInventoryImageAction,
 } from "@/app/actions/product-images";
 import { Button } from "@/components/ui/button";
@@ -44,11 +44,13 @@ export function InventoryImageManager({
   const sourceLabel =
     imageSource === "upload"
       ? "uploaded"
-      : imageSource === "ai"
-        ? "AI generated"
-        : imageSource === "pos" || posCatalogImageUrl
-          ? "from POS"
-          : "no image yet";
+      : imageSource === "web"
+        ? "found on web"
+        : imageSource === "ai"
+          ? "AI generated (legacy)"
+          : imageSource === "pos" || posCatalogImageUrl
+            ? "from POS"
+            : "no image yet";
 
   function triggerUpload() {
     fileInputRef.current?.click();
@@ -73,10 +75,10 @@ export function InventoryImageManager({
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  function generate() {
+  function findOnWeb() {
     setErrorMessage(null);
     startTransition(async () => {
-      const result = await generateInventoryImageAction(itemId);
+      const result = await findInventoryImageAction(itemId);
       if (!result.ok) {
         setErrorMessage(result.reason);
         return;
@@ -120,8 +122,9 @@ export function InventoryImageManager({
             Product image · {sourceLabel}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            StockBuddy picks the best available: uploaded → AI-generated →
-            POS catalog → placeholder.
+            StockBuddy finds the real product photo from the web so
+            your barista can match the carton on the shelf. Cascade:
+            uploaded → web-found → POS catalog → placeholder.
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
             <Button
@@ -138,12 +141,12 @@ export function InventoryImageManager({
             <Button
               type="button"
               size="sm"
-              onClick={generate}
+              onClick={findOnWeb}
               disabled={isPending}
               className="h-8 gap-1 bg-violet-500 text-white hover:bg-violet-500/90 text-[11px]"
             >
-              <Sparkles className="size-3" />
-              {imageSource === "ai" ? "Regenerate" : "Generate with AI"}
+              <Search className="size-3" />
+              {hasStoredBytes ? "Find again" : "Find on web"}
             </Button>
             {hasStoredBytes ? (
               <Button

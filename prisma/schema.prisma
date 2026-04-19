@@ -614,6 +614,13 @@ model MenuItem {
   name       String
   category   String?
   imageUrl   String?
+  /// Manually-uploaded or AI-generated menu photo. Separate from POS
+  /// catalog's imageUrl because menu items are how the customer sees
+  /// the drink — the cafe's aesthetic — not the raw stock bag of beans.
+  imageBytes          Bytes?
+  imageContentType    String?
+  imageSource         String?         @default("none")
+  imageGeneratedAt    DateTime?
   source     PosProviderType
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt

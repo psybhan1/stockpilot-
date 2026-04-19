@@ -851,6 +851,52 @@ export async function deliverPurchaseOrder(input: {
     await refreshOperationalState(purchaseOrder.locationId, [...touchedInventoryItemIds]);
   }
 
+  // Invoice-OCR-driven image hunt. For every item on this delivery
+  // that doesn't yet have a stored image, try the stock-image
+  // finder (Brave Image Search) in the background. Fire-and-forget,
+  // never blocks delivery completion.
+  void backfillStockImagesForItems({
+    locationId: purchaseOrder.locationId,
+    inventoryItemIds: [...touchedInventoryItemIds],
+  });
+
   return updatedOrder;
+}
+
+/**
+ * Background fill: for each item without an existing stored image,
+ * run the Brave-backed stock-image finder. Never throws — image
+ * failures shouldn't affect the delivery receipt.
+ */
+async function backfillStockImagesForItems(input: {
+  locationId: string;
+  inventoryItemIds: string[];
+}): Promise<void> {
+  if (input.inventoryItemIds.length === 0) return;
+  try {
+    const { findAndPersistStockImage } = await import(
+      "@/modules/images/stock-image-finder"
+    );
+    const { db } = await import("@/lib/db");
+    // Only target items without bytes already stored.
+    const items = await db.inventoryItem.findMany({
+      where: {
+        id: { in: input.inventoryItemIds },
+        locationId: input.locationId,
+        OR: [{ imageBytes: null }, { imageSource: "none" }, { imageSource: "pos" }],
+      },
+      select: { id: true },
+    });
+    // Serialise — we don't want to hammer Brave with 20 concurrent
+    // requests on a big delivery.
+    for (const item of items) {
+      await findAndPersistStockImage({
+        inventoryItemId: item.id,
+        locationId: input.locationId,
+      }).catch(() => null);
+    }
+  } catch {
+    // fire-and-forget
+  }
 }
 

@@ -576,10 +576,17 @@ model PurchaseOrderLine {
 
 model MenuItem {
   id         String          @id @default(cuid())
+  /// Stored menu photo — manual upload or AI generated. Separate
+  /// from POS catalog image since menu = customer-facing aesthetic.
+  /// Declared at top so the field order matches schema.prisma.
   locationId String
   name       String
   category   String?
   imageUrl   String?
+  imageBytes          Bytes?
+  imageContentType    String?
+  imageSource         String?         @default("none")
+  imageGeneratedAt    DateTime?
   source     PosProviderType
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt

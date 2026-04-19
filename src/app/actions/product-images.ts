@@ -10,6 +10,7 @@ import {
   generateProductImage,
   getBrandIdentity,
 } from "@/modules/images/product-image";
+import { findAndPersistStockImage } from "@/modules/images/stock-image-finder";
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
 
@@ -60,22 +61,43 @@ export async function uploadInventoryImageAction(
 }
 
 /**
- * Ask StockBuddy to generate a product image. Uses the business's
- * brandIdentity template; if brandIdentity is empty or stale, kicks
- * off auto-research first (which ALSO runs silently in the background
- * on signup once brand-research is wired).
+ * Find a real product photo on the web for a stock inventory item.
+ * Uses Brave Image Search scoped to "{supplier} {item name} product".
+ * Never uses AI — stock items are specific brand products (Kirkland
+ * milk, Solo cups) and the barista needs to match real cartons.
  *
- * Falls back gracefully if Cloudflare isn't configured — returns an
- * error message the UI surfaces so the user knows they can still
- * upload manually.
+ * For menu items (drinks), see generateMenuImageAction which DOES
+ * use AI with the café's brand template.
  */
-export async function generateInventoryImageAction(
+export async function findInventoryImageAction(
   itemId: string
+): Promise<{ ok: true; sourceUrl?: string } | { ok: false; reason: string }> {
+  const session = await requireSession(Role.MANAGER);
+  const result = await findAndPersistStockImage({
+    inventoryItemId: itemId,
+    locationId: session.locationId,
+  });
+  revalidatePath("/inventory");
+  revalidatePath(`/inventory/${itemId}`);
+  return result.ok
+    ? { ok: true, sourceUrl: result.sourceUrl }
+    : { ok: false, reason: result.reason };
+}
+
+/**
+ * Generate an AI image for a MENU item (drinks/foods your café
+ * makes) using the business's auto-derived brand identity. Uses
+ * Cloudflare Workers AI Flux Schnell — free at our scale.
+ *
+ * Research brand identity first if stale, silently.
+ */
+export async function generateMenuImageAction(
+  menuItemId: string
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   const session = await requireSession(Role.MANAGER);
 
-  const item = await db.inventoryItem.findFirst({
-    where: { id: itemId, locationId: session.locationId },
+  const item = await db.menuItem.findFirst({
+    where: { id: menuItemId, locationId: session.locationId },
     select: {
       id: true,
       name: true,
@@ -95,12 +117,9 @@ export async function generateInventoryImageAction(
       },
     },
   });
-  if (!item) return { ok: false, reason: "Item not found in this location." };
+  if (!item) return { ok: false, reason: "Menu item not found." };
 
   const business = item.location.business;
-
-  // If brand research is missing or older than 90 days, refresh first.
-  // Best-effort; failures fall back to default brand identity.
   const brandStale =
     !business.brandIdentityAt ||
     Date.now() - business.brandIdentityAt.getTime() > 90 * 24 * 60 * 60 * 1000;
@@ -116,7 +135,7 @@ export async function generateInventoryImageAction(
   const brand = await getBrandIdentity(business.id);
   const generated = await generateProductImage({
     productName: item.name,
-    category: String(item.category),
+    category: item.category ?? "BEVERAGE",
     brand,
   });
 
@@ -128,7 +147,7 @@ export async function generateInventoryImageAction(
     };
   }
 
-  await db.inventoryItem.update({
+  await db.menuItem.update({
     where: { id: item.id },
     data: {
       imageBytes: new Uint8Array(generated.bytes),
@@ -138,8 +157,41 @@ export async function generateInventoryImageAction(
     },
   });
 
-  revalidatePath("/inventory");
-  revalidatePath(`/inventory/${item.id}`);
+  revalidatePath("/recipes");
+  return { ok: true };
+}
+
+export async function uploadMenuImageAction(
+  formData: FormData
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const session = await requireSession(Role.MANAGER);
+  const menuItemId = String(formData.get("menuItemId") ?? "");
+  const file = formData.get("file");
+  if (!menuItemId) return { ok: false, reason: "Missing menu item id." };
+  if (!(file instanceof Blob)) return { ok: false, reason: "No file." };
+  if (file.size > MAX_UPLOAD_BYTES)
+    return { ok: false, reason: "File too big (max 5 MB)." };
+  const contentType = file.type || "image/jpeg";
+  if (!contentType.startsWith("image/"))
+    return { ok: false, reason: "Only image files." };
+
+  const item = await db.menuItem.findFirst({
+    where: { id: menuItemId, locationId: session.locationId },
+    select: { id: true },
+  });
+  if (!item) return { ok: false, reason: "Menu item not found." };
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  await db.menuItem.update({
+    where: { id: item.id },
+    data: {
+      imageBytes: new Uint8Array(buffer),
+      imageContentType: contentType,
+      imageSource: "upload",
+      imageGeneratedAt: new Date(),
+    },
+  });
+  revalidatePath("/recipes");
   return { ok: true };
 }
 
