@@ -1,15 +1,18 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChefHat, PackageCheck, Sparkles } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 import { approveRecipeAction } from "@/app/actions/operations";
+import { RecipeEditor } from "@/components/app/recipe-editor";
 import { RecipeRepairButton } from "@/components/app/recipe-repair-button";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Role } from "@/lib/domain-enums";
 import { requireSession } from "@/modules/auth/session";
-import { getRecipeDetail } from "@/modules/dashboard/queries";
+import {
+  getMenuPickerData,
+  getRecipeDetail,
+} from "@/modules/dashboard/queries";
 
 export default async function RecipeDetailPage({
   params,
@@ -18,126 +21,121 @@ export default async function RecipeDetailPage({
 }) {
   const session = await requireSession(Role.SUPERVISOR);
   const { recipeId } = await params;
-  const recipe = await getRecipeDetail(session.locationId, recipeId).catch(() => null);
-
-  if (!recipe) {
-    notFound();
-  }
-
-  return (
-    <div className="flex flex-col gap-6">
-      <Card className="overflow-hidden border-border/60 bg-[linear-gradient(135deg,rgba(255,251,235,0.96),rgba(255,255,255,0.92))] shadow-xl shadow-black/5 dark:bg-[linear-gradient(135deg,rgba(68,64,60,0.98),rgba(28,25,23,0.94))]">
-        <CardContent className="flex flex-col gap-6 p-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="max-w-3xl">
-              <p className="text-sm uppercase tracking-[0.22em] text-amber-600 dark:text-amber-300">
-                Recipe review
-              </p>
-              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-                {recipe.menuItemVariant.name}
-              </h1>
-              <p className="mt-3 text-base text-muted-foreground sm:text-lg">
-                {recipe.aiSummary ||
-                  "Review the ingredients and packaging below, then approve when the quantities look right."}
-              </p>
-            </div>
-
-            <StatusBadge
-              label={recipe.status === "APPROVED" ? "Approved" : "Needs review"}
-              tone={recipe.status === "APPROVED" ? "success" : "warning"}
-            />
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-3">
-            <MetricCard icon={ChefHat} label="Components" value={String(recipe.components.length)} />
-            <MetricCard
-              icon={Sparkles}
-              label="Confidence"
-              value={`${Math.round(recipe.confidenceScore * 100)}%`}
-            />
-            <MetricCard
-              icon={PackageCheck}
-              label="Completeness"
-              value={`${Math.round(recipe.completenessScore * 100)}%`}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="notif-card border-none shadow-none bg-transparent">
-        <CardContent className="p-5">
-          <form action={approveRecipeAction} className="flex flex-col gap-4">
-            <input type="hidden" name="recipeId" value={recipe.id} />
-
-            {recipe.components.map((component) => (
-              <div
-                key={component.id}
-                className="notif-card grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_140px_120px]"
-              >
-                <div>
-                  <p className="font-medium">{component.inventoryItem.name}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {component.componentType.toLowerCase()} -{" "}
-                    {component.conditionServiceMode ?? "all service modes"}
-                  </p>
-                </div>
-                <div>
-                  <p className="mb-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                    Approved quantity
-                  </p>
-                  <Input
-                    name={`component-${component.id}`}
-                    type="number"
-                    defaultValue={component.quantityBase}
-                    className="h-11 rounded-2xl"
-                  />
-                </div>
-                <div className="flex items-end">
-                  <div className="w-full rounded-xl border border-border bg-muted/40 px-3 py-3 text-sm text-muted-foreground">
-                    {component.displayUnit.toLowerCase()}
-                  </div>
-                </div>
-              </div>
-            ))}
-
-            <div className="flex items-end justify-between gap-3">
-              {session.role === Role.MANAGER &&
-              recipe.aiSummary?.toLowerCase().includes("consolidat") ? (
-                <RecipeRepairButton recipeId={recipe.id} />
-              ) : (
-                <span />
-              )}
-              {session.role === Role.MANAGER ? (
-                <Button type="submit" className="rounded-2xl">
-                  Approve recipe
-                </Button>
-              ) : (
-                <div className="notif-card px-4 py-3 text-sm text-muted-foreground">
-                  A manager still needs to approve this recipe before it can drive depletion.
-                </div>
-              )}
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+  const recipe = await getRecipeDetail(session.locationId, recipeId).catch(
+    () => null,
   );
-}
+  if (!recipe) notFound();
 
-function MetricCard({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof ChefHat;
-  label: string;
-  value: string;
-}) {
+  const { inventoryItems } = await getMenuPickerData(session.locationId);
+  const canEdit = session.role === Role.MANAGER;
+
   return (
-    <div className="notif-card p-4">
-      <Icon className="size-5 text-amber-600 dark:text-amber-300" />
-      <p className="mt-4 text-sm text-muted-foreground">{label}</p>
-      <p className="mt-2 text-3xl font-semibold tracking-tight">{value}</p>
+    <div className="mx-auto max-w-3xl space-y-6">
+      <Link
+        href="/recipes"
+        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="size-3.5" />
+        Back to menu
+      </Link>
+
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-center gap-4">
+          <div className="relative size-20 overflow-hidden rounded-2xl bg-gradient-to-br from-amber-50 to-orange-100 dark:from-stone-800 dark:to-stone-900">
+            {recipe.menuItemVariant.menuItem.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={recipe.menuItemVariant.menuItem.imageUrl}
+                alt={recipe.menuItemVariant.name}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-3xl font-bold text-amber-500/40">
+                {recipe.menuItemVariant.name.charAt(0).toUpperCase()}
+              </div>
+            )}
+          </div>
+          <div>
+            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-500 dark:text-amber-300">
+              Recipe
+            </p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight">
+              {recipe.menuItemVariant.name}
+            </h1>
+            {recipe.menuItemVariant.menuItem.name !==
+            recipe.menuItemVariant.name ? (
+              <p className="text-sm text-muted-foreground">
+                {recipe.menuItemVariant.menuItem.name}
+              </p>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusBadge
+            label={
+              recipe.status === "APPROVED"
+                ? "Approved"
+                : recipe.status === "ARCHIVED"
+                  ? "Archived"
+                  : "Draft"
+            }
+            tone={
+              recipe.status === "APPROVED"
+                ? "success"
+                : recipe.status === "ARCHIVED"
+                  ? "neutral"
+                  : "warning"
+            }
+          />
+        </div>
+      </header>
+
+      <RecipeEditor
+        recipeId={recipe.id}
+        initialSummary={recipe.aiSummary ?? ""}
+        initialComponents={recipe.components.map((c) => ({
+          id: c.id,
+          quantityBase: c.quantityBase,
+          displayUnit: c.displayUnit,
+          inventoryItem: {
+            id: c.inventoryItem.id,
+            name: c.inventoryItem.name,
+            supplierItems: c.inventoryItem.supplierItems,
+          },
+        }))}
+        inventoryOptions={inventoryItems.map((i) => ({
+          id: i.id,
+          name: i.name,
+          displayUnit: i.displayUnit,
+          category: String(i.category),
+          supplierItems: i.supplierItems,
+        }))}
+        canEdit={canEdit}
+      />
+
+      {canEdit ? (
+        <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-4">
+          {recipe.status !== "APPROVED" ? (
+            <form action={approveRecipeAction}>
+              <input type="hidden" name="recipeId" value={recipe.id} />
+              {recipe.components.map((c) => (
+                <input
+                  key={c.id}
+                  type="hidden"
+                  name={`component-${c.id}`}
+                  value={c.quantityBase}
+                />
+              ))}
+              <Button type="submit" className="rounded-xl">
+                Approve recipe
+              </Button>
+            </form>
+          ) : null}
+          {recipe.aiSummary?.toLowerCase().includes("consolidat") ? (
+            <RecipeRepairButton recipeId={recipe.id} />
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

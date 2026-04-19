@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { Plus } from "lucide-react";
 
-import { PageHero } from "@/components/app/page-hero";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Role } from "@/lib/domain-enums";
 import { requireSession } from "@/modules/auth/session";
@@ -23,24 +22,32 @@ export default async function RecipesPage({
     getArchivedRecipeCount(session.locationId),
   ]);
 
-  const approvedCount = recipes.filter((r) => r.status === "APPROVED").length;
-  const draftCount = recipes.filter(
-    (r) => r.status !== "APPROVED" && r.status !== "ARCHIVED",
-  ).length;
-
   return (
-    <div className="space-y-10">
-      <PageHero
-        eyebrow="Recipes"
-        title={recipes.length === 1 ? "One recipe" : `${recipes.length} recipes`}
-        subtitle="driving stock depletion."
-        description="Manage ingredient mappings that drive stock depletion."
-        stats={[
-          { label: "Total", value: String(recipes.length).padStart(2, "0") },
-          { label: "Approved", value: String(approvedCount).padStart(2, "0") },
-          { label: "Needs review", value: String(draftCount).padStart(2, "0"), highlight: draftCount > 0 },
-        ]}
-      />
+    <div className="space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-500 dark:text-amber-300">
+            Menu
+          </p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+            {recipes.length === 1
+              ? "One recipe"
+              : `${recipes.length} recipes`}
+          </h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Tap a card to see components, cost math, and edit.
+          </p>
+        </div>
+        {session.role === Role.MANAGER ? (
+          <Link
+            href="/recipes/new"
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-amber-500 px-4 text-sm font-semibold text-white shadow-sm hover:bg-amber-500/90"
+          >
+            <Plus className="size-4" />
+            New recipe
+          </Link>
+        ) : null}
+      </header>
 
       {archivedCount > 0 ? (
         <div className="flex items-center justify-between rounded-xl border border-muted-foreground/20 bg-muted/30 px-4 py-2 text-xs">
@@ -57,86 +64,61 @@ export default async function RecipesPage({
         </div>
       ) : null}
 
-      {/* Recipe list */}
       {recipes.length === 0 ? (
         <section className="brutal-card p-8 text-center">
           <p className="text-base font-medium">No recipes yet.</p>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            Recipes appear here once you sync a POS catalog or import menu
-            items. Connect Square from the{" "}
-            <Link href="/pos-mapping" className="underline">
-              Sales link
-            </Link>{" "}
-            page to bootstrap recipes for every item you sell.
+            Recipes appear here once you sync a POS catalog, or tap{" "}
+            <span className="font-semibold">New recipe</span> to start from
+            scratch.
           </p>
         </section>
-      ) : null}
-      <section className="grid gap-3 lg:grid-cols-2">
-        {recipes.map((recipe) => (
-          <Link
-            key={recipe.id}
-            href={`/recipes/${recipe.id}`}
-            className="brutal-card group p-4"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{recipe.menuItemVariant.name}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {recipe.menuItemVariant.menuItem.name}
-                </p>
-              </div>
-              <StatusBadge
-                label={
-                  recipe.status === "APPROVED"
-                    ? "Approved"
-                    : recipe.status === "ARCHIVED"
-                      ? "Archived"
-                      : "Review"
-                }
-                tone={
-                  recipe.status === "APPROVED"
-                    ? "success"
-                    : recipe.status === "ARCHIVED"
-                      ? "neutral"
-                      : "warning"
-                }
-              />
-            </div>
-
-            <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-              <span>{recipe.components.length} component{recipe.components.length !== 1 ? "s" : ""}</span>
-              <span>{Math.round(recipe.confidenceScore * 100)}% confidence</span>
-              <span>{Math.round(recipe.completenessScore * 100)}% complete</span>
-            </div>
-
-            {recipe.aiSummary && (
-              <p className="mt-2 text-xs text-muted-foreground line-clamp-1">{recipe.aiSummary}</p>
-            )}
-
-            <div className="mt-3 flex items-center gap-1 text-xs font-medium text-muted-foreground">
-              Open recipe
-              <ArrowRight className="size-3 opacity-0 transition-opacity group-hover:opacity-100" />
-            </div>
-          </Link>
-        ))}
-      </section>
-    </div>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  highlight,
-}: {
-  label: string;
-  value: number;
-  highlight?: "warning";
-}) {
-  return (
-    <div className="brutal-card p-4">
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className={`mt-2 text-2xl font-semibold tabular-nums ${highlight === "warning" ? "text-amber-500" : ""}`}>{value}</p>
+      ) : (
+        <section className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
+          {recipes.map((recipe) => {
+            const image = recipe.menuItemVariant.menuItem.imageUrl;
+            const name = recipe.menuItemVariant.name;
+            return (
+              <Link
+                key={recipe.id}
+                href={`/recipes/${recipe.id}`}
+                className="group overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+              >
+                <div className="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-amber-50 to-orange-100 dark:from-stone-800 dark:to-stone-900">
+                  {image ? (
+                    // Plain img so we don't need Next image loader config for arbitrary URLs.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={image}
+                      alt={name}
+                      className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-4xl font-bold text-amber-500/40">
+                      {name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  {recipe.status !== "APPROVED" ? (
+                    <div className="absolute left-2 top-2">
+                      <StatusBadge
+                        label={
+                          recipe.status === "ARCHIVED" ? "Archived" : "Draft"
+                        }
+                        tone={
+                          recipe.status === "ARCHIVED" ? "neutral" : "warning"
+                        }
+                      />
+                    </div>
+                  ) : null}
+                </div>
+                <div className="p-3">
+                  <p className="truncate text-sm font-medium">{name}</p>
+                </div>
+              </Link>
+            );
+          })}
+        </section>
+      )}
     </div>
   );
 }

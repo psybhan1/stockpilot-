@@ -172,7 +172,18 @@ export async function getRecipeDetail(locationId: string, recipeId: string) {
     },
     include: {
       menuItemVariant: { include: { menuItem: true } },
-      components: { include: { inventoryItem: true } },
+      components: {
+        include: {
+          inventoryItem: {
+            include: {
+              supplierItems: {
+                orderBy: [{ preferred: "desc" }],
+                take: 1,
+              },
+            },
+          },
+        },
+      },
       mappings: {
         include: {
           posVariation: true,
@@ -180,6 +191,40 @@ export async function getRecipeDetail(locationId: string, recipeId: string) {
       },
     },
   });
+}
+
+export async function getMenuPickerData(locationId: string) {
+  const [inventoryItems, menuItemVariants] = await Promise.all([
+    db.inventoryItem.findMany({
+      where: { locationId },
+      select: {
+        id: true,
+        name: true,
+        displayUnit: true,
+        baseUnit: true,
+        category: true,
+        supplierItems: {
+          orderBy: [{ preferred: "desc" }],
+          select: { lastUnitCostCents: true, packSizeBase: true },
+          take: 1,
+        },
+      },
+      orderBy: [{ name: "asc" }],
+    }),
+    db.menuItemVariant.findMany({
+      where: {
+        menuItem: { locationId },
+        recipeVersions: { none: { status: { not: "ARCHIVED" } } },
+      },
+      select: {
+        id: true,
+        name: true,
+        menuItem: { select: { name: true, imageUrl: true } },
+      },
+      orderBy: [{ name: "asc" }],
+    }),
+  ]);
+  return { inventoryItems, menuItemVariants };
 }
 
 export async function getPosMappingData(locationId: string) {
