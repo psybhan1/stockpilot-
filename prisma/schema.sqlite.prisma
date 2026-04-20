@@ -626,6 +626,9 @@ model Recipe {
   confidenceScore   Float                @default(0)
   notes             String?
   targetMarginPercent Float?
+  stockPilotOwnsPrice Boolean            @default(false)
+  salePriceCents      Int?
+  lastPushedToPosAt   DateTime?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
   location          Location             @relation(fields: [locationId], references: [id], onDelete: Cascade)

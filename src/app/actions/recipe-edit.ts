@@ -8,6 +8,7 @@ import { db } from "@/lib/db";
 import { Role } from "@/lib/domain-enums";
 import { MeasurementUnit, RecipeStatus } from "@/lib/prisma";
 import { requireSession } from "@/modules/auth/session";
+import { pushRecipeToSquare } from "@/modules/pos/square-push";
 
 async function assertRecipe(locationId: string, recipeId: string) {
   const recipe = await db.recipe.findFirst({
@@ -195,6 +196,44 @@ export async function saveLocationDefaultMarginAction(input: {
   revalidatePath("/recipes");
   revalidatePath("/settings");
   return { ok: true };
+}
+
+export async function approveRecommendedPriceAction(input: {
+  recipeId: string;
+  salePriceCents: number;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const session = await requireSession(Role.MANAGER);
+  const recipe = await db.recipe.findFirst({
+    where: { id: input.recipeId, locationId: session.locationId },
+    select: { id: true },
+  });
+  if (!recipe) return { ok: false, reason: "Recipe not found." };
+  const cents = Math.max(0, Math.round(input.salePriceCents));
+  await db.recipe.update({
+    where: { id: recipe.id },
+    data: {
+      salePriceCents: cents,
+      stockPilotOwnsPrice: true,
+    },
+  });
+  revalidatePath(`/recipes/${recipe.id}`);
+  return { ok: true };
+}
+
+export async function pushRecipeToSquareAction(input: {
+  recipeId: string;
+}): Promise<
+  | { ok: true; pushedFields: string[] }
+  | { ok: false; reason: string }
+> {
+  const session = await requireSession(Role.MANAGER);
+  const result = await pushRecipeToSquare({
+    locationId: session.locationId,
+    recipeId: input.recipeId,
+  });
+  revalidatePath(`/recipes/${input.recipeId}`);
+  if (!result.ok) return result;
+  return { ok: true, pushedFields: result.pushedFields };
 }
 
 export async function createBlankRecipeFormAction(formData: FormData) {

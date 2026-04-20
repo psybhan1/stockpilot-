@@ -898,6 +898,18 @@ export async function updateAutoApproveThresholdAction(formData: FormData) {
   revalidateOperations();
 }
 
+export async function updateDefaultMarginAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const raw = String(formData.get("defaultMarginPercent") ?? "").trim();
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 95) return;
+  await db.location.update({
+    where: { id: session.locationId },
+    data: { defaultMarginPercent: Math.round(parsed) },
+  });
+  revalidateOperations();
+}
+
 export async function approveRecipeAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const recipeId = String(formData.get("recipeId") ?? "");

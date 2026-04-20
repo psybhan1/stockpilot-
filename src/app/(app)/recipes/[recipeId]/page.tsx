@@ -136,6 +136,17 @@ export default async function RecipeDetailPage({
         initialMarginPercent={recipe.targetMarginPercent ?? null}
         locationDefaultMarginPercent={location?.defaultMarginPercent ?? 70}
         canEdit={canEdit}
+        approvedSalePriceCents={recipe.salePriceCents ?? null}
+        stockPilotOwnsPrice={recipe.stockPilotOwnsPrice}
+        hasSquareMapping={recipe.mappings.some(
+          (m) => m.posVariation !== null,
+        )}
+        posPriceCents={
+          recipe.mappings[0]?.posVariation?.priceCents ?? null
+        }
+        lastPushedAt={
+          recipe.lastPushedToPosAt ? recipe.lastPushedToPosAt.toISOString() : null
+        }
       />
 
       {canEdit ? <RecipeChatPanel recipeId={recipe.id} /> : null}

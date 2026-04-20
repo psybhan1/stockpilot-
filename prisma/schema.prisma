@@ -666,6 +666,16 @@ model Recipe {
   /// Location.defaultMarginPercent. Used to compute the recommended
   /// sale price from the recipe's ingredient cost.
   targetMarginPercent Float?
+  /// If true, StockPilot created this recipe first and owns the sale
+  /// price — a push to Square will write price_money. If false (the
+  /// default, for Square-originated recipes), pushes skip price.
+  stockPilotOwnsPrice Boolean            @default(false)
+  /// Sale price in cents. Set by StockPilot when the owner approves a
+  /// recommended price and pushes it to Square. null = never pushed.
+  salePriceCents      Int?
+  /// Last time a StockPilot-side change was pushed to Square. Used
+  /// for conflict resolution in the other direction later.
+  lastPushedToPosAt   DateTime?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
   location          Location             @relation(fields: [locationId], references: [id], onDelete: Cascade)

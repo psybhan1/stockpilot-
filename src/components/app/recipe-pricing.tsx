@@ -2,9 +2,14 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { TrendingUp } from "lucide-react";
+import { Check, TrendingUp, Upload } from "lucide-react";
 
-import { saveRecipeMarginAction } from "@/app/actions/recipe-edit";
+import {
+  approveRecommendedPriceAction,
+  pushRecipeToSquareAction,
+  saveRecipeMarginAction,
+} from "@/app/actions/recipe-edit";
+import { Button } from "@/components/ui/button";
 import { formatCents, recommendedPriceCents } from "@/modules/recipes/cost";
 
 export function RecipePricing({
@@ -14,6 +19,11 @@ export function RecipePricing({
   initialMarginPercent,
   locationDefaultMarginPercent,
   canEdit,
+  approvedSalePriceCents,
+  stockPilotOwnsPrice,
+  hasSquareMapping,
+  posPriceCents,
+  lastPushedAt,
 }: {
   recipeId: string;
   totalCostCents: number;
@@ -21,6 +31,11 @@ export function RecipePricing({
   initialMarginPercent: number | null;
   locationDefaultMarginPercent: number;
   canEdit: boolean;
+  approvedSalePriceCents: number | null;
+  stockPilotOwnsPrice: boolean;
+  hasSquareMapping: boolean;
+  posPriceCents: number | null;
+  lastPushedAt: string | null;
 }) {
   const router = useRouter();
   const [margin, setMargin] = useState<number>(
@@ -30,6 +45,7 @@ export function RecipePricing({
     initialMarginPercent !== null,
   );
   const [isPending, startTransition] = useTransition();
+  const [pushMessage, setPushMessage] = useState<string | null>(null);
 
   const recommended = useMemo(
     () =>
@@ -43,6 +59,33 @@ export function RecipePricing({
         recipeId,
         targetMarginPercent: nextMargin,
       });
+      router.refresh();
+    });
+  }
+
+  function approvePrice() {
+    if (recommended === null) return;
+    setPushMessage(null);
+    startTransition(async () => {
+      await approveRecommendedPriceAction({
+        recipeId,
+        salePriceCents: recommended,
+      });
+      router.refresh();
+    });
+  }
+
+  function pushToSquare() {
+    setPushMessage(null);
+    startTransition(async () => {
+      const res = await pushRecipeToSquareAction({ recipeId });
+      if (!res.ok) {
+        setPushMessage(`⚠ ${res.reason}`);
+        return;
+      }
+      setPushMessage(
+        `Pushed to Square: ${res.pushedFields.join(", ") || "no changes"}.`,
+      );
       router.refresh();
     });
   }
@@ -131,10 +174,59 @@ export function RecipePricing({
           </div>
         </div>
       )}
-      <p className="mt-3 text-[11px] text-muted-foreground">
-        This is a recommendation only — sale prices on Square stay untouched
-        until you tap &quot;push to Square&quot; (coming next).
-      </p>
+      {canEdit && !missingCost ? (
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-emerald-500/20 pt-3">
+          {recommended !== null &&
+          recommended !== approvedSalePriceCents ? (
+            <Button
+              type="button"
+              onClick={approvePrice}
+              disabled={isPending}
+              variant="outline"
+              size="sm"
+              className="gap-1 rounded-xl border-emerald-500/60 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
+            >
+              <Check className="size-3.5" />
+              Approve {formatCents(recommended)} as StockPilot price
+            </Button>
+          ) : null}
+          {approvedSalePriceCents !== null ? (
+            <div className="text-[11px] text-muted-foreground">
+              Approved: {formatCents(approvedSalePriceCents)}
+              {stockPilotOwnsPrice ? " · StockPilot-owned" : ""}
+            </div>
+          ) : null}
+          {hasSquareMapping ? (
+            <Button
+              type="button"
+              onClick={pushToSquare}
+              disabled={isPending}
+              size="sm"
+              className="gap-1 rounded-xl bg-emerald-500 hover:bg-emerald-500/90"
+            >
+              <Upload className="size-3.5" />
+              Push to Square
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {hasSquareMapping ? (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Square price: {formatCents(posPriceCents)}
+          {lastPushedAt
+            ? ` · last pushed ${new Date(lastPushedAt).toLocaleDateString()}`
+            : ""}
+        </p>
+      ) : (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          No Square variant linked — connect this recipe via the POS mapping
+          first.
+        </p>
+      )}
+      {pushMessage ? (
+        <p className="mt-1 text-[11px] text-foreground">{pushMessage}</p>
+      ) : null}
     </section>
   );
 }

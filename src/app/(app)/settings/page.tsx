@@ -16,6 +16,7 @@ import {
   startWhatsAppBotConnectAction,
   syncSalesAction,
   updateAutoApproveThresholdAction,
+  updateDefaultMarginAction,
 } from "@/app/actions/operations";
 import { CloverConnectButton } from "@/components/app/clover-connect-button";
 import { PageHero } from "@/components/app/page-hero";
@@ -114,7 +115,10 @@ export default async function SettingsPage({
     }),
     db.location.findUniqueOrThrow({
       where: { id: session.locationId },
-      select: { autoApproveEmailUnderCents: true },
+      select: {
+        autoApproveEmailUnderCents: true,
+        defaultMarginPercent: true,
+      },
     }),
   ]);
 
@@ -747,6 +751,48 @@ export default async function SettingsPage({
             </form>
           </details>
         ) : null}
+      </Section>
+
+      {/* ─── Pricing automation ─── */}
+      <Section
+        title="Pricing"
+        description="Default profit margin StockPilot uses when recommending sale prices. Each recipe can override."
+      >
+        <form
+          action={updateDefaultMarginAction}
+          className="rounded-xl border border-border/50 bg-card p-5"
+        >
+          <label
+            htmlFor="default-margin"
+            className="block text-sm font-semibold"
+          >
+            Default target profit margin
+          </label>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            A 70% margin means you want 70¢ of every sale dollar to be
+            profit after ingredient cost. StockPilot uses this to
+            recommend prices you can approve + push to Square.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              id="default-margin"
+              name="defaultMarginPercent"
+              type="number"
+              min="0"
+              max="95"
+              step="1"
+              defaultValue={locationSettings.defaultMarginPercent ?? 70}
+              className="h-9 w-24 rounded-md border border-border/50 bg-background px-3 text-sm"
+            />
+            <span className="text-sm text-muted-foreground">%</span>
+            <Button type="submit" size="sm" className="h-9 text-xs">
+              Save
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Currently: {locationSettings.defaultMarginPercent ?? 70}%
+            </span>
+          </div>
+        </form>
       </Section>
 
       {/* ─── Ordering automation ─── */}
