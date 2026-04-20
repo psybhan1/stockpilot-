@@ -71,3 +71,22 @@ export function formatCents(cents: number | null): string {
   if (cents === null) return "—";
   return `$${(cents / 100).toFixed(2)}`;
 }
+
+/**
+ * Recommend a sale price given the recipe's total ingredient cost and
+ * a target profit margin (0-100 as a percentage). Margin 70 means 70 %
+ * of the sale price is profit → price = cost / (1 - 0.70). Returns
+ * null if cost is 0/unknown. Rounds to the nearest 25 cents so the
+ * number looks like a menu price, not a spreadsheet number.
+ */
+export function recommendedPriceCents(
+  totalCostCents: number,
+  marginPercent: number,
+): number | null {
+  if (!Number.isFinite(totalCostCents) || totalCostCents <= 0) return null;
+  const m = Math.max(0, Math.min(95, marginPercent)) / 100;
+  const raw = totalCostCents / (1 - m);
+  // Round up to nearest $0.25 so $4.12 → $4.25.
+  return Math.ceil(raw / 25) * 25;
+}
+

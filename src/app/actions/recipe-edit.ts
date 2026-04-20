@@ -161,6 +161,42 @@ export async function createBlankRecipeAction(input: {
   return { ok: true, recipeId: recipe.id };
 }
 
+export async function saveRecipeMarginAction(input: {
+  recipeId: string;
+  targetMarginPercent: number | null;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const session = await requireSession(Role.MANAGER);
+  const recipe = await db.recipe.findFirst({
+    where: { id: input.recipeId, locationId: session.locationId },
+    select: { id: true },
+  });
+  if (!recipe) return { ok: false, reason: "Recipe not found." };
+  const m =
+    input.targetMarginPercent === null
+      ? null
+      : Math.max(0, Math.min(95, Math.round(input.targetMarginPercent)));
+  await db.recipe.update({
+    where: { id: recipe.id },
+    data: { targetMarginPercent: m },
+  });
+  revalidatePath(`/recipes/${recipe.id}`);
+  return { ok: true };
+}
+
+export async function saveLocationDefaultMarginAction(input: {
+  defaultMarginPercent: number;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const session = await requireSession(Role.MANAGER);
+  const m = Math.max(0, Math.min(95, Math.round(input.defaultMarginPercent)));
+  await db.location.update({
+    where: { id: session.locationId },
+    data: { defaultMarginPercent: m },
+  });
+  revalidatePath("/recipes");
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
 export async function createBlankRecipeFormAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const menuItemVariantId = String(formData.get("menuItemVariantId") ?? "");

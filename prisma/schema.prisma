@@ -309,6 +309,10 @@ model Location {
   /// small recurring orders (e.g. auto-approve under $200) without
   /// touching Telegram. Doesn't apply to WEBSITE or PHONE suppliers.
   autoApproveEmailUnderCents Int?
+  /// Default target profit margin % (0-100) used to recommend sale
+  /// prices on recipe detail. Each recipe can override with its own
+  /// Recipe.targetMarginPercent.
+  defaultMarginPercent  Float                   @default(70)
   createdAt             DateTime                @default(now())
   updatedAt             DateTime                @updatedAt
   business              Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -658,6 +662,10 @@ model Recipe {
   completenessScore Float                @default(0)
   confidenceScore   Float                @default(0)
   notes             String?
+  /// Override for this recipe's target profit margin %. null = use
+  /// Location.defaultMarginPercent. Used to compute the recommended
+  /// sale price from the recipe's ingredient cost.
+  targetMarginPercent Float?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
   location          Location             @relation(fields: [locationId], references: [id], onDelete: Cascade)

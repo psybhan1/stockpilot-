@@ -5,15 +5,18 @@ import { ArrowLeft } from "lucide-react";
 import { approveRecipeAction } from "@/app/actions/operations";
 import { RecipeChatPanel } from "@/components/app/recipe-chat-panel";
 import { RecipeEditor } from "@/components/app/recipe-editor";
+import { RecipePricing } from "@/components/app/recipe-pricing";
 import { RecipeRepairButton } from "@/components/app/recipe-repair-button";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
+import { db } from "@/lib/db";
 import { Role } from "@/lib/domain-enums";
 import { requireSession } from "@/modules/auth/session";
 import {
   getMenuPickerData,
   getRecipeDetail,
 } from "@/modules/dashboard/queries";
+import { computeRecipeCost } from "@/modules/recipes/cost";
 
 export default async function RecipeDetailPage({
   params,
@@ -29,6 +32,18 @@ export default async function RecipeDetailPage({
 
   const { inventoryItems } = await getMenuPickerData(session.locationId);
   const canEdit = session.role === Role.MANAGER;
+  const location = await db.location.findUnique({
+    where: { id: session.locationId },
+    select: { defaultMarginPercent: true },
+  });
+  const cost = computeRecipeCost(
+    recipe.components.map((c) => ({
+      id: c.id,
+      quantityBase: c.quantityBase,
+      displayUnit: String(c.displayUnit),
+      inventoryItem: c.inventoryItem,
+    })),
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -111,6 +126,15 @@ export default async function RecipeDetailPage({
           category: String(i.category),
           supplierItems: i.supplierItems,
         }))}
+        canEdit={canEdit}
+      />
+
+      <RecipePricing
+        recipeId={recipe.id}
+        totalCostCents={cost.totalCostCents}
+        missingCost={cost.missingCostCount > 0}
+        initialMarginPercent={recipe.targetMarginPercent ?? null}
+        locationDefaultMarginPercent={location?.defaultMarginPercent ?? 70}
         canEdit={canEdit}
       />
 
