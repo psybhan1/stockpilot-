@@ -26,10 +26,14 @@ import { randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import { decryptSecret } from "@/lib/secrets";
-import { PosProviderType } from "@/lib/prisma";
+import {
+  IntegrationStatus,
+  MappingStatus,
+  PosProviderType,
+} from "@/lib/prisma";
 
 export type PushResult =
-  | { ok: true; pushedFields: string[]; pushedAt: Date }
+  | { ok: true; pushedFields: string[]; pushedAt: Date; createdOnSquare?: boolean }
   | { ok: false; reason: string };
 
 export async function pushRecipeToSquare(input: {
@@ -54,11 +58,21 @@ export async function pushRecipeToSquare(input: {
       m.posVariation.catalogItem.integrationId && m.posVariation.externalId,
   );
   if (!mapping) {
-    return {
-      ok: false,
-      reason:
-        "No Square variation linked to this recipe. Map the POS variant first.",
-    };
+    // No Square mapping yet → create a brand-new Square item + variation
+    // and wire it up locally. Uses the recipe's approved price if one
+    // exists; otherwise creates as VARIABLE_PRICING so the POS asks the
+    // barista at sale time (safer than guessing $0).
+    return createNewSquareItem({
+      locationId: input.locationId,
+      recipeId: recipe.id,
+      name: recipe.menuItemVariant.name,
+      description: recipe.aiSummary ?? "",
+      salePriceCents:
+        recipe.stockPilotOwnsPrice && recipe.salePriceCents
+          ? recipe.salePriceCents
+          : null,
+      menuItemVariantId: recipe.menuItemVariantId,
+    });
   }
 
   const integration = await db.posIntegration.findFirst({
@@ -188,6 +202,171 @@ export async function pushRecipeToSquare(input: {
   });
 
   return { ok: true, pushedFields, pushedAt: now };
+}
+
+async function createNewSquareItem(input: {
+  locationId: string;
+  recipeId: string;
+  menuItemVariantId: string;
+  name: string;
+  description: string;
+  salePriceCents: number | null;
+}): Promise<PushResult> {
+  const integration = await db.posIntegration.findFirst({
+    where: {
+      locationId: input.locationId,
+      provider: PosProviderType.SQUARE,
+      status: IntegrationStatus.CONNECTED,
+    },
+    select: { id: true, accessTokenEncrypted: true },
+  });
+  if (!integration) {
+    return {
+      ok: false,
+      reason:
+        "No connected Square integration at this location — connect Square in Settings first.",
+    };
+  }
+  const token = resolveToken(integration.accessTokenEncrypted);
+  if (!token) {
+    return { ok: false, reason: "No Square access token — reconnect Square." };
+  }
+
+  // Square accepts placeholder ids prefixed with "#" that get rewritten
+  // to real ids in the id_mappings response field.
+  const tempItemId = `#item_${randomBytes(6).toString("hex")}`;
+  const tempVarId = `#var_${randomBytes(6).toString("hex")}`;
+
+  const variationData: Record<string, unknown> = {
+    item_id: tempItemId,
+    name: "Regular",
+  };
+  if (input.salePriceCents !== null) {
+    variationData.pricing_type = "FIXED_PRICING";
+    variationData.price_money = {
+      amount: input.salePriceCents,
+      currency: "USD",
+    };
+  } else {
+    variationData.pricing_type = "VARIABLE_PRICING";
+  }
+
+  const payload = {
+    idempotency_key: randomBytes(16).toString("hex"),
+    object: {
+      type: "ITEM",
+      id: tempItemId,
+      item_data: {
+        name: input.name,
+        description: input.description || undefined,
+        variations: [
+          {
+            type: "ITEM_VARIATION",
+            id: tempVarId,
+            item_variation_data: variationData,
+          },
+        ],
+      },
+    },
+  };
+
+  const res = await fetch(`${getApiBase()}/catalog/object`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Square-Version": env.SQUARE_API_VERSION,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return {
+      ok: false,
+      reason: `Square create failed (${res.status}): ${text.slice(0, 200)}`,
+    };
+  }
+  const body = (await res.json()) as {
+    catalog_object?: SquareItemObject;
+    id_mappings?: Array<{ client_object_id: string; object_id: string }>;
+  };
+  const created = body.catalog_object;
+  const idMap = new Map(
+    (body.id_mappings ?? []).map((m) => [m.client_object_id, m.object_id]),
+  );
+  const realItemId = idMap.get(tempItemId) ?? created?.id ?? null;
+  const realVariationId =
+    idMap.get(tempVarId) ??
+    created?.item_data?.variations?.[0]?.id ??
+    null;
+  if (!realItemId || !realVariationId) {
+    return {
+      ok: false,
+      reason: "Square created the item but didn't return ids we can save.",
+    };
+  }
+
+  // Mirror the new Square item in our local catalog tables so future
+  // syncs, sales, and updates all line up.
+  const now = new Date();
+  const catalogItem = await db.posCatalogItem.upsert({
+    where: {
+      integrationId_externalId: {
+        integrationId: integration.id,
+        externalId: realItemId,
+      },
+    },
+    create: {
+      integrationId: integration.id,
+      externalId: realItemId,
+      name: input.name,
+    },
+    update: { name: input.name, updatedAt: now },
+  });
+  const variation = await db.posCatalogVariation.upsert({
+    where: {
+      catalogItemId_externalId: {
+        catalogItemId: catalogItem.id,
+        externalId: realVariationId,
+      },
+    },
+    create: {
+      catalogItemId: catalogItem.id,
+      externalId: realVariationId,
+      name: "Regular",
+      priceCents: input.salePriceCents,
+    },
+    update: { priceCents: input.salePriceCents, updatedAt: now },
+  });
+  await db.posVariationMapping.upsert({
+    where: { posVariationId: variation.id },
+    create: {
+      locationId: input.locationId,
+      posVariationId: variation.id,
+      menuItemVariantId: input.menuItemVariantId,
+      recipeId: input.recipeId,
+      mappingStatus: MappingStatus.READY,
+    },
+    update: {
+      menuItemVariantId: input.menuItemVariantId,
+      recipeId: input.recipeId,
+      mappingStatus: MappingStatus.READY,
+    },
+  });
+  await db.recipe.update({
+    where: { id: input.recipeId },
+    data: { lastPushedToPosAt: now },
+  });
+
+  return {
+    ok: true,
+    pushedAt: now,
+    pushedFields:
+      input.salePriceCents !== null
+        ? ["name", "description", "price", "created"]
+        : ["name", "description", "created"],
+    createdOnSquare: true,
+  };
 }
 
 function resolveToken(encrypted: string | null): string | null {

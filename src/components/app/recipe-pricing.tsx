@@ -196,18 +196,16 @@ export function RecipePricing({
               {stockPilotOwnsPrice ? " · StockPilot-owned" : ""}
             </div>
           ) : null}
-          {hasSquareMapping ? (
-            <Button
-              type="button"
-              onClick={pushToSquare}
-              disabled={isPending}
-              size="sm"
-              className="gap-1 rounded-xl bg-emerald-500 hover:bg-emerald-500/90"
-            >
-              <Upload className="size-3.5" />
-              Push to Square
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            onClick={pushToSquare}
+            disabled={isPending}
+            size="sm"
+            className="gap-1 rounded-xl bg-emerald-500 hover:bg-emerald-500/90"
+          >
+            <Upload className="size-3.5" />
+            {hasSquareMapping ? "Push to Square" : "Create on Square"}
+          </Button>
         </div>
       ) : null}
 
@@ -220,8 +218,8 @@ export function RecipePricing({
         </p>
       ) : (
         <p className="mt-2 text-[11px] text-muted-foreground">
-          No Square variant linked — connect this recipe via the POS mapping
-          first.
+          Not on Square yet — tap &ldquo;Create on Square&rdquo; and this
+          recipe becomes a new sellable item on your till.
         </p>
       )}
       {pushMessage ? (
