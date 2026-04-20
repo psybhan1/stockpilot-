@@ -25,10 +25,25 @@ export async function sendManagerBotWelcomeMessages(input: {
 }
 
 function buildWelcomeMessage(userName: string) {
+  // Teach three commands by example, not by docs dump. Each line is
+  // something the user can copy-paste verbatim and see work — that's
+  // the fastest way to make the bot feel real. Kept short so it
+  // fits Telegram's preview pane without getting truncated.
   return [
-    `StockPilot bot is now connected for ${userName}.`,
-    `You can send: "Whole milk 2 left, order more."`,
-    `I will log the count, fill back to par, and route the order using your supplier workflow.`,
+    `Hey ${userName} — you're connected to StockPilot. 👋`,
+    ``,
+    `Try these three messages to see what I can do (copy/paste any of them):`,
+    ``,
+    `1. "we need milk"`,
+    `   → I'll ask which one, then draft an order.`,
+    ``,
+    `2. "12 oat milk left"`,
+    `   → Logs the count, auto-orders if you're below par.`,
+    ``,
+    `3. "what's low"`,
+    `   → I'll list anything approaching its low-stock threshold.`,
+    ``,
+    `Voice notes work too. Approvals come back to you here with tap buttons.`,
   ].join("\n");
 }
 

@@ -1,10 +1,12 @@
 "use server";
 
+import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Role } from "@/lib/domain-enums";
-import { NotificationChannel, MovementType, SupplierOrderingMode } from "@/lib/prisma";
+import { ChannelType, NotificationChannel, MovementType, SupplierOrderingMode } from "@/lib/prisma";
+import type { Prisma } from "@/lib/prisma";
 
 import { createAuditLogTx } from "@/lib/audit";
 import { db } from "@/lib/db";
@@ -14,6 +16,7 @@ import {
   AgentTaskStatus,
   BotChannel,
   JobType,
+  PosProviderType,
 } from "@/lib/prisma";
 import {
   acknowledgePurchaseOrder,
@@ -24,7 +27,13 @@ import {
   markPurchaseOrderSent,
   rejectRecommendation,
 } from "@/modules/purchasing/service";
-import { ensureSquareIntegration, importSampleSales } from "@/modules/pos/service";
+import {
+  disconnectPosIntegration,
+  ensureCloverIntegration,
+  ensureShopifyIntegration,
+  ensureSquareIntegration,
+  importSampleSales,
+} from "@/modules/pos/service";
 import { requireSession } from "@/modules/auth/session";
 import { runPendingJobs } from "@/modules/jobs/dispatcher";
 import {
@@ -40,6 +49,14 @@ import {
   getTelegramBotUsername,
   isPublicAppUrl,
 } from "@/modules/operator-bot/connect";
+import {
+  startTelegramChannelPairing,
+  disconnectTelegramChannel,
+  startWhatsAppChannelPairing,
+  disconnectWhatsAppChannel,
+  connectSmtpEmailChannel,
+  disconnectEmailChannel,
+} from "@/modules/channels/service";
 import {
   buildTelegramOidcAuthorizationUrl,
   createTelegramOidcSession,
@@ -87,13 +104,750 @@ function revalidatePurchaseOrderPaths(purchaseOrderId: string, supplierId?: stri
   }
 }
 
+/**
+ * Creates (or resets) a generic-webhook POS integration for the
+ * current location. The admin picks a POS vendor (Toast, Clover,
+ * Lightspeed, Shopify, or just "Generic / Zapier") and we
+ * immediately mint a 32-byte URL-safe secret, store it inside
+ * PosIntegration.settings.webhookSecret, and redirect back so the
+ * Settings UI can display the webhook URL + secret for copy-paste
+ * into the chosen POS (directly for vendors that support custom
+ * webhooks, or via a Zapier / Make / n8n hop for vendors that
+ * don't). `/api/pos/webhook` then accepts sales and writes
+ * POS_DEPLETION via PosSimpleMapping.
+ */
+export async function connectGenericPosAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const providerRaw = (readStringValue(formData, "provider") ?? "").toUpperCase();
+  const allowed = new Set([
+    "TOAST",
+    "CLOVER",
+    "LIGHTSPEED",
+    "SHOPIFY",
+    "GENERIC_WEBHOOK",
+  ]);
+  if (!allowed.has(providerRaw)) {
+    redirect(
+      `/settings?channelConnect=error&channelType=pos&channelDetail=${encodeURIComponent(
+        "Unknown POS provider."
+      )}`
+    );
+  }
+  const provider = providerRaw as
+    | "TOAST"
+    | "CLOVER"
+    | "LIGHTSPEED"
+    | "SHOPIFY"
+    | "GENERIC_WEBHOOK";
+
+  const secret = `pos_${randomBytes(32).toString("base64url")}`;
+
+  const existing = await db.posIntegration.findFirst({
+    where: { locationId: session.locationId, provider },
+    select: { id: true },
+  });
+
+  if (existing) {
+    await db.posIntegration.update({
+      where: { id: existing.id },
+      data: {
+        status: "CONNECTED",
+        settings: { webhookSecret: secret },
+        lastSyncedAt: new Date(),
+      },
+    });
+  } else {
+    await db.posIntegration.create({
+      data: {
+        locationId: session.locationId,
+        provider,
+        status: "CONNECTED",
+        sandbox: false,
+        settings: { webhookSecret: secret },
+      },
+    });
+  }
+
+  await db.auditLog.create({
+    data: {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "integration.pos.generic_connected",
+      entityType: "posIntegration",
+      entityId: session.locationId,
+      details: { provider },
+    },
+  });
+
+  revalidateOperations();
+  redirect(`/settings?channelConnect=connected&channelType=pos`);
+}
+
+/**
+ * Wires an external POS product id to an inventory item. Used from
+ * /pos-mapping's "Unmapped POS products" section: admin sees every
+ * product id the webhook has received sales for, picks an inventory
+ * item from a dropdown + qty per sale, hits Save. Future webhook
+ * sales for that external product auto-deplete.
+ *
+ * Tenant-scoped: we verify both the integration and the inventory
+ * item belong to the caller's location before writing.
+ */
+export async function saveSimpleMappingAction(formData: FormData) {
+  const session = await requireSession(Role.SUPERVISOR);
+  const integrationId = (readStringValue(formData, "integrationId") ?? "").trim();
+  const externalProductId = (
+    readStringValue(formData, "externalProductId") ?? ""
+  ).trim();
+  const externalProductName = readNullableStringValue(
+    formData,
+    "externalProductName"
+  );
+  const inventoryItemId = (readStringValue(formData, "inventoryItemId") ?? "").trim();
+  const quantityPerSaleBase = Math.max(
+    1,
+    readIntegerValue(formData, "quantityPerSaleBase", 1)
+  );
+
+  if (!integrationId || !externalProductId || !inventoryItemId) {
+    redirect(
+      `/pos-mapping?channelConnect=error&channelDetail=${encodeURIComponent(
+        "Missing integration, external product, or inventory item."
+      )}`
+    );
+  }
+
+  const [integration, inventoryItem] = await Promise.all([
+    db.posIntegration.findFirst({
+      where: { id: integrationId, locationId: session.locationId },
+      select: { id: true },
+    }),
+    db.inventoryItem.findFirst({
+      where: { id: inventoryItemId, locationId: session.locationId },
+      select: { id: true, name: true },
+    }),
+  ]);
+  if (!integration || !inventoryItem) {
+    redirect(
+      `/pos-mapping?channelConnect=error&channelDetail=${encodeURIComponent(
+        "Integration or inventory item belongs to another location."
+      )}`
+    );
+  }
+
+  await db.posSimpleMapping.upsert({
+    where: {
+      integrationId_externalProductId: {
+        integrationId,
+        externalProductId,
+      },
+    },
+    update: {
+      inventoryItemId,
+      quantityPerSaleBase,
+      externalProductName: externalProductName ?? undefined,
+    },
+    create: {
+      locationId: session.locationId,
+      integrationId,
+      externalProductId,
+      externalProductName: externalProductName ?? null,
+      inventoryItemId,
+      quantityPerSaleBase,
+    },
+  });
+
+  // Backfill: replay every past webhook sale line for this product
+  // that came in before the mapping was saved. Otherwise "I sold 25
+  // lattes before I got around to mapping it" silently eats the
+  // depletion. Dedup by external line id via postStockMovementTx's
+  // sourceId — any lines that already depleted through a different
+  // path (shouldn't happen, but belt + braces) get a no-op.
+  const pastLines = await db.posSaleLine.findMany({
+    where: {
+      saleEvent: {
+        locationId: session.locationId,
+        integrationId,
+      },
+      // Filter on the JSON column by rawData.externalProductId. Prisma
+      // supports this via the path syntax on Postgres JSON fields.
+      rawData: {
+        path: ["externalProductId"],
+        equals: externalProductId,
+      },
+    },
+    select: {
+      id: true,
+      externalLineId: true,
+      quantity: true,
+      saleEventId: true,
+      saleEvent: { select: { id: true, occurredAt: true } },
+    },
+  });
+
+  // Dedup against movements we already posted for these lines so
+  // hitting Save twice doesn't double-deplete.
+  const alreadyPosted = await db.stockMovement.findMany({
+    where: {
+      locationId: session.locationId,
+      movementType: MovementType.POS_DEPLETION,
+      sourceType: "pos_webhook",
+      sourceId: { in: pastLines.map((l) => l.externalLineId) },
+    },
+    select: { sourceId: true },
+  });
+  const postedLineIds = new Set(alreadyPosted.map((m) => m.sourceId));
+
+  let backfilled = 0;
+  for (const line of pastLines) {
+    if (postedLineIds.has(line.externalLineId)) continue;
+    await db.$transaction(async (tx) => {
+      const { postStockMovementTx } = await import(
+        "@/modules/inventory/ledger"
+      );
+      await postStockMovementTx(tx, {
+        locationId: session.locationId,
+        inventoryItemId,
+        quantityDeltaBase: -1 * quantityPerSaleBase * line.quantity,
+        movementType: MovementType.POS_DEPLETION,
+        sourceType: "pos_webhook",
+        sourceId: line.externalLineId,
+        metadata: {
+          saleEventId: line.saleEventId,
+          externalProductId,
+          externalProductName,
+          backfilled: true,
+        },
+      });
+    });
+    backfilled += 1;
+  }
+
+  // Resolve the alert if one was open for this product so it doesn't
+  // keep nagging the owner.
+  await db.alert.updateMany({
+    where: {
+      locationId: session.locationId,
+      id: `pos-unmapped-${integrationId}-${externalProductId}`,
+    },
+    data: { status: "RESOLVED", resolvedAt: new Date() },
+  });
+
+  await db.auditLog.create({
+    data: {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "pos.simple_mapping_saved",
+      entityType: "posSimpleMapping",
+      entityId: `${integrationId}:${externalProductId}`,
+      details: {
+        externalProductId,
+        externalProductName,
+        inventoryItemId,
+        quantityPerSaleBase,
+      },
+    },
+  });
+
+  revalidateOperations();
+  redirect("/pos-mapping");
+}
+
+/**
+ * WhatsApp equivalent of sendTestTelegramAction — fires a hello
+ * through Twilio to the admin's paired WhatsApp number. Verifies
+ * the Twilio credentials are live and the WhatsApp sandbox (or
+ * production template) accepts sends.
+ */
+export async function sendTestWhatsAppAction() {
+  const session = await requireSession(Role.MANAGER);
+
+  const user = await db.user.findUniqueOrThrow({
+    where: { id: session.userId },
+    select: { phoneNumber: true, name: true },
+  });
+  if (!user.phoneNumber) {
+    redirect(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
+        "No WhatsApp number paired — tap Connect WhatsApp first."
+      )}`
+    );
+  }
+  if (
+    !env.TWILIO_ACCOUNT_SID ||
+    !env.TWILIO_AUTH_TOKEN ||
+    !env.TWILIO_WHATSAPP_FROM
+  ) {
+    redirect(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
+        "Twilio WhatsApp credentials aren't configured on the server."
+      )}`
+    );
+  }
+
+  try {
+    const { TwilioWhatsAppNotificationProvider } = await import(
+      "@/providers/notification/twilio-whatsapp"
+    );
+    const provider = new TwilioWhatsAppNotificationProvider({
+      accountSid: env.TWILIO_ACCOUNT_SID,
+      authToken: env.TWILIO_AUTH_TOKEN,
+      fromNumber: env.TWILIO_WHATSAPP_FROM,
+    });
+    const first = user.name.split(" ")[0] ?? "there";
+    await provider.sendNotification({
+      channel: NotificationChannel.WHATSAPP,
+      recipient: user.phoneNumber,
+      body: `Hey ${first} — StockPilot WhatsApp test. If you're reading this, the full bridge works.`,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("NEXT_REDIRECT")) throw err;
+    redirect(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
+        `WhatsApp send failed: ${message.slice(0, 200)}`
+      )}`
+    );
+  }
+
+  revalidateOperations();
+  redirect(
+    `/settings?channelConnect=connected&channelType=whatsapp&channelDetail=${encodeURIComponent(
+      `Test message sent to ${user.phoneNumber}.`
+    )}`
+  );
+}
+
+/**
+ * Fires a short hello message at the admin's own Telegram chat so
+ * they can verify end-to-end pairing works (bot token is live,
+ * chat id is linked, message actually lands on their phone). Zero
+ * side-effects — pure send-and-forget.
+ */
+export async function sendTestTelegramAction() {
+  const session = await requireSession(Role.MANAGER);
+
+  const user = await db.user.findUniqueOrThrow({
+    where: { id: session.userId },
+    select: { telegramChatId: true, name: true },
+  });
+  if (!user.telegramChatId) {
+    redirect(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
+        "No Telegram chat id stored — pair Telegram first."
+      )}`
+    );
+  }
+
+  try {
+    const { sendTelegramMessage } = await import("@/lib/telegram-bot");
+    const first = user.name.split(" ")[0] ?? "there";
+    const result = await sendTelegramMessage(
+      user.telegramChatId,
+      `👋 Hey ${first} — this is a Telegram test from StockPilot.\n\n` +
+        `If you're reading this on your phone, the full bot loop works:\n` +
+        `• Message from app to you (what you're looking at)\n` +
+        `• Reply from you to bot (try typing "what's low")\n` +
+        `• Bot responds with real data from your inventory\n\n` +
+        `That's the whole channel — nothing else to set up.`
+    );
+    if ("skipped" in result && result.skipped) {
+      redirect(
+        `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
+          `Telegram not configured: ${"reason" in result ? result.reason : "missing bot token"}`
+        )}`
+      );
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("NEXT_REDIRECT")) throw err;
+    redirect(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
+        `Telegram send failed: ${message.slice(0, 200)}`
+      )}`
+    );
+  }
+
+  revalidateOperations();
+  redirect(
+    `/settings?channelConnect=connected&channelType=telegram&channelDetail=${encodeURIComponent(
+      "Test message sent to Telegram. Check your phone."
+    )}`
+  );
+}
+
+/**
+ * Send a short "StockPilot test email" to the admin's own email
+ * using whichever outbound provider is configured. Zero-setup
+ * tenants get the mailto fallback (opens their own mail client).
+ * Gmail-connected tenants send via Gmail. Resend-connected tenants
+ * send via Resend. Tells the admin immediately whether their
+ * outbound pipeline is actually live, instead of them having to
+ * create a real PO to find out.
+ */
+export async function sendTestEmailAction() {
+  const session = await requireSession(Role.MANAGER);
+
+  const user = await db.user.findUniqueOrThrow({
+    where: { id: session.userId },
+    select: { email: true, name: true },
+  });
+
+  const { getSupplierOrderProviderForLocation, describeSupplierOrderProvider } =
+    await import("@/providers/supplier-order-provider");
+  const provider = await getSupplierOrderProviderForLocation(session.locationId);
+  const describe = await describeSupplierOrderProvider(session.locationId);
+
+  try {
+    const result = await provider.sendApprovedOrder({
+      recipient: user.email,
+      subject: "StockPilot · test email",
+      body:
+        `Hi ${user.name.split(" ")[0] ?? "there"},\n\n` +
+        `This is a test email from StockPilot sent through your configured provider ` +
+        `(${describe.name}). If you're reading this, your outbound email pipeline works end-to-end ` +
+        `— real purchase orders will go out the same way.\n\n` +
+        `— StockPilot`,
+    });
+
+    if (result.simulated && result.mailto) {
+      // Zero-config tap-to-send path: we can't silently self-send;
+      // surface the mailto: in the banner so the admin can still
+      // verify by tapping it.
+      redirect(
+        `/settings?channelConnect=connected&channelType=email&channelDetail=${encodeURIComponent(
+          "Tap-to-send path confirmed. To really verify, open your phone's mail app via any Telegram PO — that path does open the mailto: automatically."
+        )}`
+      );
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("NEXT_REDIRECT")) throw err;
+    redirect(
+      `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+        `Test email failed via ${describe.name}: ${message.slice(0, 200)}`
+      )}`
+    );
+  }
+
+  revalidateOperations();
+  redirect(
+    `/settings?channelConnect=connected&channelType=email&channelDetail=${encodeURIComponent(
+      `Test email sent via ${describe.name} to ${user.email}. Check your inbox.`
+    )}`
+  );
+}
+
+/**
+ * Fires a synthetic test sale against our own /api/pos/webhook for
+ * a specific integration, using the stored secret. Lets the admin
+ * verify the webhook is wired end-to-end (alert → unmapped → mapping
+ * → deplete) *before* they go configure Zapier. Result is surfaced
+ * via the channelConnect banner.
+ */
+export async function sendTestPosSaleAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const integrationId = (readStringValue(formData, "integrationId") ?? "").trim();
+  if (!integrationId) return;
+
+  const integration = await db.posIntegration.findFirst({
+    where: { id: integrationId, locationId: session.locationId },
+    select: { id: true, provider: true, settings: true },
+  });
+  if (!integration) return;
+
+  const storedSecret =
+    integration.settings && typeof integration.settings === "object"
+      ? (integration.settings as Record<string, unknown>).webhookSecret
+      : null;
+  if (typeof storedSecret !== "string") {
+    redirect(
+      `/settings?channelConnect=error&channelType=pos&channelDetail=${encodeURIComponent(
+        "No webhook secret stored — click Connect first."
+      )}`
+    );
+  }
+
+  const appUrl = env.APP_URL?.replace(/\/$/, "") ?? "";
+  try {
+    const res = await fetch(`${appUrl}/api/pos/webhook`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${storedSecret}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        externalOrderId: `test-${Date.now()}`,
+        occurredAt: new Date().toISOString(),
+        lineItems: [
+          {
+            externalProductId: "stockpilot-test-product",
+            externalProductName: "StockPilot test sale",
+            quantity: 1,
+            unitPriceCents: 100,
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      redirect(
+        `/settings?channelConnect=error&channelType=pos&channelDetail=${encodeURIComponent(
+          `Test webhook failed: ${res.status}. ${msg.slice(0, 200)}`
+        )}`
+      );
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("NEXT_REDIRECT")) throw err;
+    redirect(
+      `/settings?channelConnect=error&channelType=pos&channelDetail=${encodeURIComponent(
+        `Test webhook couldn't reach itself: ${message.slice(0, 200)}`
+      )}`
+    );
+  }
+
+  revalidateOperations();
+  redirect(
+    `/settings?channelConnect=connected&channelType=pos&channelDetail=${encodeURIComponent(
+      "Test sale accepted — check /pos-mapping for the new 'StockPilot test sale' unmapped product."
+    )}`
+  );
+}
+
+/**
+ * Rotates the webhook secret for a non-Square POS integration. Used
+ * when a key leaks or a tenant wants to reissue. Old secret stops
+ * working immediately.
+ */
+export async function rotatePosWebhookSecretAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const integrationId = (readStringValue(formData, "integrationId") ?? "").trim();
+  if (!integrationId) return;
+
+  const integration = await db.posIntegration.findFirst({
+    where: { id: integrationId, locationId: session.locationId },
+    select: { id: true, provider: true },
+  });
+  if (!integration) return;
+  if (
+    integration.provider === "SQUARE" ||
+    integration.provider === "MANUAL"
+  ) {
+    return;
+  }
+
+  const secret = `pos_${randomBytes(32).toString("base64url")}`;
+  await db.posIntegration.update({
+    where: { id: integration.id },
+    data: { settings: { webhookSecret: secret } },
+  });
+  revalidateOperations();
+  redirect(`/settings?channelConnect=connected&channelType=pos`);
+}
+
+/**
+ * Popup-friendly variant of connectSquareAction. Returns the authUrl
+ * (or a connected status) instead of server-side redirecting, so the
+ * client can window.open() it in a popup and post-message back on
+ * completion. The classic connectSquareAction still exists for the
+ * degraded full-redirect fallback and for non-JS clients.
+ */
+export async function startSquareConnectAction(): Promise<
+  | { ok: true; status: "redirect"; authUrl: string }
+  | { ok: true; status: "connected" }
+  | { ok: false; reason: string }
+> {
+  const session = await requireSession(Role.MANAGER);
+
+  const { hasRealSquareCredentials } = await import(
+    "@/providers/pos-provider"
+  );
+  if (!hasRealSquareCredentials()) {
+    return {
+      ok: false,
+      reason:
+        "Square OAuth isn't configured yet. Ask the admin to register a Square OAuth app and set SQUARE_CLIENT_ID, SQUARE_CLIENT_SECRET, and SQUARE_WEBHOOK_SIGNATURE_KEY on Railway.",
+    };
+  }
+
+  const result = await ensureSquareIntegration(
+    session.locationId,
+    session.userId
+  );
+
+  if (result.requiresRedirect && result.authUrl) {
+    return { ok: true, status: "redirect", authUrl: result.authUrl };
+  }
+
+  void runPendingJobs(10).catch((err) => {
+    console.error("[startSquareConnectAction] job drain failed:", err);
+  });
+  revalidateOperations();
+
+  return { ok: true, status: "connected" };
+}
+
+/**
+ * Clover equivalent of startSquareConnectAction. Same popup-flow
+ * contract: returns {authUrl} for the client to window.open(), or
+ * {status:"connected"} if the stored PAT revalidated without OAuth.
+ */
+export async function startCloverConnectAction(): Promise<
+  | { ok: true; status: "redirect"; authUrl: string }
+  | { ok: true; status: "connected" }
+  | { ok: false; reason: string }
+> {
+  const session = await requireSession(Role.MANAGER);
+
+  const { env } = await import("@/lib/env");
+  if (!env.CLOVER_CLIENT_ID || !env.CLOVER_CLIENT_SECRET) {
+    return {
+      ok: false,
+      reason:
+        "Clover isn't configured yet. Ask the admin to register a Clover app at clover.com/developers and set CLOVER_CLIENT_ID and CLOVER_CLIENT_SECRET on Railway.",
+    };
+  }
+
+  const result = await ensureCloverIntegration(
+    session.locationId,
+    session.userId
+  );
+
+  if (result.requiresRedirect && result.authUrl) {
+    return { ok: true, status: "redirect", authUrl: result.authUrl };
+  }
+
+  void runPendingJobs(10).catch((err) => {
+    console.error("[startCloverConnectAction] job drain failed:", err);
+  });
+  revalidateOperations();
+
+  return { ok: true, status: "connected" };
+}
+
+/**
+ * Shopify start-connect action. Same popup-flow contract as Square
+ * and Clover, with one extra field: the merchant's shop domain.
+ * Normalised server-side inside ShopifyProvider so "my-cafe",
+ * "my-cafe.myshopify.com", or "https://my-cafe.myshopify.com/admin"
+ * all resolve to the same canonical form.
+ */
+export async function startShopifyConnectAction(input: {
+  shopDomain: string;
+}): Promise<
+  | { ok: true; status: "redirect"; authUrl: string }
+  | { ok: true; status: "connected" }
+  | { ok: false; reason: string }
+> {
+  const session = await requireSession(Role.MANAGER);
+
+  if (!env.SHOPIFY_CLIENT_ID || !env.SHOPIFY_CLIENT_SECRET) {
+    return {
+      ok: false,
+      reason:
+        "Shopify isn't configured yet. Ask the admin to register a Shopify custom app and set SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET on Railway.",
+    };
+  }
+
+  const { normaliseShopifyShopDomain } = await import(
+    "@/providers/pos/shopify"
+  );
+  const shopDomain = normaliseShopifyShopDomain(input.shopDomain ?? "");
+  if (!shopDomain) {
+    return {
+      ok: false,
+      reason:
+        "That doesn't look like a Shopify shop URL. Try the form 'my-cafe.myshopify.com' or just 'my-cafe'.",
+    };
+  }
+
+  const result = await ensureShopifyIntegration(
+    session.locationId,
+    session.userId,
+    shopDomain
+  );
+
+  if (result.requiresRedirect && result.authUrl) {
+    return { ok: true, status: "redirect", authUrl: result.authUrl };
+  }
+
+  revalidateOperations();
+  return { ok: true, status: "connected" };
+}
+
+/**
+ * Disconnect a POS integration. Flips its status to DISCONNECTED,
+ * clears tokens, best-effort revokes at the vendor. Used by the
+ * "Disconnect" link on /settings so merchants can switch POS
+ * themselves without emailing support.
+ */
+export async function disconnectPosIntegrationAction(
+  provider: "SQUARE" | "CLOVER" | "SHOPIFY"
+): Promise<{ ok: true; revokedAtVendor: boolean } | { ok: false; reason: string }> {
+  const session = await requireSession(Role.MANAGER);
+
+  const providerEnum =
+    provider === "SQUARE"
+      ? PosProviderType.SQUARE
+      : provider === "CLOVER"
+        ? PosProviderType.CLOVER
+        : PosProviderType.SHOPIFY;
+
+  try {
+    const result = await disconnectPosIntegration({
+      locationId: session.locationId,
+      provider: providerEnum,
+      userId: session.userId,
+    });
+    revalidateOperations();
+    return { ok: true, revokedAtVendor: result.revokedAtVendor };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Disconnect failed.",
+    };
+  }
+}
+
 export async function connectSquareAction() {
   const session = await requireSession(Role.MANAGER);
+
+  // Hard-fail with a human-readable message when the server doesn't
+  // have Square OAuth credentials configured. Previously the action
+  // silently fake-connected via FakeSquareProvider, which is what
+  // the user saw as "Reconnect doesn't work" — the UI said Connected
+  // but no Square OAuth flow ever opened.
+  const { hasRealSquareCredentials } = await import(
+    "@/providers/pos-provider"
+  );
+  if (!hasRealSquareCredentials()) {
+    redirect(
+      `/settings?channelConnect=error&channelType=pos&channelDetail=${encodeURIComponent(
+        "Square OAuth isn't configured yet. Ask the admin to register a Square OAuth app (developer.squareup.com) and set SQUARE_CLIENT_ID, SQUARE_CLIENT_SECRET, and SQUARE_WEBHOOK_SIGNATURE_KEY on Railway."
+      )}`
+    );
+  }
+
   const result = await ensureSquareIntegration(session.locationId, session.userId);
   if (result.requiresRedirect && result.authUrl) {
     redirect(result.authUrl);
   }
-  await runPendingJobs(10);
+  // Fire-and-forget the job drain. ensureSquareIntegration enqueues
+  // a SYNC_CATALOG job, and we want the click to return fast — a real
+  // café menu can take 30s+ to sync (each item hits the AI provider),
+  // which blows past Railway's HTTP timeout and returns 503 even
+  // though the job itself completes in the background. Decoupling
+  // the HTTP response from the sync makes "Reconnect Square" feel
+  // instant; the Jobs panel and the Square CONNECTED badge already
+  // show progress.
+  void runPendingJobs(10).catch((err) => {
+    console.error(
+      "[connectSquareAction] background job drain failed:",
+      err
+    );
+  });
   revalidateOperations();
 }
 
@@ -111,7 +865,48 @@ export async function syncSalesAction() {
 
 export async function runJobsAction() {
   await requireSession(Role.SUPERVISOR);
-  await runPendingJobs(25);
+  // Same reason as connectSquareAction: awaiting the full batch blows
+  // past Railway's HTTP timeout on any non-trivial queue. Drain in
+  // the background; the Jobs list re-renders and the user can see
+  // RUNNING → COMPLETED transitions.
+  void runPendingJobs(25).catch((err) => {
+    console.error("[runJobsAction] background job drain failed:", err);
+  });
+  revalidateOperations();
+}
+
+export async function updateAutoApproveThresholdAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const raw = String(formData.get("thresholdDollars") ?? "").trim();
+  // Empty input = disable auto-approve. Otherwise must parse as a
+  // non-negative dollar amount (cents is the storage unit).
+  let cents: number | null;
+  if (raw === "" || raw === "0") {
+    cents = null;
+  } else {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      // Silently no-op on bad input — the form accepts numeric only.
+      return;
+    }
+    cents = Math.round(parsed * 100);
+  }
+  await db.location.update({
+    where: { id: session.locationId },
+    data: { autoApproveEmailUnderCents: cents },
+  });
+  revalidateOperations();
+}
+
+export async function updateDefaultMarginAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const raw = String(formData.get("defaultMarginPercent") ?? "").trim();
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 95) return;
+  await db.location.update({
+    where: { id: session.locationId },
+    data: { defaultMarginPercent: Math.round(parsed) },
+  });
   revalidateOperations();
 }
 
@@ -119,13 +914,19 @@ export async function approveRecipeAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const recipeId = String(formData.get("recipeId") ?? "");
 
-  const recipe = await db.recipe.findUniqueOrThrow({
-    where: { id: recipeId },
+  // Tenant guard: the recipe must belong to the session's location.
+  // findFirst with a compound filter returns null on mismatch —
+  // findUniqueOrThrow would accept cross-tenant ids.
+  const recipe = await db.recipe.findFirst({
+    where: { id: recipeId, locationId: session.locationId },
     include: {
       components: true,
       mappings: true,
     },
   });
+  if (!recipe) {
+    throw new Error("Recipe not found at this location.");
+  }
 
   await db.$transaction(async (tx) => {
     for (const component of recipe.components) {
@@ -250,7 +1051,8 @@ export async function approveRecommendationAction(formData: FormData) {
   const purchaseOrder = await approveRecommendation(
     recommendationId,
     session.userId,
-    recommendedPackCount
+    recommendedPackCount,
+    session.locationId
   );
   revalidatePurchaseOrderPaths(purchaseOrder.id, purchaseOrder.supplierId);
 }
@@ -259,7 +1061,7 @@ export async function deferRecommendationAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const recommendationId = String(formData.get("recommendationId") ?? "");
 
-  await deferRecommendation(recommendationId, session.userId);
+  await deferRecommendation(recommendationId, session.userId, session.locationId);
   revalidateOperations();
 }
 
@@ -267,7 +1069,7 @@ export async function rejectRecommendationAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const recommendationId = String(formData.get("recommendationId") ?? "");
 
-  await rejectRecommendation(recommendationId, session.userId);
+  await rejectRecommendation(recommendationId, session.userId, session.locationId);
   revalidateOperations();
 }
 
@@ -329,13 +1131,16 @@ export async function acknowledgeAlertAction(formData: FormData) {
   const session = await requireSession(Role.SUPERVISOR);
   const alertId = String(formData.get("alertId") ?? "");
 
+  // Tenant guard — Prisma `update({where:{id}})` accepts any id. Use
+  // `updateMany` with a compound where so cross-tenant ids no-op.
   await db.$transaction(async (tx) => {
-    await tx.alert.update({
-      where: { id: alertId },
-      data: {
-        status: "ACKNOWLEDGED",
-      },
+    const { count } = await tx.alert.updateMany({
+      where: { id: alertId, locationId: session.locationId },
+      data: { status: "ACKNOWLEDGED" },
     });
+    if (count === 0) {
+      throw new Error("Alert not found at this location.");
+    }
 
     await createAuditLogTx(tx, {
       locationId: session.locationId,
@@ -354,13 +1159,16 @@ export async function resolveAlertAction(formData: FormData) {
   const alertId = String(formData.get("alertId") ?? "");
 
   await db.$transaction(async (tx) => {
-    await tx.alert.update({
-      where: { id: alertId },
+    const { count } = await tx.alert.updateMany({
+      where: { id: alertId, locationId: session.locationId },
       data: {
         status: "RESOLVED",
         resolvedAt: new Date(),
       },
     });
+    if (count === 0) {
+      throw new Error("Alert not found at this location.");
+    }
 
     await createAuditLogTx(tx, {
       locationId: session.locationId,
@@ -523,6 +1331,15 @@ export async function completeAgentTaskAction(formData: FormData) {
   let purchaseOrderId: string | null = null;
   let purchaseOrderSupplierId: string | null = null;
 
+  // Tenant guard — pre-check before mutating.
+  const ownedTask = await db.agentTask.findFirst({
+    where: { id: taskId, locationId: session.locationId },
+    select: { id: true },
+  });
+  if (!ownedTask) {
+    throw new Error("Agent task not found at this location.");
+  }
+
   await db.$transaction(async (tx) => {
     const task = await tx.agentTask.update({
       where: { id: taskId },
@@ -560,7 +1377,8 @@ export async function completeAgentTaskAction(formData: FormData) {
       const purchaseOrder = await markPurchaseOrderSent(
         purchaseOrderId,
         session.userId,
-        "Manager approved the website ordering workflow and marked the order as sent."
+        "Manager approved the website ordering workflow and marked the order as sent.",
+        session.locationId
       );
       purchaseOrderSupplierId = purchaseOrder.supplierId;
     }
@@ -577,6 +1395,15 @@ export async function failAgentTaskAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const taskId = String(formData.get("taskId") ?? "");
   const notes = String(formData.get("notes") ?? "");
+
+  // Tenant guard.
+  const ownedTask = await db.agentTask.findFirst({
+    where: { id: taskId, locationId: session.locationId },
+    select: { id: true },
+  });
+  if (!ownedTask) {
+    throw new Error("Agent task not found at this location.");
+  }
 
   await db.$transaction(async (tx) => {
     const task = await tx.agentTask.update({
@@ -628,7 +1455,12 @@ export async function markPurchaseOrderSentAction(formData: FormData) {
   const purchaseOrderId = String(formData.get("purchaseOrderId") ?? "");
   const notes = String(formData.get("notes") ?? "");
 
-  const purchaseOrder = await markPurchaseOrderSent(purchaseOrderId, session.userId, notes);
+  const purchaseOrder = await markPurchaseOrderSent(
+    purchaseOrderId,
+    session.userId,
+    notes,
+    session.locationId
+  );
   revalidatePurchaseOrderPaths(purchaseOrder.id, purchaseOrder.supplierId);
 }
 
@@ -637,7 +1469,12 @@ export async function acknowledgePurchaseOrderAction(formData: FormData) {
   const purchaseOrderId = String(formData.get("purchaseOrderId") ?? "");
   const notes = String(formData.get("notes") ?? "");
 
-  const purchaseOrder = await acknowledgePurchaseOrder(purchaseOrderId, session.userId, notes);
+  const purchaseOrder = await acknowledgePurchaseOrder(
+    purchaseOrderId,
+    session.userId,
+    notes,
+    session.locationId
+  );
   revalidatePurchaseOrderPaths(purchaseOrder.id, purchaseOrder.supplierId);
 }
 
@@ -663,11 +1500,28 @@ export async function deliverPurchaseOrderAction(formData: FormData) {
     ])
   );
 
+  // Actual costs come from the `actualCost-<lineId>` fields on the
+  // ReceivePanel — they're dollar-denominated (so "12.45" → 1245
+  // cents). Absent / blank / non-numeric values are dropped so the
+  // PO line keeps its estimate.
+  const actualUnitCostsCents: Record<string, number> = {};
+  for (const line of purchaseOrder.lines) {
+    const raw = formData.get(`actualCost-${line.id}`);
+    if (typeof raw !== "string" || raw.trim() === "") continue;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) continue;
+    actualUnitCostsCents[line.id] = Math.round(parsed * 100);
+  }
+
   const deliveredOrder = await deliverPurchaseOrder({
     purchaseOrderId: purchaseOrder.id,
     userId: session.userId,
+    locationId: session.locationId,
     notes,
     lineReceipts,
+    actualUnitCostsCents: Object.keys(actualUnitCostsCents).length > 0
+      ? actualUnitCostsCents
+      : undefined,
   });
 
   revalidatePurchaseOrderPaths(deliveredOrder.id, deliveredOrder.supplierId);
@@ -678,8 +1532,191 @@ export async function cancelPurchaseOrderAction(formData: FormData) {
   const purchaseOrderId = String(formData.get("purchaseOrderId") ?? "");
   const notes = String(formData.get("notes") ?? "");
 
-  const purchaseOrder = await cancelPurchaseOrder(purchaseOrderId, session.userId, notes);
+  const purchaseOrder = await cancelPurchaseOrder(
+    purchaseOrderId,
+    session.userId,
+    notes,
+    session.locationId
+  );
   revalidatePurchaseOrderPaths(purchaseOrder.id, purchaseOrder.supplierId);
+}
+
+/**
+ * Add a single inventory item from the UI (empty-state form on
+ * /inventory). Intentionally light: name + category + par level are
+ * the minimum a café manager thinks about when they're setting up.
+ * Everything else (safetyStockBase, lowStockThresholdBase, pack size)
+ * is computed from sensible defaults so new users don't have to
+ * learn every field upfront.
+ *
+ * If supplierId + unitPriceDollars are provided, we also link the
+ * item to that supplier and stamp the price as lastUnitCostCents +
+ * latestCostCents on the SupplierItem. Having a price on the
+ * supplier link is what makes auto-approve work on future POs
+ * (auto-approve refuses to fire without a known price).
+ */
+export async function addInventoryItemAction(formData: FormData) {
+  // Same minimum role as updateInventoryItemAction so supervisors
+  // can set up inventory without a manager in the loop.
+  const session = await requireSession(Role.SUPERVISOR);
+  const rawName = readStringValue(formData, "name");
+  const name = rawName?.trim();
+  if (!name) return; // form has required inputs; defensive guard
+
+  // Duplicate guard: the bot's quick_add path already does a
+  // case-insensitive lookup before creating, but the manual form
+  // did not. Users re-submitting or mis-typing would quietly end
+  // up with two inventory rows for the same product, splitting
+  // depletion history. Mirror the bot's behavior: if the item
+  // already exists at this location, no-op and let the list
+  // redisplay the existing row.
+  const existing = await db.inventoryItem.findFirst({
+    where: {
+      locationId: session.locationId,
+      name: { equals: name, mode: "insensitive" },
+    },
+    select: { id: true },
+  });
+  if (existing) {
+    revalidateOperations();
+    return;
+  }
+
+  const category = readStringValue(formData, "category") ?? "SUPPLY";
+  const baseUnit = readStringValue(formData, "baseUnit") ?? "COUNT";
+  const parLevelBase = Math.max(
+    1,
+    readIntegerValue(formData, "parLevelBase", 1)
+  );
+  const stockOnHandBase = Math.max(
+    0,
+    readIntegerValue(formData, "stockOnHandBase", 0)
+  );
+  const supplierId = readNullableStringValue(formData, "supplierId");
+  const productUrl = readNullableStringValue(formData, "productUrl");
+  const priceDollarsRaw = formData.get("unitPriceDollars");
+  const priceDollars =
+    typeof priceDollarsRaw === "string" && priceDollarsRaw.trim()
+      ? Number(priceDollarsRaw)
+      : NaN;
+  const unitCostCents =
+    Number.isFinite(priceDollars) && priceDollars > 0
+      ? Math.round(priceDollars * 100)
+      : null;
+
+  const sku = `ITM-${Date.now().toString(36).toUpperCase()}-${Math.random()
+    .toString(36)
+    .slice(2, 5)
+    .toUpperCase()}`;
+
+  // Tenant guard: if a supplierId was supplied, it MUST belong to
+  // this location before we accept it.
+  let primarySupplierId: string | null = null;
+  let supplierWebsite: string | null = null;
+  if (supplierId) {
+    const owned = await db.supplier.findFirst({
+      where: { id: supplierId, locationId: session.locationId },
+      select: { id: true, website: true },
+    });
+    if (owned) {
+      primarySupplierId = owned.id;
+      supplierWebsite = owned.website;
+    }
+  }
+
+  // Resolve the best-available image SYNCHRONOUSLY (no network) —
+  // either direct image URL, supplier Clearbit logo, or letter
+  // avatar. For pasted product pages we try og:image async below.
+  const { buildInventoryImageUrl, resolveProductImage } = await import(
+    "@/modules/inventory/image-resolver"
+  );
+  let imageUrl: string = buildInventoryImageUrl({
+    name,
+    category,
+    productUrl,
+    supplierWebsite,
+  });
+
+  // If the productUrl looks like a product page (not a direct image)
+  // try to fetch og:image. Cap at 4s so the form submit doesn't hang.
+  if (productUrl && !/\.(?:jpe?g|png|webp|gif|avif|svg)(?:\?|#|$)/i.test(productUrl)) {
+    try {
+      imageUrl = await resolveProductImage(
+        { name, category, productUrl, supplierWebsite },
+        { timeoutMs: 4000 }
+      );
+    } catch {
+      /* stick with synchronous result */
+    }
+  }
+
+  const notesSuffix = productUrl ? `Product URL: ${productUrl}` : null;
+
+  await db.$transaction(async (tx) => {
+    const item = await tx.inventoryItem.create({
+      data: {
+        locationId: session.locationId,
+        name,
+        sku,
+        category: category as Prisma.InventoryItemCreateInput["category"],
+        baseUnit: baseUnit as Prisma.InventoryItemCreateInput["baseUnit"],
+        displayUnit: baseUnit as Prisma.InventoryItemCreateInput["displayUnit"],
+        countUnit: baseUnit as Prisma.InventoryItemCreateInput["countUnit"],
+        purchaseUnit: baseUnit as Prisma.InventoryItemCreateInput["purchaseUnit"],
+        packSizeBase: 1,
+        stockOnHandBase,
+        parLevelBase,
+        safetyStockBase: Math.max(1, Math.round(parLevelBase * 0.2)),
+        lowStockThresholdBase: Math.max(1, Math.round(parLevelBase * 0.4)),
+        primarySupplierId,
+        // Only persist the image if it's a real URL — letter-avatar
+        // data URLs regenerate for free on page render, no need to
+        // bloat the row.
+        imageUrl: imageUrl.startsWith("data:") ? null : imageUrl,
+        notes: notesSuffix,
+      },
+    });
+
+    if (primarySupplierId) {
+      await tx.supplierItem.upsert({
+        where: {
+          supplierId_inventoryItemId: {
+            supplierId: primarySupplierId,
+            inventoryItemId: item.id,
+          },
+        },
+        create: {
+          supplierId: primarySupplierId,
+          inventoryItemId: item.id,
+          packSizeBase: 1,
+          minimumOrderQuantity: 1,
+          preferred: true,
+          lastUnitCostCents: unitCostCents ?? undefined,
+        },
+        update: {
+          lastUnitCostCents: unitCostCents ?? undefined,
+        },
+      });
+    }
+
+    await createAuditLogTx(tx, {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "inventoryItem.created",
+      entityType: "inventoryItem",
+      entityId: item.id,
+      details: {
+        name,
+        category,
+        parLevelBase,
+        primarySupplierId,
+        unitCostCents,
+        hasProductUrl: !!productUrl,
+      },
+    });
+  });
+
+  revalidateOperations();
 }
 
 export async function updateInventoryItemAction(formData: FormData) {
@@ -835,6 +1872,100 @@ export async function upsertSupplierAction(formData: FormData) {
   revalidatePath(`/suppliers/${supplier.id}`);
 }
 
+// ── Supplier website-login credentials ──────────────────────────────
+// Manager pastes either a username+password OR a session-cookie JSON
+// export, we encrypt with AES-256-GCM and store on Supplier.
+// websiteCredentials. The browser ordering agent decrypts at PO
+// dispatch time and either logs in or injects the cookies — see
+// modules/automation/browser-agent.ts.
+
+export async function setSupplierCredentialsAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const supplierId = String(formData.get("supplierId") ?? "");
+  const kind = String(formData.get("credentialKind") ?? "password");
+
+  if (!supplierId) {
+    throw new Error("supplierId is required.");
+  }
+
+  await db.supplier.findFirstOrThrow({
+    where: { id: supplierId, locationId: session.locationId },
+    select: { id: true },
+  });
+
+  const { encryptSupplierCredentials, parseCookieJson } = await import(
+    "@/modules/suppliers/website-credentials"
+  );
+
+  let encrypted: string;
+  if (kind === "cookies") {
+    const raw = String(formData.get("cookieJson") ?? "");
+    const cookies = parseCookieJson(raw);
+    encrypted = encryptSupplierCredentials({ kind: "cookies", cookies });
+  } else {
+    encrypted = encryptSupplierCredentials({
+      kind: "password",
+      username: String(formData.get("username") ?? ""),
+      password: String(formData.get("password") ?? ""),
+      loginUrl: readNullableStringValue(formData, "loginUrl") ?? undefined,
+    });
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.supplier.update({
+      where: { id: supplierId },
+      data: {
+        websiteCredentials: encrypted,
+        credentialsConfigured: true,
+      },
+    });
+    await createAuditLogTx(tx, {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "supplier.credentials_set",
+      entityType: "supplier",
+      entityId: supplierId,
+      details: { kind },
+    });
+  });
+
+  revalidateOperations();
+  revalidatePath(`/suppliers/${supplierId}`);
+}
+
+export async function clearSupplierCredentialsAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const supplierId = String(formData.get("supplierId") ?? "");
+  if (!supplierId) {
+    throw new Error("supplierId is required.");
+  }
+
+  await db.supplier.findFirstOrThrow({
+    where: { id: supplierId, locationId: session.locationId },
+    select: { id: true },
+  });
+
+  await db.$transaction(async (tx) => {
+    await tx.supplier.update({
+      where: { id: supplierId },
+      data: {
+        websiteCredentials: null,
+        credentialsConfigured: false,
+      },
+    });
+    await createAuditLogTx(tx, {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "supplier.credentials_cleared",
+      entityType: "supplier",
+      entityId: supplierId,
+    });
+  });
+
+  revalidateOperations();
+  revalidatePath(`/suppliers/${supplierId}`);
+}
+
 export async function upsertSupplierItemAction(formData: FormData) {
   const session = await requireSession(Role.MANAGER);
   const supplierId = String(formData.get("supplierId") ?? "");
@@ -956,18 +2087,10 @@ export async function upsertSupplierItemAction(formData: FormData) {
 export async function startWhatsAppBotConnectAction() {
   const session = await requireSession(Role.MANAGER);
 
-  if (!isPublicAppUrl(env.APP_URL)) {
+  if (!env.TWILIO_WHATSAPP_FROM) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=whatsapp&chatDetail=${encodeURIComponent(
-        "Production chat linking needs a public HTTPS APP_URL."
-      )}`
-    );
-  }
-
-  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_WHATSAPP_FROM) {
-    redirect(
-      `/settings?chatConnect=error&chatChannel=whatsapp&chatDetail=${encodeURIComponent(
-        "Twilio WhatsApp credentials are still missing."
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
+        "WhatsApp is not configured yet. Ask your admin to add TWILIO_WHATSAPP_FROM."
       )}`
     );
   }
@@ -978,7 +2101,8 @@ export async function startWhatsAppBotConnectAction() {
     channel: BotChannel.WHATSAPP,
   });
 
-  redirect(`/settings/whatsapp/connect?token=${encodeURIComponent(request.token)}`);
+  // Opens WhatsApp directly with the connect message pre-filled — user just taps Send
+  redirect(buildWhatsAppConnectUrl(env.TWILIO_WHATSAPP_FROM, request.token));
 }
 
 export async function startTelegramBotConnectAction() {
@@ -986,7 +2110,7 @@ export async function startTelegramBotConnectAction() {
 
   if (!isPublicAppUrl(env.APP_URL)) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
         "Production chat linking needs a public HTTPS APP_URL."
       )}`
     );
@@ -1016,10 +2140,12 @@ export async function startTelegramBotConnectAction() {
     );
   }
 
-  if (!env.TELEGRAM_BOT_TOKEN) {
+  const telegramBotUsername = await getTelegramBotUsername();
+
+  if (!env.TELEGRAM_BOT_TOKEN || !telegramBotUsername) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
-        "Telegram bot token is missing."
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
+        "Telegram bot credentials are missing or the bot username could not be resolved."
       )}`
     );
   }
@@ -1034,13 +2160,13 @@ export async function startTelegramBotConnectAction() {
 
   if (!webhook.ok) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
         webhook.reason
       )}`
     );
   }
 
-  redirect(`/settings/telegram/connect?token=${encodeURIComponent(request.token)}`);
+  redirect(buildTelegramConnectUrl(telegramBotUsername, request.token));
 }
 
 export async function startLocalWhatsAppBotConnectAction() {
@@ -1048,7 +2174,7 @@ export async function startLocalWhatsAppBotConnectAction() {
 
   if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_WHATSAPP_FROM) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=whatsapp&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
         "Twilio WhatsApp credentials are still missing."
       )}`
     );
@@ -1069,7 +2195,7 @@ export async function startLocalTelegramBotConnectAction() {
 
   if (!env.TELEGRAM_BOT_TOKEN || !telegramBotUsername) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=telegram&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=telegram&channelDetail=${encodeURIComponent(
         "Telegram bot credentials are missing or the bot username could not be resolved."
       )}`
     );
@@ -1090,7 +2216,7 @@ export async function disconnectBotChannelAction(formData: FormData) {
 
   if (channel !== BotChannel.WHATSAPP && channel !== BotChannel.TELEGRAM) {
     redirect(
-      `/settings?chatConnect=error&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelDetail=${encodeURIComponent(
         "Unknown channel."
       )}`
     );
@@ -1136,7 +2262,7 @@ export async function disconnectBotChannelAction(formData: FormData) {
   });
 
   revalidateOperations();
-  redirect(`/settings?chatConnect=disconnected&chatChannel=${channel.toLowerCase()}`);
+  redirect(`/settings?channelConnect=disconnected&channelType=${channel.toLowerCase()}`);
 }
 
 export async function updateBotIdentityAction(formData: FormData) {
@@ -1255,3 +2381,416 @@ function normalizeTelegramUsername(value: string | null) {
   return value.startsWith("@") ? value : `@${value}`;
 }
 
+// ---------------------------------------------------------------------------
+// Location channel actions
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates a 15-min Telegram pairing code for the current location.
+ * Redirects back to /settings with the code in the URL for display.
+ */
+export async function generateTelegramChannelCodeAction() {
+  const session = await requireSession(Role.MANAGER);
+  const { code, expiresAt } = await startTelegramChannelPairing(session.locationId);
+  redirect(
+    `/settings?channelCode=${encodeURIComponent(code)}&channelCodeExpiry=${encodeURIComponent(expiresAt.toISOString())}&channel=telegram`
+  );
+}
+
+export async function disconnectTelegramChannelAction() {
+  const session = await requireSession(Role.MANAGER);
+  await disconnectTelegramChannel(session.locationId);
+  revalidateOperations();
+  redirect("/settings?channelConnect=disconnected&channelType=telegram");
+}
+
+export async function generateWhatsAppChannelCodeAction() {
+  const session = await requireSession(Role.MANAGER);
+
+  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_WHATSAPP_FROM) {
+    redirect(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
+        "Twilio WhatsApp credentials are not configured."
+      )}`
+    );
+  }
+
+  const { code, expiresAt } = await startWhatsAppChannelPairing(session.locationId);
+  redirect(
+    `/settings?channelCode=${encodeURIComponent(code)}&channelCodeExpiry=${encodeURIComponent(expiresAt.toISOString())}&channel=whatsapp`
+  );
+}
+
+export async function disconnectWhatsAppChannelAction() {
+  const session = await requireSession(Role.MANAGER);
+  await disconnectWhatsAppChannel(session.locationId);
+  revalidateOperations();
+  redirect("/settings?channelConnect=disconnected&channelType=whatsapp");
+}
+
+function smtpSettingsFromEmail(email: string): { host: string; port: number } {
+  const domain = email.split("@")[1]?.toLowerCase() ?? "";
+  if (domain === "gmail.com" || domain === "googlemail.com")
+    return { host: "smtp.gmail.com", port: 587 };
+  if (domain === "outlook.com" || domain === "hotmail.com" || domain === "live.com" || domain === "msn.com")
+    return { host: "smtp-mail.outlook.com", port: 587 };
+  if (domain === "yahoo.com" || domain === "ymail.com")
+    return { host: "smtp.mail.yahoo.com", port: 587 };
+  if (domain === "icloud.com" || domain === "me.com" || domain === "mac.com")
+    return { host: "smtp.mail.me.com", port: 587 };
+  return { host: `smtp.${domain}`, port: 587 };
+}
+
+export async function connectSmtpEmailChannelAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+
+  const email = String(formData.get("email") ?? "").trim();
+  const pass = String(formData.get("password") ?? "").trim();
+
+  if (!email || !pass) {
+    redirect("/settings?channelConnect=error&channelType=email&channelDetail=Please+enter+your+email+and+password");
+    return;
+  }
+
+  const { host, port } = smtpSettingsFromEmail(email);
+
+  await connectSmtpEmailChannel(session.locationId, {
+    host,
+    port,
+    secure: port === 465,
+    user: email,
+    pass,
+    fromName: email,
+    fromEmail: email,
+  });
+
+  revalidateOperations();
+  redirect(`/settings?channelConnect=connected&channelType=email&channelDetail=${encodeURIComponent(email)}`);
+}
+
+export async function disconnectEmailChannelAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const provider = String(formData.get("provider") ?? "smtp");
+  const channel =
+    provider === "gmail"
+      ? ChannelType.EMAIL_GMAIL
+      : provider === "resend"
+        ? ChannelType.EMAIL_RESEND
+        : ChannelType.EMAIL_SMTP;
+  await disconnectEmailChannel(session.locationId, channel);
+  revalidateOperations();
+  redirect("/settings?channelConnect=disconnected&channelType=email");
+}
+
+/**
+ * Admin pastes a Resend API key + From address in Settings. We:
+ *   1. Lightly validate the shape (keys start with `re_`).
+ *   2. Call Resend's /domains endpoint to confirm the key is live —
+ *      any valid key responds 200 or 401, never a network error.
+ *   3. Encrypt and persist via connectResendEmailChannel.
+ * On any failure we redirect back with a human-readable error banner;
+ * the Settings page already renders `channelConnect=error` states.
+ */
+export async function connectResendEmailChannelAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const apiKey = (readStringValue(formData, "apiKey") ?? "").trim();
+  const fromEmailRaw = (readStringValue(formData, "fromEmail") ?? "").trim();
+  const displayName = readNullableStringValue(formData, "displayName");
+
+  if (!apiKey.startsWith("re_") || apiKey.length < 20) {
+    redirect(
+      `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+        "That doesn't look like a Resend API key. Keys start with 're_' — copy yours from resend.com/api-keys."
+      )}`
+    );
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmailRaw)) {
+    redirect(
+      `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+        "From address looks invalid. Use a plain email like orders@yourcafe.com."
+      )}`
+    );
+  }
+
+  // Validate the key hits Resend before we persist it — avoids saving
+  // a typo that silently breaks every send for the next week.
+  try {
+    const check = await fetch("https://api.resend.com/domains", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (check.status === 401 || check.status === 403) {
+      redirect(
+        `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+          "Resend rejected that API key (401). Double-check you copied the full value from resend.com/api-keys."
+        )}`
+      );
+    }
+    if (!check.ok && check.status !== 404) {
+      redirect(
+        `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+          `Resend returned ${check.status} when we tested the key. Try again in a minute.`
+        )}`
+      );
+    }
+  } catch (err) {
+    // Swallow redirect()'s internal throw — only network errors land here.
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("NEXT_REDIRECT")) throw err;
+    redirect(
+      `/settings?channelConnect=error&channelType=email&channelDetail=${encodeURIComponent(
+        "Couldn't reach api.resend.com to verify the key. Check your network and try again."
+      )}`
+    );
+  }
+
+  const { connectResendEmailChannel } = await import(
+    "@/modules/channels/service"
+  );
+  await connectResendEmailChannel(session.locationId, {
+    apiKey,
+    fromEmail: fromEmailRaw,
+    displayName: displayName?.trim() || undefined,
+  });
+
+  await db.auditLog.create({
+    data: {
+      locationId: session.locationId,
+      userId: session.userId,
+      action: "integration.email.resend_connected",
+      entityType: "locationChannel",
+      entityId: session.locationId,
+      details: { fromEmail: fromEmailRaw },
+    },
+  });
+
+  revalidateOperations();
+  redirect(
+    `/settings?channelConnect=connected&channelType=email&channelDetail=${encodeURIComponent(
+      "Email ready — POs will send via Resend."
+    )}`
+  );
+}
+
+
+/**
+ * Photo count: accepts a JSON string "counts" of
+ * [{inventoryItemId, count}] from the camera flow and submits
+ * each as a count entry on the current session.
+ */
+export async function applyPhotoCountsAction(formData: FormData) {
+  const session = await requireSession(Role.STAFF);
+  const raw = String(formData.get("counts") ?? "[]");
+  let parsed: Array<{ inventoryItemId?: string; count?: number }> = [];
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return;
+
+  let countSession = await db.stockCountSession.findFirst({
+    where: { locationId: session.locationId, status: "IN_PROGRESS" },
+    orderBy: { startedAt: "desc" },
+  });
+  if (!countSession) {
+    countSession = await db.stockCountSession.create({
+      data: {
+        locationId: session.locationId,
+        createdById: session.userId,
+        status: "IN_PROGRESS",
+        mode: "SWIPE",
+      },
+    });
+  }
+
+  for (const entry of parsed) {
+    if (!entry.inventoryItemId) continue;
+    const n = Number(entry.count);
+    if (!Number.isFinite(n) || n < 0) continue;
+    try {
+      await submitCountEntry({
+        sessionId: countSession.id,
+        inventoryItemId: String(entry.inventoryItemId),
+        countedBase: Math.round(n),
+        userId: session.userId,
+        notes: "Applied via photo-count (vision)",
+      });
+    } catch (err) {
+      console.warn("[applyPhotoCounts] failed for item", entry.inventoryItemId, err);
+    }
+  }
+
+  revalidateOperations();
+}
+
+/**
+ * CSV bulk import for inventory items. Accepts a "csv" form field —
+ * a CSV string with header row. Columns we understand (others ignored):
+ *   name, sku, category, baseUnit, displayUnit, packSize, par, onHand, supplierName
+ *
+ * Creates missing suppliers by name inline so a single paste can
+ * bootstrap both items and their suppliers.
+ */
+export async function importInventoryCsvAction(formData: FormData) {
+  const session = await requireSession(Role.MANAGER);
+  const csv = String(formData.get("csv") ?? "").trim();
+  if (!csv) return;
+
+  const rows = parseCsv(csv);
+  if (rows.length < 2) return; // header + at least 1 data row
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const idx = (name: string) => header.indexOf(name);
+
+  const nameIdx = idx("name");
+  if (nameIdx < 0) return;
+
+  const skuIdx = idx("sku");
+  const categoryIdx = idx("category");
+  const baseUnitIdx = idx("baseunit");
+  const displayUnitIdx = idx("displayunit");
+  const packSizeIdx = idx("packsize");
+  const parIdx = idx("par");
+  const onHandIdx = idx("onhand");
+  const supplierIdx = idx("suppliername");
+
+  const supplierCache = new Map<string, string>();
+  let created = 0;
+  let skipped = 0;
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const name = (row[nameIdx] ?? "").trim();
+    if (!name) {
+      skipped += 1;
+      continue;
+    }
+    const sku = (skuIdx >= 0 ? row[skuIdx] : "").trim() ||
+      `IMP-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const category = normaliseCategory((categoryIdx >= 0 ? row[categoryIdx] : "")) ?? "SUPPLY";
+    const baseUnit = normaliseBaseUnit((baseUnitIdx >= 0 ? row[baseUnitIdx] : "")) ?? "COUNT";
+    const displayUnit = normaliseMeasurementUnit((displayUnitIdx >= 0 ? row[displayUnitIdx] : "")) ?? "COUNT";
+    const packSize = Math.max(1, Math.round(Number((packSizeIdx >= 0 ? row[packSizeIdx] : "1") || "1")));
+    const par = Math.max(0, Math.round(Number((parIdx >= 0 ? row[parIdx] : "0") || "0")));
+    const onHand = Math.max(0, Math.round(Number((onHandIdx >= 0 ? row[onHandIdx] : "0") || "0")));
+    const supplierName = (supplierIdx >= 0 ? row[supplierIdx] : "").trim();
+
+    let supplierId: string | null = null;
+    if (supplierName) {
+      const cached = supplierCache.get(supplierName.toLowerCase());
+      if (cached) {
+        supplierId = cached;
+      } else {
+        const existing = await db.supplier.findFirst({
+          where: {
+            locationId: session.locationId,
+            name: { equals: supplierName, mode: "insensitive" },
+          },
+          select: { id: true },
+        });
+        if (existing) {
+          supplierId = existing.id;
+        } else {
+          const created = await db.supplier.create({
+            data: {
+              locationId: session.locationId,
+              name: supplierName,
+              orderingMode: "EMAIL",
+              leadTimeDays: 2,
+            },
+            select: { id: true },
+          });
+          supplierId = created.id;
+        }
+        supplierCache.set(supplierName.toLowerCase(), supplierId);
+      }
+    }
+
+    // Dedup by name (case-insensitive) — re-running an import shouldn't
+    // create parallel rows for the same product. Matches bot's quick_add
+    // behavior.
+    const dup = await db.inventoryItem.findFirst({
+      where: {
+        locationId: session.locationId,
+        name: { equals: name, mode: "insensitive" },
+      },
+      select: { id: true },
+    });
+    if (dup) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      await db.inventoryItem.create({
+        data: {
+          locationId: session.locationId,
+          name,
+          sku,
+          category: category as Prisma.InventoryItemCreateInput["category"],
+          baseUnit: baseUnit as Prisma.InventoryItemCreateInput["baseUnit"],
+          displayUnit: displayUnit as Prisma.InventoryItemCreateInput["displayUnit"],
+          countUnit: displayUnit as Prisma.InventoryItemCreateInput["countUnit"],
+          purchaseUnit: displayUnit as Prisma.InventoryItemCreateInput["purchaseUnit"],
+          packSizeBase: packSize,
+          stockOnHandBase: onHand,
+          parLevelBase: par,
+          safetyStockBase: Math.max(1, Math.round(par * 0.2)),
+          lowStockThresholdBase: Math.max(1, Math.round(par * 0.4)),
+          primarySupplierId: supplierId,
+        },
+      });
+      created += 1;
+    } catch (err) {
+      console.warn("[importInventoryCsv] failed to create", name, err);
+      skipped += 1;
+    }
+  }
+
+  revalidateOperations();
+}
+
+function parseCsv(input: string): string[][] {
+  const lines = input.replace(/\r\n?/g, "\n").split("\n");
+  return lines
+    .filter((l) => l.trim().length > 0)
+    .map((l) => l.split(",").map((c) => c.trim().replace(/^"|"$/g, "")));
+}
+
+function normaliseCategory(v: string): string | null {
+  const k = v.trim().toUpperCase().replace(/\s+/g, "_");
+  const allow = [
+    "COFFEE",
+    "DAIRY",
+    "ALT_DAIRY",
+    "SYRUP",
+    "BAKERY_INGREDIENT",
+    "PACKAGING",
+    "CLEANING",
+    "PAPER_GOODS",
+    "RETAIL",
+    "SEASONAL",
+    "SUPPLY",
+  ];
+  return allow.includes(k) ? k : null;
+}
+function normaliseBaseUnit(v: string): string | null {
+  const k = v.trim().toUpperCase();
+  return ["GRAM", "MILLILITER", "COUNT"].includes(k) ? k : null;
+}
+function normaliseMeasurementUnit(v: string): string | null {
+  const k = v.trim().toUpperCase();
+  return [
+    "GRAM",
+    "KILOGRAM",
+    "MILLILITER",
+    "LITER",
+    "COUNT",
+    "CASE",
+    "BOTTLE",
+    "BAG",
+    "BOX",
+  ].includes(k)
+    ? k
+    : null;
+}

@@ -1,0 +1,116 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>StockPilot</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>StockPilot</h1>
+        <p class="subtitle">Sign in to a supplier, push your session with one click.</p>
+      </header>
+
+      <!-- State: first load — brief spinner while we read storage / ping -->
+      <section id="loading-view" hidden>
+        <p class="muted">Loading…</p>
+      </section>
+
+      <!-- State: first-time setup — ask for StockPilot URL -->
+      <section id="setup-view" hidden>
+        <p>Which StockPilot is this for?</p>
+        <input
+          id="stockpilot-url"
+          type="url"
+          autocomplete="url"
+          placeholder="https://stockpilot.yourcompany.com"
+        />
+        <p id="setup-error" class="error-text" hidden></p>
+        <button id="save-url" class="primary">Save &amp; continue</button>
+      </section>
+
+      <!-- State: not linked to StockPilot in this browser yet -->
+      <section id="link-view" hidden>
+        <p>
+          This browser isn't linked to StockPilot yet. Open your StockPilot
+          account once — it'll auto-link this browser, then come back and tap
+          the extension icon again.
+        </p>
+        <p class="muted small">
+          Link target: <span id="link-url-hint" class="host"></span>
+        </p>
+        <button id="open-link" class="primary">
+          Open StockPilot to link this browser
+        </button>
+        <p class="muted tiny">
+          (Already signed in? Opening any supplier's sign-in page auto-links
+          you — the Extension tab does it on mount.)
+        </p>
+        <details>
+          <summary>Not signed in to StockPilot at all?</summary>
+          <div class="reset-row">
+            <button id="open-stockpilot-signin" class="link">
+              Open StockPilot login page
+            </button>
+          </div>
+        </details>
+      </section>
+
+      <!-- State: happy path — ready to push cookies -->
+      <section id="ready-view" hidden>
+        <div class="tab-info">
+          <p class="label">Current tab:</p>
+          <p id="current-host" class="host"></p>
+        </div>
+
+        <div id="no-match-warning" hidden>
+          <p class="warning">
+            This site isn't one of your suppliers. Pick the right one below
+            (or open your supplier's tab first and reopen this popup).
+          </p>
+        </div>
+
+        <div id="supplier-picker">
+          <label for="supplier-select">Save cookies for:</label>
+          <select id="supplier-select"></select>
+        </div>
+
+        <button id="send-cookies" class="primary" disabled>
+          💾 Push cookies to StockPilot
+        </button>
+
+        <p id="send-status" class="muted"></p>
+
+        <details>
+          <summary>Not your StockPilot? Change it.</summary>
+          <div class="reset-row">
+            <p id="current-url-display" class="host small"></p>
+            <button id="reset-url" class="link">Reset StockPilot URL</button>
+          </div>
+        </details>
+      </section>
+
+      <!-- State: success -->
+      <section id="success-view" hidden>
+        <div class="success-icon">✓</div>
+        <h2>Session saved</h2>
+        <p id="success-details"></p>
+        <p class="muted">
+          Every future order to this supplier will auto-populate your real
+          cart.
+        </p>
+        <button id="done-button" class="primary">Done</button>
+      </section>
+
+      <!-- State: error -->
+      <section id="error-view" hidden>
+        <div class="error-icon">!</div>
+        <h2>Couldn't save</h2>
+        <p id="error-message"></p>
+        <button id="retry-button" class="primary">Try again</button>
+      </section>
+    </div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

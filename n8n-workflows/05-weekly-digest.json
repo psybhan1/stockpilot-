@@ -1,0 +1,70 @@
+{
+  "name": "05 - Weekly Exec Digest",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 8 * * 1" }]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every Monday 8am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.STOCKBUDDY_BASE_URL }}/api/n8n/weekly-digest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-StockPilot-Webhook-Secret", "value": "={{ $env.STOCKBUDDY_WEBHOOK_SECRET }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fire-digest",
+      "name": "Trigger Weekly Digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst results = data.results || [];\nconst sent = results.filter(r => r.sent);\nconst failed = results.filter(r => !r.sent);\nconst lines = [];\nlines.push(`\uD83D\uDCEC *Weekly digest dispatched*`);\nlines.push('');\nif (sent.length > 0) {\n  lines.push(`\u2705 Sent to ${sent.length} location${sent.length === 1 ? '' : 's'}:`);\n  for (const r of sent) lines.push(`  \u2022 ${r.locationName} (${r.recipients} recipient${r.recipients === 1 ? '' : 's'})`);\n}\nif (failed.length > 0) {\n  lines.push('');\n  lines.push(`\u26A0\uFE0F Skipped ${failed.length}:`);\n  for (const r of failed) lines.push(`  \u2022 ${r.locationName} \u2014 ${r.reason}`);\n}\nreturn [{ json: { message: lines.join('\\n'), anySent: sent.length > 0, anyFailed: failed.length > 0 } }];"
+      },
+      "id": "format-summary",
+      "name": "Format Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "credentials",
+        "chatId": "={{ $env.MANAGER_TELEGRAM_CHAT_ID }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "notify-operator",
+      "name": "Notify Operator",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Every Monday 8am": {
+      "main": [[{ "node": "Trigger Weekly Digest", "type": "main", "index": 0 }]]
+    },
+    "Trigger Weekly Digest": {
+      "main": [[{ "node": "Format Summary", "type": "main", "index": 0 }]]
+    },
+    "Format Summary": {
+      "main": [[{ "node": "Notify Operator", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "stockbuddy" }]
+}

@@ -1,9 +1,24 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { Inter_Tight, JetBrains_Mono } from "next/font/google";
 
 import { AppProviders } from "@/components/providers/app-providers";
 import { env } from "@/lib/env";
+
+const interTight = Inter_Tight({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  weight: ["400", "500", "600", "700", "800"],
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  weight: ["400", "500"],
+  display: "swap",
+});
 
 const metadataBase = (() => {
   try {
@@ -16,10 +31,11 @@ const metadataBase = (() => {
 export const metadata: Metadata = {
   metadataBase,
   title: {
-    default: "StockPilot",
+    default: "StockPilot — inventory that runs itself, for cafés",
     template: "%s · StockPilot",
   },
-  description: "AI-assisted inventory operations for cafes, bakeries, and small restaurants.",
+  description:
+    "StockPilot automates reorders, emails suppliers from your own Gmail, handles replies, and tells you what to order each morning. Built for cafés, bakeries, and small kitchens. 14-day free trial.",
   applicationName: "StockPilot",
   manifest: "/manifest.webmanifest",
   keywords: [
@@ -41,11 +57,7 @@ export const metadata: Metadata = {
     title: "StockPilot",
     statusBarStyle: "default",
   },
-  formatDetection: {
-    email: false,
-    address: false,
-    telephone: false,
-  },
+  formatDetection: { email: false, address: false, telephone: false },
   openGraph: {
     title: "StockPilot",
     description: "Prevent stockouts before the rush turns into supplier chaos.",
@@ -61,20 +73,26 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f9f7f2" },
-    { media: "(prefers-color-scheme: dark)", color: "#2b2521" },
+    { media: "(prefers-color-scheme: light)", color: "#F5F3EE" },
+    { media: "(prefers-color-scheme: dark)", color: "#0A0A0A" },
   ],
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: ReactNode;
-}>) {
+}: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="min-h-full flex flex-col overflow-x-hidden">
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${interTight.variable} ${jetbrainsMono.variable}`}
+    >
+      <body className="min-h-full flex flex-col overflow-x-hidden font-sans">
         <AppProviders>{children}</AppProviders>
       </body>
     </html>

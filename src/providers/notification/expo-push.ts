@@ -4,6 +4,10 @@ import {
   isExpoPushRecipient,
   normalizeExpoRecipient,
 } from "@/modules/notifications/channels";
+import {
+  readExpoTicketError,
+  readExpoTicketId,
+} from "./expo-ticket-parse";
 
 type ExpoPushProviderOptions = {
   accessToken?: string;
@@ -77,44 +81,3 @@ export class ExpoPushNotificationProvider implements NotificationProvider {
   }
 }
 
-function readExpoTicketId(payload: Record<string, unknown>) {
-  if (!Array.isArray(payload.data)) {
-    return undefined;
-  }
-
-  const firstEntry = payload.data[0];
-  return firstEntry && typeof firstEntry === "object" && !Array.isArray(firstEntry)
-    ? (firstEntry as Record<string, unknown>).id as string | undefined
-    : undefined;
-}
-
-function readExpoTicketError(payload: Record<string, unknown>) {
-  if (!Array.isArray(payload.data)) {
-    return null;
-  }
-
-  const firstEntry = payload.data[0];
-  if (!firstEntry || typeof firstEntry !== "object" || Array.isArray(firstEntry)) {
-    return null;
-  }
-
-  const record = firstEntry as Record<string, unknown>;
-  if (record.status !== "error") {
-    return null;
-  }
-
-  const details =
-    record.details && typeof record.details === "object" && !Array.isArray(record.details)
-      ? record.details
-      : null;
-  const detailError: string | null =
-    details && typeof (details as Record<string, unknown>).error === "string"
-      ? ((details as Record<string, unknown>).error as string)
-      : null;
-
-  if (typeof record.message === "string" && record.message.trim()) {
-    return detailError ? `${record.message} (${detailError})` : record.message;
-  }
-
-  return detailError ?? "Expo push delivery failed.";
-}

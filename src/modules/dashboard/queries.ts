@@ -1,4 +1,5 @@
 import { AlertStatus, MappingStatus, RecipeStatus } from "@/lib/domain-enums";
+import { InventoryCategory } from "@/lib/prisma";
 
 import { db } from "@/lib/db";
 
@@ -140,15 +141,27 @@ export async function getStockCountPageData(locationId: string) {
   return { items, openSession };
 }
 
-export async function getRecipesPageData(locationId: string) {
+export async function getRecipesPageData(
+  locationId: string,
+  { includeArchived = false }: { includeArchived?: boolean } = {},
+) {
   return db.recipe.findMany({
-    where: { locationId },
+    where: {
+      locationId,
+      ...(includeArchived ? {} : { status: { not: "ARCHIVED" } }),
+    },
     include: {
       menuItemVariant: { include: { menuItem: true } },
       components: { include: { inventoryItem: true } },
       approvedBy: true,
     },
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
+  });
+}
+
+export async function getArchivedRecipeCount(locationId: string) {
+  return db.recipe.count({
+    where: { locationId, status: "ARCHIVED" },
   });
 }
 
@@ -160,7 +173,18 @@ export async function getRecipeDetail(locationId: string, recipeId: string) {
     },
     include: {
       menuItemVariant: { include: { menuItem: true } },
-      components: { include: { inventoryItem: true } },
+      components: {
+        include: {
+          inventoryItem: {
+            include: {
+              supplierItems: {
+                orderBy: [{ preferred: "desc" }],
+                take: 1,
+              },
+            },
+          },
+        },
+      },
       mappings: {
         include: {
           posVariation: true,
@@ -168,6 +192,55 @@ export async function getRecipeDetail(locationId: string, recipeId: string) {
       },
     },
   });
+}
+
+export async function getMenuPickerData(locationId: string) {
+  // Recipes only ever deplete ingredients and packaging — surface
+  // those categories in the picker so a latte editor doesn't see
+  // cleaning chemicals or retail merch in the dropdown.
+  const recipeableCategories: InventoryCategory[] = [
+    InventoryCategory.COFFEE,
+    InventoryCategory.DAIRY,
+    InventoryCategory.ALT_DAIRY,
+    InventoryCategory.SYRUP,
+    InventoryCategory.BAKERY_INGREDIENT,
+    InventoryCategory.PACKAGING,
+    InventoryCategory.PAPER_GOODS,
+  ];
+  const [inventoryItems, menuItemVariants] = await Promise.all([
+    db.inventoryItem.findMany({
+      where: {
+        locationId,
+        category: { in: recipeableCategories },
+      },
+      select: {
+        id: true,
+        name: true,
+        displayUnit: true,
+        baseUnit: true,
+        category: true,
+        supplierItems: {
+          orderBy: [{ preferred: "desc" }],
+          select: { lastUnitCostCents: true, packSizeBase: true },
+          take: 1,
+        },
+      },
+      orderBy: [{ category: "asc" }, { name: "asc" }],
+    }),
+    db.menuItemVariant.findMany({
+      where: {
+        menuItem: { locationId },
+        recipeVersions: { none: { status: { not: "ARCHIVED" } } },
+      },
+      select: {
+        id: true,
+        name: true,
+        menuItem: { select: { name: true, imageUrl: true } },
+      },
+      orderBy: [{ name: "asc" }],
+    }),
+  ]);
+  return { inventoryItems, menuItemVariants };
 }
 
 export async function getPosMappingData(locationId: string) {
@@ -245,7 +318,7 @@ export async function getPosMappingDetail(locationId: string, mappingId: string)
 }
 
 export async function getSuppliersPageData(locationId: string) {
-  return db.supplier.findMany({
+  const suppliers = await db.supplier.findMany({
     where: { locationId },
     include: {
       supplierItems: { include: { inventoryItem: true } },
@@ -256,6 +329,16 @@ export async function getSuppliersPageData(locationId: string) {
     },
     orderBy: { name: "asc" },
   });
+  // Annotate with credential status — computed server-side so the
+  // list page can render a "Connected" / "Not connected" chip without
+  // each Link re-running the decrypt.
+  const { summariseStoredCredentials } = await import(
+    "@/modules/suppliers/website-credentials"
+  );
+  return suppliers.map((s) => ({
+    ...s,
+    credentialsState: summariseStoredCredentials(s.websiteCredentials),
+  }));
 }
 
 export async function getSupplierDetail(locationId: string, supplierId: string) {
@@ -278,6 +361,153 @@ export async function getSupplierDetail(locationId: string, supplierId: string) 
       },
     },
   });
+}
+
+/**
+ * Money-pulse widget for the dashboard. The MarginEdge killer
+ * feature in one card — what did this week cost, what's moving,
+ * what's waiting. Read-only aggregation; cheap enough to run on
+ * every dashboard load (a few indexed queries, no joins beyond
+ * the PO row itself).
+ *
+ * All amounts in cents. Null-safe for brand-new locations with no
+ * orders yet — returns zeros and an empty-state flag the card uses
+ * to show a coaching message instead of fake stats.
+ */
+export async function getMoneyPulse(locationId: string): Promise<{
+  weekSpentCents: number;
+  weekOrderCount: number;
+  autoApprovedCount: number;
+  pendingCount: number;
+  pendingTotalCents: number;
+  priceAlert:
+    | null
+    | {
+        itemName: string;
+        oldCents: number;
+        newCents: number;
+        deltaPct: number;
+      };
+  isEmpty: boolean;
+}> {
+  const now = new Date();
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const [weekPos, pendingPos, autoApprovedLogs, variances] = await Promise.all([
+    // Sent in the last 7 days — what we spent.
+    db.purchaseOrder.findMany({
+      where: {
+        locationId,
+        status: { in: ["SENT", "ACKNOWLEDGED", "DELIVERED"] },
+        sentAt: { gte: weekAgo },
+      },
+      select: {
+        id: true,
+        lines: {
+          select: {
+            quantityOrdered: true,
+            latestCostCents: true,
+            actualUnitCostCents: true,
+          },
+        },
+      },
+    }),
+    // Still waiting for a human tap.
+    db.purchaseOrder.findMany({
+      where: {
+        locationId,
+        status: { in: ["DRAFT", "AWAITING_APPROVAL"] },
+      },
+      select: {
+        id: true,
+        lines: {
+          select: { quantityOrdered: true, latestCostCents: true },
+        },
+      },
+    }),
+    // Audit rows for bot auto-approvals this week.
+    db.auditLog.findMany({
+      where: {
+        locationId,
+        action: "bot.outbound_replied",
+        createdAt: { gte: weekAgo },
+      },
+      select: { details: true },
+      take: 100,
+    }),
+    // Price-jump alerts: look at the most recent variance-review
+    // audit we wrote from deliverPurchaseOrder.
+    db.auditLog.findFirst({
+      where: {
+        locationId,
+        action: "purchaseOrder.priceVariance.review",
+        createdAt: { gte: weekAgo },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { details: true },
+    }),
+  ]);
+
+  const sumLines = (
+    lines: Array<{
+      quantityOrdered: number;
+      latestCostCents?: number | null;
+      actualUnitCostCents?: number | null;
+    }>
+  ) =>
+    lines.reduce((sum, l) => {
+      const unit = l.actualUnitCostCents ?? l.latestCostCents ?? 0;
+      return sum + unit * l.quantityOrdered;
+    }, 0);
+
+  const weekSpentCents = weekPos.reduce((s, po) => s + sumLines(po.lines), 0);
+  const pendingTotalCents = pendingPos.reduce((s, po) => s + sumLines(po.lines), 0);
+
+  // Count auto-approved deliveries this week — the "bot sent it
+  // while I slept" signal.
+  const autoApprovedCount = autoApprovedLogs.filter((row) => {
+    const d = row.details as { replyScenario?: string } | null;
+    return d?.replyScenario === "order_auto_approved";
+  }).length;
+
+  let priceAlert: {
+    itemName: string;
+    oldCents: number;
+    newCents: number;
+    deltaPct: number;
+  } | null = null;
+  if (variances?.details) {
+    const d = variances.details as {
+      description?: string;
+      expectedCents?: number;
+      actualCents?: number;
+      deltaPct?: number;
+    };
+    if (
+      d.description &&
+      typeof d.expectedCents === "number" &&
+      typeof d.actualCents === "number" &&
+      typeof d.deltaPct === "number"
+    ) {
+      priceAlert = {
+        itemName: d.description,
+        oldCents: d.expectedCents,
+        newCents: d.actualCents,
+        deltaPct: d.deltaPct,
+      };
+    }
+  }
+
+  return {
+    weekSpentCents,
+    weekOrderCount: weekPos.length,
+    autoApprovedCount,
+    pendingCount: pendingPos.length,
+    pendingTotalCents,
+    priceAlert,
+    isEmpty:
+      weekPos.length === 0 && pendingPos.length === 0 && priceAlert == null,
+  };
 }
 
 export async function getPurchaseOrdersData(locationId: string) {
@@ -304,6 +534,13 @@ export async function getPurchaseOrderDetail(locationId: string, purchaseOrderId
         id: purchaseOrderId,
         locationId,
       },
+      // The PO row carries the invoiceImage Bytes column which can
+      // be several MB. Omitting it here keeps the SSR payload light;
+      // the image is served separately via GET /api/purchase-orders
+      // /[id]/invoice when the UI actually wants to display it. The
+      // parsed JSON + parsedAt are kept — they're tiny and drive
+      // the ReceivePanel's rehydration on page load.
+      omit: { invoiceImage: true },
       include: {
         supplier: true,
         recommendation: {
@@ -385,7 +622,10 @@ export async function getAgentTasksData(locationId: string) {
 }
 
 export async function getSettingsData(locationId: string) {
-  const [integration, jobs, auditLogs] = await Promise.all([
+  const { describeSupplierOrderProvider } = await import(
+    "@/providers/supplier-order-provider"
+  );
+  const [integration, jobs, auditLogs, emailProvider] = await Promise.all([
     db.posIntegration.findFirst({
       where: {
         locationId,
@@ -401,9 +641,10 @@ export async function getSettingsData(locationId: string) {
       orderBy: { createdAt: "desc" },
       take: 10,
     }),
+    describeSupplierOrderProvider(locationId),
   ]);
 
-  return { integration, jobs, auditLogs };
+  return { integration, jobs, auditLogs, emailProvider };
 }
 
 export async function getAssistantSummary(locationId: string) {

@@ -84,3 +84,40 @@ export const SupplierOrderingMode = {
 
 export type SupplierOrderingMode =
   (typeof SupplierOrderingMode)[keyof typeof SupplierOrderingMode];
+
+export const MovementType = {
+  RECEIVING: "RECEIVING",
+  POS_DEPLETION: "POS_DEPLETION",
+  MANUAL_COUNT_ADJUSTMENT: "MANUAL_COUNT_ADJUSTMENT",
+  WASTE: "WASTE",
+  BREAKAGE: "BREAKAGE",
+  TRANSFER: "TRANSFER",
+  RETURN: "RETURN",
+  CORRECTION: "CORRECTION",
+} as const;
+
+export type MovementType = (typeof MovementType)[keyof typeof MovementType];
+
+export const ServiceMode = {
+  TO_GO: "TO_GO",
+  DINE_IN: "DINE_IN",
+} as const;
+
+export type ServiceMode = (typeof ServiceMode)[keyof typeof ServiceMode];
+
+export const InventoryCategory = {
+  COFFEE: "COFFEE",
+  DAIRY: "DAIRY",
+  ALT_DAIRY: "ALT_DAIRY",
+  SYRUP: "SYRUP",
+  BAKERY_INGREDIENT: "BAKERY_INGREDIENT",
+  PACKAGING: "PACKAGING",
+  CLEANING: "CLEANING",
+  PAPER_GOODS: "PAPER_GOODS",
+  RETAIL: "RETAIL",
+  SEASONAL: "SEASONAL",
+  SUPPLY: "SUPPLY",
+} as const;
+
+export type InventoryCategory =
+  (typeof InventoryCategory)[keyof typeof InventoryCategory];

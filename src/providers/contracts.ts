@@ -7,11 +7,46 @@ import {
   SupplierOrderingMode,
 } from "../lib/prisma";
 
+/**
+ * Hints from the POS catalog for building recipe choice groups. When
+ * present, the recipe-draft AI treats these as the starting tree for
+ * choiceGroups[] so the user doesn't have to type "add size small,
+ * medium, large" from scratch.
+ */
+export type ProviderModifierHint = {
+  // Stable key for de-duping across sync cycles.
+  externalModifierListId: string;
+  // Human-readable group label ("Milk", "Size", "Syrup").
+  name: string;
+  // Normalised category we use everywhere ("milk" | "size" | "syrup" |
+  // "temp" | "shot"…). If the POS modifier name doesn't match a known
+  // category, fall back to slug of name.
+  modifierCategory: string;
+  required: boolean;
+  // If true, the POS treats this as a size-variation (multi-size drinks
+  // rather than a modifier group). Different behaviour in depletion —
+  // scales quantities rather than adds a separate ingredient.
+  isSizeGroup: boolean;
+  options: Array<{
+    externalModifierId: string;
+    label: string;
+    modifierKey: string; // "<category>:<slug>"
+    isDefault: boolean;
+    // Only set for size groups where we've inferred a numeric scale
+    // factor (e.g. 12oz vs 16oz → 1.0 vs 1.33).
+    sizeScaleFactor?: number;
+    // Price delta the POS charges for this option — not used for
+    // depletion but nice context for the draft AI.
+    priceCents?: number;
+  }>;
+};
+
 export type ProviderCatalogItem = {
   externalItemId: string;
   name: string;
   category?: string;
   imageUrl?: string;
+  modifierHints?: ProviderModifierHint[];
   variations: Array<{
     externalVariationId: string;
     name: string;
@@ -65,7 +100,12 @@ export type BotLanguageIntent =
   | "STOCK_STATUS"
   | "GREETING"
   | "HELP"
-  | "UNKNOWN";
+  | "UNKNOWN"
+  | "ADD_INVENTORY_ITEM"
+  | "ADD_SUPPLIER"
+  | "ADD_RECIPE"
+  | "UPDATE_ITEM"
+  | "UPDATE_STOCK_COUNT";
 
 export type BotInventoryChoice = {
   id: string;
@@ -96,6 +136,12 @@ export type BotMessageInterpretation = {
   needsClarification: boolean;
   clarificationQuestion?: string | null;
   summary?: string | null;
+  // For ADD_INVENTORY_ITEM: the name of the new item
+  newItemName?: string | null;
+  // For ADD_SUPPLIER: the supplier name
+  supplierName?: string | null;
+  // For ADD_RECIPE: the dish/drink name
+  dishName?: string | null;
   metadata?: Record<string, unknown>;
 };
 
@@ -142,6 +188,10 @@ export interface PosProvider {
     callbackUrl: string;
     state: string;
     accessToken?: string | null;
+    // Shopify-only: the merchant's shop domain (e.g.
+    // "my-cafe.myshopify.com"). Ignored by Square + Clover whose
+    // OAuth URLs are vendor-hosted and don't depend on merchant.
+    shopDomain?: string | null;
   }): Promise<{
     status: "connected" | "redirect_required";
     sandbox: boolean;
@@ -154,6 +204,8 @@ export interface PosProvider {
   exchangeCode?(input: {
     code: string;
     callbackUrl: string;
+    // Shopify-only — see above.
+    shopDomain?: string | null;
   }): Promise<{
     sandbox: boolean;
     externalMerchantId?: string;
@@ -212,7 +264,30 @@ export interface SupplierOrderProvider {
     recipient: string;
     subject: string;
     body: string;
-  }): Promise<{ providerMessageId?: string }>;
+    /** Optional rich HTML body — providers that support it (e.g. Gmail) send multipart/alternative. */
+    html?: string;
+    /** Optional Reply-To override. When set, supplier replies go to
+     * this address instead of the user's connected mailbox. We set
+     * it to `reply+<purchaseOrderId>@<REPLY_DOMAIN>` so the inbound
+     * webhook can re-attach the reply to the PO — this replaces the
+     * gmail.readonly thread-poller path. */
+    replyTo?: string;
+  }): Promise<{
+    providerMessageId?: string;
+    /** Provider-specific metadata (e.g. Gmail threadId) — persisted
+     * on the SupplierCommunication row so downstream workers can
+     * find the conversation later. */
+    metadata?: Record<string, unknown>;
+    /** Set by the no-config fallback (ConsoleEmailProvider) to signal
+     * the caller that nothing actually went over the wire — the
+     * user still needs to hit Send in their own email app. */
+    simulated?: boolean;
+    /** mailto: URL pre-filled with the PO subject/body/recipient, so
+     * the Telegram message can expose a tap-to-open button that
+     * opens the user's native email app. Only provided when
+     * simulated === true. */
+    mailto?: string;
+  }>;
   prepareWebsiteTask(input: {
     supplierName: string;
     website?: string | null;

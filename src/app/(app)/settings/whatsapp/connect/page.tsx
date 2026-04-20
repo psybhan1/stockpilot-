@@ -23,7 +23,7 @@ export default async function WhatsAppConnectPage({
 
   if (!connectToken) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=whatsapp&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
         "WhatsApp connect token is missing. Start again from Settings."
       )}`
     );
@@ -31,7 +31,7 @@ export default async function WhatsAppConnectPage({
 
   if (!isPublicAppUrl(env.APP_URL)) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=whatsapp&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
         "WhatsApp connect needs a public HTTPS APP_URL."
       )}`
     );
@@ -39,7 +39,7 @@ export default async function WhatsAppConnectPage({
 
   if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_WHATSAPP_FROM) {
     redirect(
-      `/settings?chatConnect=error&chatChannel=whatsapp&chatDetail=${encodeURIComponent(
+      `/settings?channelConnect=error&channelType=whatsapp&channelDetail=${encodeURIComponent(
         "Twilio WhatsApp credentials are still missing."
       )}`
     );

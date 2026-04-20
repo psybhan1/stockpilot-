@@ -1,6 +1,9 @@
 import type { NotificationProvider, SupplierOrderProvider } from "@/providers/contracts";
 import { NotificationChannel } from "@/lib/prisma";
 import { buildWebsiteOrderPlaywrightTemplate } from "@/modules/automation/playwright-template";
+import { buildMailtoUrl } from "./mailto";
+
+export { buildMailtoUrl };
 
 export class ConsoleEmailProvider implements NotificationProvider, SupplierOrderProvider {
   async sendNotification(input: {
@@ -34,20 +37,42 @@ export class ConsoleEmailProvider implements NotificationProvider, SupplierOrder
     orderNumber: string;
     lines: Array<{ description: string; quantity: number; unit: string }>;
   }) {
-    const lines = input.lines
-      .map((line) => `- ${line.description}: ${line.quantity} ${line.unit}`)
-      .join("\n");
-
-    return {
-      subject: `PO ${input.orderNumber} from StockPilot`,
-      body: `Hello ${input.supplierName},\n\nPlease confirm the following order:\n${lines}\n\nThank you,\nStockPilot`,
-    };
+    const { buildSupplierOrderEmail } = await import(
+      "@/modules/purchasing/email-template"
+    );
+    const composed = buildSupplierOrderEmail({
+      supplierName: input.supplierName,
+      businessName: "Our team",
+      orderNumber: input.orderNumber,
+      replyToEmail: "",
+      lines: input.lines,
+    });
+    return { subject: composed.subject, body: composed.text };
   }
 
-  async sendApprovedOrder(input: { recipient: string; subject: string; body: string }) {
-    console.info("[ConsoleEmailProvider] supplier-order", input);
+  async sendApprovedOrder(input: {
+    recipient: string;
+    subject: string;
+    body: string;
+    html?: string;
+    replyTo?: string;
+  }) {
+    // No provider is configured, so we don't actually send an email.
+    // Instead we hand the caller a mailto: URL pre-filled with
+    // recipient/subject/body — the Telegram bot turns this into a
+    // single tap-to-open button and the user's native email app
+    // sends from their own account. That's the zero-config path:
+    // supplier sees a personal email from the café owner, we do
+    // nothing on the wire.
+    const mailto = buildMailtoUrl({
+      to: input.recipient,
+      subject: input.subject,
+      body: input.body,
+    });
     return {
-      providerMessageId: `console-order-${Date.now()}`,
+      providerMessageId: `mailto-${Date.now()}`,
+      simulated: true as const,
+      mailto,
     };
   }
 

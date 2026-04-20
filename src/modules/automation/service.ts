@@ -26,6 +26,31 @@ export async function dispatchAgentTaskById(taskId: string) {
     throw new Error("Only website-order preparation tasks can be dispatched.");
   }
 
+  // If the supplier has a website URL and we have Chromium available,
+  // use the internal browser agent (safer, tighter approval flow)
+  // instead of dispatching to n8n.
+  const supplierWebsite = task.supplier?.website?.trim();
+  if (supplierWebsite && process.env.BROWSER_AGENT_ENABLED !== "false") {
+    try {
+      const { runWebsiteOrderAgent } = await import(
+        "@/modules/automation/browser-agent"
+      );
+      await db.agentTask.update({
+        where: { id: task.id },
+        data: { status: AgentTaskStatus.PENDING, lastAttemptAt: new Date() },
+      });
+      const agentResult = await runWebsiteOrderAgent(task.id);
+      return db.agentTask.findUniqueOrThrow({ where: { id: task.id } });
+    } catch (err) {
+      // If browser agent fails (e.g. Chromium not available on this
+      // host), fall through to the n8n provider path below.
+      console.warn(
+        "[automation] Browser agent failed, falling through to n8n:",
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
   const input = asRecord(task.input);
   const provider = getAutomationProvider();
   const result = await provider.dispatchWebsiteOrderTask({

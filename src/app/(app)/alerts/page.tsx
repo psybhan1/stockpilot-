@@ -1,12 +1,12 @@
-import { BellRing, CheckCheck, TriangleAlert } from "lucide-react";
-
+import Link from "next/link";
 import {
   acknowledgeAlertAction,
   resolveAlertAction,
 } from "@/app/actions/operations";
+import { PageHero } from "@/components/app/page-hero";
+import { PendingButton } from "@/components/app/pending-button";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Role } from "@/lib/domain-enums";
 import { requireSession } from "@/modules/auth/session";
 import { getAlertsPageData } from "@/modules/dashboard/queries";
@@ -15,150 +15,145 @@ export default async function AlertsPage() {
   const session = await requireSession(Role.SUPERVISOR);
   const alerts = await getAlertsPageData(session.locationId);
 
-  const openAlerts = alerts.filter((alert) => alert.status === "OPEN").length;
-  const acknowledgedAlerts = alerts.filter(
-    (alert) => alert.status === "ACKNOWLEDGED"
-  ).length;
-  const resolvedAlerts = alerts.filter((alert) => alert.status === "RESOLVED").length;
+  const openAlerts = alerts.filter((a) => a.status === "OPEN").length;
+  const acknowledgedAlerts = alerts.filter((a) => a.status === "ACKNOWLEDGED").length;
+  const resolvedAlerts = alerts.filter((a) => a.status === "RESOLVED").length;
 
   return (
-    <div className="flex flex-col gap-6">
-      <Card className="overflow-hidden border-border/60 bg-[linear-gradient(135deg,rgba(41,37,36,0.98),rgba(87,83,78,0.96))] text-white shadow-2xl shadow-black/10">
-        <CardContent className="flex flex-col gap-6 p-6">
-          <div className="max-w-3xl">
-            <p className="text-sm uppercase tracking-[0.22em] text-white/60">Alerts</p>
-            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-              Keep the queue calm by handling the few things that actually need attention.
-            </h1>
-            <p className="mt-3 text-base text-white/70 sm:text-lg">
-              Low stock, missing counts, recipe gaps, and sync problems all land here with a clear
-              next step.
-            </p>
-          </div>
+    <div className="space-y-10">
+      <PageHero
+        eyebrow="Alerts"
+        title={openAlerts === 1 ? "One open alert" : `${openAlerts} open alerts`}
+        subtitle="attention required."
+        description="Low stock, sync issues, and missing counts that need attention."
+        stats={[
+          { label: "Open", value: String(openAlerts).padStart(2, "0"), highlight: openAlerts > 0 },
+          { label: "Acknowledged", value: String(acknowledgedAlerts).padStart(2, "0") },
+          { label: "Resolved", value: String(resolvedAlerts).padStart(2, "0") },
+        ]}
+      />
 
-          <div className="grid gap-3 md:grid-cols-3">
-            <MetricCard label="Open now" value={openAlerts} />
-            <MetricCard label="Acknowledged" value={acknowledgedAlerts} />
-            <MetricCard label="Resolved" value={resolvedAlerts} />
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4">
+      {/* Alert list — brutalist treatment */}
+      <section className="space-y-3">
         {alerts.length ? (
-          alerts.map((alert) => (
-            <Card
+          alerts.map((alert, i) => (
+            <div
               key={alert.id}
-              className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5"
+              className={`brutal-card ${alert.severity === "CRITICAL" ? "brutal-card-hot" : ""} p-5 space-y-3 ${alert.severity === "CRITICAL" ? "pl-7" : ""}`}
             >
-              <CardContent className="space-y-4 p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      <BellRing className="size-4" />
-                      <p className="text-xs uppercase tracking-[0.16em]">
-                        {alert.inventoryItem?.name ?? "System alert"}
-                      </p>
-                    </div>
-                    <h2 className="mt-3 text-lg font-semibold">{alert.title}</h2>
-                    <p className="mt-2 text-sm text-muted-foreground">{alert.message}</p>
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-3">
+                    <span className="brutal-number text-xs text-muted-foreground">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    {alert.severity === "CRITICAL" && (
+                      <span className="brutal-chip-hot">Urgent</span>
+                    )}
+                    {alert.severity === "WARNING" && (
+                      <span className="brutal-chip-outline">Watch</span>
+                    )}
+                    <span className="brutal-chip-outline">
+                      {alert.status === "OPEN"
+                        ? "Open"
+                        : alert.status === "ACKNOWLEDGED"
+                        ? "Seen"
+                        : "Resolved"}
+                    </span>
                   </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <StatusBadge
-                      label={
-                        alert.severity === "CRITICAL"
-                          ? "Urgent"
-                          : alert.severity === "WARNING"
-                            ? "Watch"
-                            : "Info"
-                      }
-                      tone={
-                        alert.severity === "CRITICAL"
-                          ? "critical"
-                          : alert.severity === "WARNING"
-                            ? "warning"
-                            : "info"
-                      }
-                    />
-                    <StatusBadge
-                      label={
-                        alert.status === "OPEN"
-                          ? "Open"
-                          : alert.status === "ACKNOWLEDGED"
-                            ? "Seen"
-                            : "Resolved"
-                      }
-                      tone={alert.status === "RESOLVED" ? "success" : "neutral"}
-                    />
-                  </div>
-                </div>
-
-                {alert.notifications.length ? (
-                  <div className="rounded-[24px] border border-border/60 bg-background/80 p-4">
-                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                      Notifications sent
+                  <p className="mt-2 text-base font-bold uppercase tracking-[-0.02em]">
+                    {alert.title}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground line-clamp-2">
+                    {alert.message}
+                  </p>
+                  {alert.inventoryItem && (
+                    <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                      Item · {alert.inventoryItem.name}
                     </p>
-                    <div className="mt-3 space-y-2">
-                      {alert.notifications.map((notification) => (
-                        <div
-                          key={notification.id}
-                          className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card px-3 py-2"
-                        >
-                          <span className="truncate text-sm">{notification.recipient}</span>
-                          <StatusBadge label={notification.status} tone="info" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+                  )}
+                </div>
+              </div>
 
-                {alert.status !== "RESOLVED" ? (
-                  <div className="flex flex-wrap gap-2">
-                    {alert.status === "OPEN" ? (
-                      <form action={acknowledgeAlertAction}>
-                        <input type="hidden" name="alertId" value={alert.id} />
-                        <Button type="submit" variant="outline" className="rounded-full">
-                          <TriangleAlert data-icon="inline-start" />
-                          Mark as seen
-                        </Button>
-                      </form>
-                    ) : null}
-                    <form action={resolveAlertAction}>
+              {alert.notifications.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {alert.notifications.map((n) => (
+                    <span key={n.id} className="brutal-chip-outline">
+                      {n.recipient} · {n.status}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {alert.status !== "RESOLVED" && (
+                <div className="flex flex-wrap gap-2">
+                  {/* Deep-link to /pos-mapping for POS-unmapped
+                      alerts so the owner jumps straight into the
+                      fix flow instead of having to figure out
+                      where the mapping lives. The alert id encodes
+                      (integrationId, externalProductId) — we don't
+                      parse it; /pos-mapping shows everything
+                      unmapped at once, the owner scrolls to the
+                      row they recognise. */}
+                  {alert.id.startsWith("pos-unmapped-") && (
+                    <Link
+                      href="/pos-mapping"
+                      className="inline-flex h-8 items-center gap-1 rounded-none border-2 border-amber-500/60 bg-amber-500/15 px-3 text-xs font-bold uppercase tracking-[0.14em] text-amber-900 hover:bg-amber-500/25 dark:text-amber-200"
+                    >
+                      Map now →
+                    </Link>
+                  )}
+                  {alert.status === "OPEN" && (
+                    <form action={acknowledgeAlertAction}>
                       <input type="hidden" name="alertId" value={alert.id} />
-                      <Button type="submit" className="rounded-full">
-                        <CheckCheck data-icon="inline-start" />
-                        Resolve
+                      <Button type="submit" variant="outline" size="sm" className="brutal-btn h-8 rounded-none border-2 text-xs font-bold uppercase tracking-[0.14em]">
+                        Mark seen
                       </Button>
                     </form>
-                  </div>
-                ) : (
-                  <div className="rounded-[24px] border border-border/60 bg-background/75 p-4 text-sm text-muted-foreground">
-                    This alert has already been resolved.
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                  )}
+                  <form action={resolveAlertAction}>
+                    <input type="hidden" name="alertId" value={alert.id} />
+                    <PendingButton
+                      size="sm"
+                      pendingLabel="Resolving…"
+                      className="hot-cta h-8 rounded-none border-2 text-xs font-bold uppercase tracking-[0.14em]"
+                    >
+                      Resolve
+                    </PendingButton>
+                  </form>
+                </div>
+              )}
+            </div>
           ))
         ) : (
-          <Card className="rounded-[28px] border-dashed border-border/60 bg-card/70">
-            <CardContent className="px-6 py-10 text-center">
-              <p className="font-medium">No alerts right now</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                New inventory, sync, or recipe issues will appear here when they need attention.
-              </p>
-            </CardContent>
-          </Card>
+          <div className="empty-state">
+            <span className="empty-state-title">All clear</span>
+            <span className="empty-state-hint">
+              No active alerts. Stock is tracked in the background and we'll
+              surface anything that needs attention the moment it does.
+            </span>
+          </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
 
-function MetricCard({ label, value }: { label: string; value: number }) {
+function MetricCard({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: number;
+  highlight?: "warning" | "critical";
+}) {
   return (
-    <div className="rounded-[24px] border border-white/10 bg-white/5 p-4">
-      <p className="text-sm text-white/65">{label}</p>
-      <p className="mt-3 text-4xl font-semibold">{value}</p>
+    <div className="rounded-xl border border-border/50 bg-card p-4">
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <p className={`mt-2 text-2xl font-semibold tabular-nums ${
+        highlight === "critical" ? "text-red-500" : highlight === "warning" ? "text-amber-500" : ""
+      }`}>{value}</p>
     </div>
   );
 }

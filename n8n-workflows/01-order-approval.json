@@ -1,0 +1,68 @@
+{
+  "name": "01 - Low Stock Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "order-approval",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Low Stock Alert Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true, \"received\": true }",
+        "options": {}
+      },
+      "id": "respond-immediately",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [480, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json.body ?? $input.first().json;\nconst supplier = d.supplierName ?? 'a supplier';\nconst item = d.itemName ?? 'an item';\nconst qty = d.quantity ?? '?';\nconst unit = d.purchaseUnit ?? '';\nconst orderNum = d.orderNumber ?? '(pending)';\nconst chatId = d.telegramChatId ?? $env.MANAGER_TELEGRAM_CHAT_ID;\n\nreturn [{ json: { chatId,\n  message: `🔔 *Low Stock — Restock drafted*\\n\\n📦 ${item}: *${qty} ${unit}*\\n🏪 ${supplier}\\n📋 ${orderNum}\\n\\nApprove from the Telegram quick-action buttons or in the StockPilot app.` } }];"
+      },
+      "id": "format-message",
+      "name": "Format Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 380]
+    },
+    {
+      "parameters": {
+        "authentication": "credentials",
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "send-telegram",
+      "name": "Notify Manager",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [720, 380]
+    }
+  ],
+  "connections": {
+    "Low Stock Alert Webhook": {
+      "main": [
+        [
+          { "node": "Respond OK", "type": "main", "index": 0 },
+          { "node": "Format Notification", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Format Notification": {
+      "main": [[{ "node": "Notify Manager", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "stockbuddy" }]
+}

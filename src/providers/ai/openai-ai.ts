@@ -98,27 +98,21 @@ Explain why this reorder makes sense in 1-2 sentences.`,
     orderNumber: string;
     lines: Array<{ description: string; quantity: number; unit: string }>;
   }) {
-    const content = await this.createJsonCompletion<{
-      subject: string;
-      body: string;
-    }>({
-      system:
-        "You draft professional purchase-order emails for hospitality suppliers. Return compact JSON only.",
-      prompt: `Supplier: ${input.supplierName}
-Order number: ${input.orderNumber}
-Lines: ${input.lines.map((line) => `${line.quantity} ${line.unit} ${line.description}`).join("; ")}
-
-Return JSON with:
-- subject
-- body`,
+    // Use the same deterministic template every other path uses.
+    // We deliberately don't ask the LLM to write supplier emails any
+    // more — it produced subtly different output each send and made
+    // suppliers' downstream parsing flaky.
+    const { buildSupplierOrderEmail } = await import(
+      "@/modules/purchasing/email-template"
+    );
+    const composed = buildSupplierOrderEmail({
+      supplierName: input.supplierName,
+      businessName: "Our team",
+      orderNumber: input.orderNumber,
+      replyToEmail: "",
+      lines: input.lines,
     });
-
-    return {
-      subject: content.subject || `Purchase order ${input.orderNumber}`,
-      body:
-        content.body ||
-        `Hello ${input.supplierName},\n\nPlease confirm PO ${input.orderNumber}.\n\nThank you,\nStockPilot`,
-    };
+    return { subject: composed.subject, body: composed.text };
   }
 
   async answerOpsQuery(input: {

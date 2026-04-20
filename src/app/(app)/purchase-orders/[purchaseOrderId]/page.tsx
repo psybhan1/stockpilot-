@@ -6,10 +6,11 @@ import {
   acknowledgePurchaseOrderAction,
   cancelPurchaseOrderAction,
   dispatchAgentTaskAction,
-  deliverPurchaseOrderAction,
   markPurchaseOrderSentAction,
 } from "@/app/actions/operations";
+import { ReceivePanel } from "./receive-panel";
 import { StatusBadge } from "@/components/app/status-badge";
+import { SupplierConversation } from "@/components/app/supplier-conversation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -113,7 +114,7 @@ export default async function PurchaseOrderDetailPage({
               {purchaseOrder.lines.map((line) => (
                 <div
                   key={line.id}
-                  className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                  className="notif-card p-4"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -165,81 +166,52 @@ export default async function PurchaseOrderDetailPage({
           {canDeliver ? (
             <Panel
               title="Receive delivery"
-              description="Adjust received pack counts if the shipment differs from the order."
+              description="Scan the invoice or adjust received pack counts / actual costs by hand. Variance against the PO is flagged per line."
             >
-              <form action={deliverPurchaseOrderAction} className="space-y-4">
-                <input type="hidden" name="purchaseOrderId" value={purchaseOrder.id} />
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  {purchaseOrder.lines.map((line) => (
-                    <label
-                      key={line.id}
-                      className="rounded-[24px] border border-border/60 bg-background/80 p-4"
-                    >
-                      <span className="font-medium">{line.description}</span>
-                      <span className="mt-1 block text-sm text-muted-foreground">
-                        Ordered {line.quantityOrdered} {line.purchaseUnit.toLowerCase()}
-                      </span>
-                      <Input
-                        name={`received-${line.id}`}
-                        type="number"
-                        min={0}
-                        defaultValue={line.quantityOrdered}
-                        className="mt-3 h-11 rounded-2xl"
-                      />
-                    </label>
-                  ))}
-                </div>
-
-                <div>
-                  <p className="mb-2 text-sm font-medium">Receiving note</p>
-                  <Textarea
-                    name="notes"
-                    rows={3}
-                    placeholder="Optional receiving note for the audit trail"
-                    className="rounded-2xl"
-                  />
-                </div>
-
-                <Button type="submit" className="rounded-2xl">
-                  Mark delivered and receive stock
-                </Button>
-              </form>
+              <ReceivePanel
+                purchaseOrderId={purchaseOrder.id}
+                lines={purchaseOrder.lines.map((line) => ({
+                  id: line.id,
+                  description: line.description,
+                  quantityOrdered: line.quantityOrdered,
+                  purchaseUnit: line.purchaseUnit,
+                  packSizeBase: line.packSizeBase,
+                  expectedUnitCostCents: line.latestCostCents ?? null,
+                  itemName: line.inventoryItem.name,
+                }))}
+                initialParsed={
+                  purchaseOrder.invoiceParsed
+                    ? {
+                        parsed: purchaseOrder.invoiceParsed as unknown as Record<string, unknown>,
+                        parsedAt: purchaseOrder.invoiceParsedAt?.toISOString() ?? null,
+                      }
+                    : null
+                }
+              />
             </Panel>
           ) : null}
 
           <div className="grid gap-6 lg:grid-cols-2">
             <Panel
-              title="Supplier communications"
-              description="Email drafts, sends, and manual notes attached to this order."
+              title="Supplier conversation"
+              description="The exact email we sent and every reply from the supplier — with intent automatically classified."
             >
-              <div className="space-y-3">
-                {purchaseOrder.communications.length ? (
-                  purchaseOrder.communications.map((communication) => (
-                    <div
-                      key={communication.id}
-                      className="rounded-[24px] border border-border/60 bg-background/80 p-4"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-medium">
-                            {communication.subject ?? "Supplier update"}
-                          </p>
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {communication.body}
-                          </p>
-                        </div>
-                        <StatusBadge label={communication.status} tone="info" />
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <EmptyState
-                    title="No supplier communications yet"
-                    description="Messages connected to this order will appear here."
-                  />
-                )}
-              </div>
+              <SupplierConversation
+                supplierEmail={purchaseOrder.supplier.email}
+                entries={purchaseOrder.communications.map((c) => ({
+                  id: c.id,
+                  direction: c.direction,
+                  subject: c.subject,
+                  body: c.body,
+                  status: c.status,
+                  createdAt: c.createdAt.toISOString(),
+                  sentAt: c.sentAt ? c.sentAt.toISOString() : null,
+                  metadata:
+                    c.metadata && typeof c.metadata === "object"
+                      ? (c.metadata as Record<string, unknown>)
+                      : null,
+                }))}
+              />
             </Panel>
 
             <Panel
@@ -251,7 +223,7 @@ export default async function PurchaseOrderDetailPage({
                   purchaseOrder.agentTasks.map((task) => (
                     <div
                       key={task.id}
-                      className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                      className="notif-card p-4"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>
@@ -355,7 +327,7 @@ export default async function PurchaseOrderDetailPage({
                 purchaseOrder.auditLogs.map((log) => (
                   <div
                     key={log.id}
-                    className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                    className="notif-card p-4"
                   >
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-medium">{log.action}</p>
@@ -423,7 +395,7 @@ function InfoPill({
   muted?: boolean;
 }) {
   return (
-    <div className="rounded-[24px] border border-border/60 bg-background/80 p-4">
+    <div className="notif-card p-4">
       <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
       <p className={muted ? "mt-2 text-sm text-muted-foreground" : "mt-2 font-medium"}>{value}</p>
     </div>
@@ -450,7 +422,7 @@ function ActionForm({
   notePlaceholder?: string;
 }) {
   return (
-    <form action={action} className="space-y-3 rounded-[24px] border border-border/60 bg-background/80 p-4">
+    <form action={action} className="space-y-3 notif-card p-4">
       <input type="hidden" name={hiddenName} value={hiddenValue} />
       <div>
         <p className="font-medium">{title}</p>

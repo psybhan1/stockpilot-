@@ -6,7 +6,6 @@ import {
   MovementType,
   RecommendationStatus,
   SaleProcessingStatus,
-  ServiceMode,
 } from "@/lib/prisma";
 import type { Prisma } from "@/lib/prisma";
 
@@ -23,102 +22,15 @@ import { isCountStale, isHighUsageSpike } from "@/modules/forecast/anomalies";
 import { queueManagerEmailNotificationsTx } from "@/modules/notifications/service";
 import { buildRecommendationSummary, calculateRecommendedOrder } from "@/modules/purchasing/reorder";
 import { applyDelta, calculateCountAdjustment } from "@/modules/inventory/units";
-
-const usageSignalMovementTypes: readonly MovementType[] = [
-  MovementType.POS_DEPLETION,
-  MovementType.WASTE,
-  MovementType.BREAKAGE,
-  MovementType.MANUAL_COUNT_ADJUSTMENT,
-  MovementType.CORRECTION,
-  MovementType.TRANSFER,
-  MovementType.RETURN,
-] as const;
-
-function componentMatchesServiceMode(
-  serviceMode: ServiceMode | null | undefined,
-  conditionServiceMode: ServiceMode | null | undefined
-) {
-  if (!conditionServiceMode) {
-    return true;
-  }
-
-  return serviceMode === conditionServiceMode;
-}
-
-function componentMatchesModifierKey(
-  modifierKey: string | null | undefined,
-  lineModifierKeys: string[]
-) {
-  if (!modifierKey) {
-    return true;
-  }
-
-  const normalizedModifierKey = normalizeModifierKey(modifierKey);
-  return lineModifierKeys.some(
-    (lineModifierKey) => normalizeModifierKey(lineModifierKey) === normalizedModifierKey
-  );
-}
-
-function normalizeModifierKey(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function extractModifierKeys(
-  modifierKeys: Prisma.JsonValue | null | undefined,
-  rawData: Prisma.JsonValue | null | undefined
-) {
-  const fromField = extractModifierKeysFromValue(modifierKeys);
-
-  if (fromField.length > 0) {
-    return fromField;
-  }
-
-  if (!rawData || typeof rawData !== "object" || Array.isArray(rawData)) {
-    return [];
-  }
-
-  return extractModifierKeysFromValue(
-    (rawData as Record<string, unknown>).modifiers as Prisma.JsonValue | undefined
-  );
-}
-
-function extractModifierKeysFromValue(value: Prisma.JsonValue | null | undefined) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .flatMap((entry) => {
-      if (typeof entry === "string") {
-        return [entry];
-      }
-
-      if (entry && typeof entry === "object" && !Array.isArray(entry)) {
-        const record = entry as Record<string, unknown>;
-        return [record.catalog_object_id, record.name].filter(
-          (candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0
-        );
-      }
-
-      return [];
-    })
-    .map((entry) => entry.trim());
-}
-
-function sumNegativeUsageBase(
-  movements: Array<{
-    movementType: MovementType;
-    quantityDeltaBase: number;
-  }>
-) {
-  return movements
-    .filter((movement) => usageSignalMovementTypes.includes(movement.movementType))
-    .reduce((sum, movement) => sum + Math.abs(Math.min(movement.quantityDeltaBase, 0)), 0);
-}
-
-function clampConfidenceScore(score: number) {
-  return Math.min(0.99, Math.max(0.2, score));
-}
+import {
+  USAGE_SIGNAL_MOVEMENT_TYPES,
+  clampConfidenceScore,
+  componentMatchesModifierKey,
+  componentMatchesServiceMode,
+  extractModifierKeys,
+  sumNegativeUsageBase,
+} from "@/modules/inventory/ledger-primitives";
+import { inferModifierKeysFromVariationName } from "@/modules/recipes/consolidation";
 
 export async function postStockMovementTx(
   tx: Prisma.TransactionClient,
@@ -284,7 +196,7 @@ export async function syncAlertsAndRecommendationsTx(
       where: {
         inventoryItemId,
         movementType: {
-          in: [...usageSignalMovementTypes],
+          in: [...USAGE_SIGNAL_MOVEMENT_TYPES],
         },
         performedAt: {
           gte: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
@@ -295,7 +207,7 @@ export async function syncAlertsAndRecommendationsTx(
       where: {
         inventoryItemId,
         movementType: {
-          in: [...usageSignalMovementTypes],
+          in: [...USAGE_SIGNAL_MOVEMENT_TYPES],
         },
         performedAt: {
           gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
@@ -560,7 +472,32 @@ export async function syncAlertsAndRecommendationsTx(
     },
   });
 
-  if (!supplierItem || item.snapshot.urgency === AlertSeverity.INFO) {
+  // Two signals fire a reorder recommendation:
+  //
+  //   1. `snapshot.urgency` is WARNING or CRITICAL — the usage-
+  //      projection says we'll be short before the next delivery.
+  //      Needs recent usage history to work.
+  //
+  //   2. `stockOnHandBase <= lowStockThresholdBase` — the operator
+  //      set an explicit floor and we've crossed it. Doesn't need
+  //      usage history. THIS IS THE NEW ONE — previously the gate
+  //      below only checked urgency, so brand-new items with no
+  //      usage history would get a LOW_STOCK alert (fires on the
+  //      same threshold) but NO reorder recommendation, forcing the
+  //      operator to build the PO by hand even though they'd told
+  //      us exactly when they wanted to reorder.
+  //
+  // Either signal fires the recommendation; we fall back to the
+  // supplier's lead time (or 2 days default) when no urgency was
+  // derived, so calculateRecommendedOrder still produces a sensible
+  // pack-rounded quantity.
+  const belowExplicitFloor =
+    item.stockOnHandBase <= item.lowStockThresholdBase;
+  const snapshotSaysReorder =
+    item.snapshot.urgency !== AlertSeverity.INFO;
+  const shouldRecommend = !!supplierItem && (belowExplicitFloor || snapshotSaysReorder);
+
+  if (!shouldRecommend) {
     if (existingRecommendation) {
       await tx.reorderRecommendation.update({
         where: { id: existingRecommendation.id },
@@ -587,12 +524,24 @@ export async function syncAlertsAndRecommendationsTx(
   const supplierDeliveryDays = parseDeliveryDays(supplierItem.deliveryDays);
   const itemDeliveryDays = parseDeliveryDays(item.deliveryDays);
 
+  // If the snapshot can't give us a lead time, fall back to the
+  // supplier's — otherwise a new item with leadTimeDays=0 (schema
+  // default) bricks the urgency classifier and makes demand-cover
+  // math zero-out. Using 2 days as a last-ditch floor so a wholly
+  // unconfigured item still produces a sensible reorder quantity.
+  const effectiveLeadTimeDays =
+    supplierItem.leadTimeDays != null && supplierItem.leadTimeDays > 0
+      ? supplierItem.leadTimeDays
+      : item.leadTimeDays > 0
+        ? item.leadTimeDays
+        : 2;
+
   const order = calculateRecommendedOrder({
     stockOnHandBase: item.stockOnHandBase,
     averageDailyUsageBase: item.snapshot.averageDailyUsageBase,
     parLevelBase: item.parLevelBase,
     safetyStockBase: item.safetyStockBase,
-    leadTimeDays: supplierItem.leadTimeDays ?? item.leadTimeDays,
+    leadTimeDays: effectiveLeadTimeDays,
     deliveryDays: supplierDeliveryDays.length
       ? supplierDeliveryDays
       : itemDeliveryDays,
@@ -600,12 +549,21 @@ export async function syncAlertsAndRecommendationsTx(
     minimumOrderQuantity: supplierItem.minimumOrderQuantity,
   });
 
+  // If the urgency snapshot is INFO but we triggered on the explicit
+  // threshold, synthesize WARNING so the recommendation's metadata,
+  // UI badges, and rationale copy read correctly ("needs attention"
+  // instead of "no issue").
+  const effectiveUrgency =
+    item.snapshot.urgency === AlertSeverity.INFO && belowExplicitFloor
+      ? AlertSeverity.WARNING
+      : item.snapshot.urgency;
+
   const rationale = buildRecommendationSummary({
     inventoryName: item.name,
     recommendedPackCount: order.recommendedPackCount,
     purchaseUnit: item.purchaseUnit,
     supplierName: supplierItem.supplier.name,
-    urgency: item.snapshot.urgency,
+    urgency: effectiveUrgency,
   });
 
   const recommendation = existingRecommendation
@@ -618,7 +576,7 @@ export async function syncAlertsAndRecommendationsTx(
           recommendedPurchaseUnit: item.purchaseUnit,
           recommendedPackCount: order.recommendedPackCount,
           projectedStockoutAt: item.snapshot.projectedRunoutAt,
-          urgency: item.snapshot.urgency,
+          urgency: effectiveUrgency,
           rationale,
           dismissedAt: null,
         },
@@ -633,7 +591,7 @@ export async function syncAlertsAndRecommendationsTx(
           recommendedPurchaseUnit: item.purchaseUnit,
           recommendedPackCount: order.recommendedPackCount,
           projectedStockoutAt: item.snapshot.projectedRunoutAt,
-          urgency: item.snapshot.urgency,
+          urgency: effectiveUrgency,
           rationale,
         },
       });
@@ -645,7 +603,7 @@ export async function syncAlertsAndRecommendationsTx(
     await tx.alert.update({
       where: { id: existingOrderAlert.id },
       data: {
-        severity: item.snapshot.urgency,
+        severity: effectiveUrgency,
         title: orderAlertTitle,
         message: orderAlertMessage,
         metadata: {
@@ -660,7 +618,7 @@ export async function syncAlertsAndRecommendationsTx(
         locationId: item.locationId,
         inventoryItemId,
         type: AlertType.ORDER_APPROVAL,
-        severity: item.snapshot.urgency,
+        severity: effectiveUrgency,
         title: orderAlertTitle,
         message: orderAlertMessage,
         metadata: {
@@ -718,6 +676,14 @@ export async function processSaleEventById(saleEventId: string, userId?: string)
                   recipe: {
                     include: {
                       components: true,
+                      // Hierarchical recipe tree: choice groups +
+                      // options. Depletion walks this in addition to
+                      // the flat components[] so old flat recipes
+                      // keep working unchanged.
+                      choiceGroups: {
+                        include: { options: true },
+                        orderBy: { sortOrder: "asc" },
+                      },
                     },
                   },
                 },
@@ -738,7 +704,22 @@ export async function processSaleEventById(saleEventId: string, userId?: string)
   await db.$transaction(async (tx) => {
     for (const line of saleEvent.lines) {
       const mapping = line.posVariation?.mappings[0];
-      const lineModifierKeys = extractModifierKeys(line.modifierKeys, line.rawData);
+      const explicitKeys = extractModifierKeys(line.modifierKeys, line.rawData);
+      // Infer modifier keys from the variant name too. This is the
+      // post-consolidation shim: a Square item named "Medium Iced
+      // Vanilla Latte" arrives with NO modifier keys on the sale line,
+      // but the merged recipe tree has size:medium + temp:iced +
+      // syrup:vanilla options. We scan the name against those option
+      // labels and union the matches with the explicit keys.
+      const inferredKeys = mapping?.recipe
+        ? inferModifierKeysFromVariationName(
+            line.posVariation?.name,
+            mapping.recipe.choiceGroups
+          )
+        : [];
+      const lineModifierKeys = [
+        ...new Set([...explicitKeys, ...inferredKeys]),
+      ];
 
       if (!mapping || mapping.mappingStatus !== MappingStatus.READY || !mapping.recipe) {
         await tx.alert.create({
@@ -753,6 +734,23 @@ export async function processSaleEventById(saleEventId: string, userId?: string)
         continue;
       }
 
+      // Resolve size-scale factor for this sale. If the recipe has a
+      // SIZE_SCALE choice group, pick the matching option's
+      // sizeScaleFactor; otherwise 1.0. Applied uniformly to all base
+      // components (liquids, cups, everything tracks menu size).
+      const sizeGroup = mapping.recipe.choiceGroups.find(
+        (g) => g.groupType === "SIZE_SCALE"
+      );
+      let sizeScale = 1.0;
+      if (sizeGroup) {
+        const chosen =
+          sizeGroup.options.find((o) =>
+            lineModifierKeys.includes(o.modifierKey)
+          ) ?? sizeGroup.options.find((o) => o.isDefault) ?? null;
+        if (chosen) sizeScale = chosen.sizeScaleFactor;
+      }
+
+      // 1. Walk base components (always-applied), scaled by size.
       for (const component of mapping.recipe.components) {
         if (!componentMatchesServiceMode(line.serviceMode, component.conditionServiceMode)) {
           continue;
@@ -762,7 +760,14 @@ export async function processSaleEventById(saleEventId: string, userId?: string)
           continue;
         }
 
-        const quantityDeltaBase = -1 * component.quantityBase * line.quantity;
+        // Only scale INGREDIENTS by size; packaging (cups/lids) size
+        // is handled by the SIZE_SCALE group's per-size cup options.
+        const effectiveQty =
+          component.componentType === "INGREDIENT"
+            ? component.quantityBase * sizeScale
+            : component.quantityBase;
+        const quantityDeltaBase = -1 * Math.round(effectiveQty) * line.quantity;
+        if (quantityDeltaBase === 0) continue;
         touchedItemIds.add(component.inventoryItemId);
 
         await postStockMovementTx(tx, {
@@ -776,9 +781,63 @@ export async function processSaleEventById(saleEventId: string, userId?: string)
             saleEventId: saleEvent.id,
             quantity: line.quantity,
             modifiers: lineModifierKeys,
+            sizeScale,
+            source: "base-component",
           },
           userId,
         });
+      }
+
+      // 2. Walk choice-group tree. For each group, pick matching
+      //    option(s) from the line's modifier keys. SIZE_SCALE groups
+      //    only deplete if the option has an inventoryItemId (e.g.
+      //    a specific-sized cup); otherwise they're pure multipliers.
+      for (const group of mapping.recipe.choiceGroups) {
+        const matched: Array<(typeof group.options)[number]> = [];
+        if (group.groupType === "SINGLE_SELECT" || group.groupType === "SIZE_SCALE") {
+          const choice =
+            group.options.find((o) =>
+              lineModifierKeys.includes(o.modifierKey)
+            ) ?? group.options.find((o) => o.isDefault) ?? null;
+          if (choice) matched.push(choice);
+        } else if (group.groupType === "MULTI_SELECT") {
+          for (const o of group.options) {
+            if (lineModifierKeys.includes(o.modifierKey)) matched.push(o);
+          }
+        }
+
+        for (const option of matched) {
+          if (!option.inventoryItemId || option.quantityBase <= 0) continue;
+          // SINGLE_SELECT options (like milk) get size-scaled too —
+          // a large oat milk latte uses more oat milk than a small.
+          const effectiveQty =
+            group.groupType === "SINGLE_SELECT"
+              ? option.quantityBase * sizeScale
+              : option.quantityBase;
+          const quantityDeltaBase =
+            -1 * Math.round(effectiveQty) * line.quantity;
+          if (quantityDeltaBase === 0) continue;
+          touchedItemIds.add(option.inventoryItemId);
+
+          await postStockMovementTx(tx, {
+            locationId: saleEvent.locationId,
+            inventoryItemId: option.inventoryItemId,
+            quantityDeltaBase,
+            movementType: MovementType.POS_DEPLETION,
+            sourceType: "pos_sale_line",
+            sourceId: line.id,
+            metadata: {
+              saleEventId: saleEvent.id,
+              quantity: line.quantity,
+              modifiers: lineModifierKeys,
+              sizeScale,
+              source: "choice-option",
+              groupName: group.name,
+              optionLabel: option.label,
+            },
+            userId,
+          });
+        }
       }
     }
 

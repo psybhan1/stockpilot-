@@ -8,7 +8,8 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-mono: var(--font-mono);
+  --font-display: var(--font-sans);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -48,88 +49,1156 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ── Light (warm paper) ─────────────────────────────────────────────── */
 :root {
-  --background: oklch(0.99 0.004 80);
-  --foreground: oklch(0.22 0.01 60);
-  --card: oklch(0.995 0.004 80);
-  --card-foreground: oklch(0.22 0.01 60);
-  --popover: oklch(1 0.002 80);
-  --popover-foreground: oklch(0.22 0.01 60);
-  --primary: oklch(0.36 0.05 55);
-  --primary-foreground: oklch(0.98 0.004 80);
-  --secondary: oklch(0.95 0.008 75);
-  --secondary-foreground: oklch(0.26 0.01 60);
-  --muted: oklch(0.96 0.005 80);
-  --muted-foreground: oklch(0.52 0.012 65);
-  --accent: oklch(0.94 0.02 80);
-  --accent-foreground: oklch(0.28 0.01 60);
-  --destructive: oklch(0.57 0.21 26);
-  --border: oklch(0.9 0.01 75);
-  --input: oklch(0.92 0.01 75);
-  --ring: oklch(0.67 0.05 70);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.98 0.004 80);
-  --sidebar-foreground: oklch(0.22 0.01 60);
-  --sidebar-primary: oklch(0.36 0.05 55);
-  --sidebar-primary-foreground: oklch(0.99 0.004 80);
-  --sidebar-accent: oklch(0.95 0.01 80);
-  --sidebar-accent-foreground: oklch(0.22 0.01 60);
-  --sidebar-border: oklch(0.9 0.01 75);
-  --sidebar-ring: oklch(0.67 0.05 70);
-  --font-sans: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
-  --font-geist-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  --background: #F5F3EE;
+  --foreground: #0A0A0A;
+  --card: #FFFFFF;
+  --card-foreground: #0A0A0A;
+  --popover: #FFFFFF;
+  --popover-foreground: #0A0A0A;
+  --primary: #0A0A0A;
+  --primary-foreground: #F5F3EE;
+  --secondary: #EBE8E0;
+  --secondary-foreground: #0A0A0A;
+  --muted: #EBE8E0;
+  --muted-foreground: #6B6457;
+  --accent: #C1272D;
+  --accent-foreground: #FFFFFF;
+  --destructive: #C1272D;
+  /* Hot accent — vibrant brutalist orange for utility pages */
+  --hot: #FF4D00;
+  --hot-foreground: #FFFFFF;
+  --border: rgba(10,10,10,0.08);
+  --input: rgba(10,10,10,0.10);
+  --ring: rgba(10,10,10,0.20);
+  --radius: 0.375rem;
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #0A0A0A;
+  --sidebar-primary: #0A0A0A;
+  --sidebar-primary-foreground: #F5F3EE;
+  --sidebar-accent: rgba(10,10,10,0.05);
+  --sidebar-accent-foreground: #0A0A0A;
+  --sidebar-border: rgba(10,10,10,0.08);
+  --sidebar-ring: rgba(10,10,10,0.20);
+  --chart-1: #0A0A0A;
+  --chart-2: #6B6457;
+  --chart-3: #C1272D;
+  --chart-4: #D9A066;
+  --chart-5: #8B6A4F;
 }
 
+/* ── Dark ──────────────────────────────────────────────────────────────── */
 .dark {
-  --background: oklch(0.18 0.01 55);
-  --foreground: oklch(0.96 0.004 80);
-  --card: oklch(0.23 0.01 55);
-  --card-foreground: oklch(0.96 0.004 80);
-  --popover: oklch(0.23 0.01 55);
-  --popover-foreground: oklch(0.96 0.004 80);
-  --primary: oklch(0.84 0.03 82);
-  --primary-foreground: oklch(0.22 0.01 60);
-  --secondary: oklch(0.3 0.01 55);
-  --secondary-foreground: oklch(0.96 0.004 80);
-  --muted: oklch(0.28 0.01 55);
-  --muted-foreground: oklch(0.76 0.01 70);
-  --accent: oklch(0.3 0.02 75);
-  --accent-foreground: oklch(0.96 0.004 80);
-  --destructive: oklch(0.71 0.18 24);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.76 0.04 78);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.22 0.01 55);
-  --sidebar-foreground: oklch(0.96 0.004 80);
-  --sidebar-primary: oklch(0.84 0.03 82);
-  --sidebar-primary-foreground: oklch(0.22 0.01 60);
-  --sidebar-accent: oklch(0.3 0.01 55);
-  --sidebar-accent-foreground: oklch(0.96 0.004 80);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.76 0.04 78);
+  --background: #0A0A0A;
+  --foreground: #F5F3EE;
+  --card: #141414;
+  --card-foreground: #F5F3EE;
+  --popover: #141414;
+  --popover-foreground: #F5F3EE;
+  --primary: #F5F3EE;
+  --primary-foreground: #0A0A0A;
+  --secondary: #1A1A1A;
+  --secondary-foreground: #F5F3EE;
+  --muted: #1A1A1A;
+  --muted-foreground: #8A857A;
+  --accent: #E34A50;
+  --accent-foreground: #0A0A0A;
+  --destructive: #E34A50;
+  --hot: #FF6A33;
+  --hot-foreground: #0A0A0A;
+  --border: rgba(245,243,238,0.08);
+  --input: rgba(245,243,238,0.10);
+  --ring: rgba(245,243,238,0.20);
+  --sidebar: #0A0A0A;
+  --sidebar-foreground: #F5F3EE;
+  --sidebar-primary: #F5F3EE;
+  --sidebar-primary-foreground: #0A0A0A;
+  --sidebar-accent: rgba(245,243,238,0.05);
+  --sidebar-accent-foreground: #F5F3EE;
+  --sidebar-border: rgba(245,243,238,0.08);
+  --sidebar-ring: rgba(245,243,238,0.20);
+  --chart-1: #F5F3EE;
+  --chart-2: #8A857A;
+  --chart-3: #E34A50;
+  --chart-4: #D9A066;
+  --chart-5: #B0896B;
 }
 
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
-  }
+  * { @apply border-border; }
   body {
     @apply bg-background text-foreground antialiased;
+    letter-spacing: -0.011em;
   }
   html {
-    @apply font-sans;
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
   }
-  ::selection {
-    @apply bg-amber-200 text-stone-950 dark:bg-amber-300/30 dark:text-stone-50;
+  h1, h2, h3, h4 {
+    letter-spacing: -0.024em;
+    font-weight: 700;
   }
+
+  /* ── Unified focus rings ─────────────────────────────────────
+     Single system-wide focus style so every interactive element
+     lights up the same way. Soft on cream/glass, warm on orange.
+     (:focus-visible only, so pointer clicks don't draw rings.) */
+  *:focus { outline: none; }
+  *:focus-visible {
+    outline: 2px solid var(--foreground);
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+  /* On orange-glass cards flip to white outline */
+  .brutal-card *:focus-visible,
+  .hot-cta:focus-visible,
+  .brutal-btn:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 2px;
+  }
+}
+
+/* ── Safe-area insets for mobile ──────────────────────────────── */
+@supports (padding: env(safe-area-inset-top)) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* ── Minimal animations ────────────────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.anim-fade-up { animation: fadeUp 0.4s cubic-bezier(0.22,1,0.36,1) both; }
+.anim-fade-in { animation: fadeIn 0.3s ease both; }
+
+.d-50  { animation-delay: 50ms; }
+.d-100 { animation-delay: 100ms; }
+.d-150 { animation-delay: 150ms; }
+.d-200 { animation-delay: 200ms; }
+.d-300 { animation-delay: 300ms; }
+
+/* Pulsing live dot */
+@keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+/* Thin editorial rule */
+.rule-thin {
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--border) 15%, var(--border) 85%, transparent);
+}
+
+/* Tabular numbers for stats */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Silencio-style bold uppercase display */
+.display-bold {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+  text-transform: uppercase;
+}
+
+/* ── Editorial table treatment inside brutal-card ─────────────── */
+.brutal-card table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.brutal-card thead th,
+.brutal-card [data-slot="table-header"] th {
+  font-family: var(--font-mono);
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: rgba(255, 255, 255, 0.85) !important;
+  padding: 14px 16px !important;
+  border-bottom: 1.5px solid rgba(255, 255, 255, 0.35) !important;
+  background: transparent !important;
+}
+.brutal-card tbody tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  transition: background 200ms ease;
+}
+.brutal-card tbody tr:last-child { border-bottom: 0; }
+.brutal-card tbody tr:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.brutal-card tbody td {
+  padding: 14px 16px !important;
+  color: #ffffff;
+  font-size: 13px;
+}
+.brutal-card tbody td .text-muted-foreground {
+  color: rgba(255, 255, 255, 0.72) !important;
+}
+
+/* ── Unified empty state ──────────────────────────────────────── */
+.empty-state {
+  position: relative;
+  padding: 48px 24px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--muted-foreground);
+}
+.dark .empty-state {
+  background: rgba(255, 255, 255, 0.04);
+}
+.empty-state-title {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--foreground);
+  margin-bottom: 6px;
+}
+.empty-state-hint {
+  display: block;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  max-width: 34ch;
+  margin: 0 auto;
+  line-height: 1.5;
+}
+
+/* ── Shadcn primitive theming (Popover / Dialog / DropdownMenu) ─ */
+[data-slot="popover-content"],
+[data-slot="dialog-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="select-content"],
+[data-slot="command"] {
+  border-radius: 16px !important;
+  border-color: var(--border) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  box-shadow:
+    0 0 0 0.5px rgba(10, 10, 10, 0.04),
+    0 4px 12px rgba(10, 10, 10, 0.06),
+    0 24px 60px -14px rgba(10, 10, 10, 0.18) !important;
+}
+.dark [data-slot="popover-content"],
+.dark [data-slot="dialog-content"],
+.dark [data-slot="dropdown-menu-content"],
+.dark [data-slot="select-content"],
+.dark [data-slot="command"] {
+  background: rgba(22, 22, 22, 0.82) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+[data-slot="tooltip-content"] {
+  border-radius: 8px !important;
+  background: var(--foreground) !important;
+  color: var(--background) !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  padding: 4px 8px !important;
+}
+
+/* ── Pending button spinner ───────────────────────────────────── */
+.pending-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 999px;
+  animation: spin 0.8s linear infinite;
+  margin-right: 6px;
+  vertical-align: -2px;
+  opacity: 0.8;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Performance gate for low-end devices ─────────────────────── */
+/* Drop the expensive displacement + dome gloss + saturation boost
+   on devices that signal low device-memory or that ask for reduced
+   motion. Falls back to a simple translucent glass that's cheap
+   to composite. */
+@media (prefers-reduced-motion: reduce) {
+  .notif-card,
+  .brutal-card {
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+  }
+  .notif-card::before,
+  .notif-card::after,
+  .brutal-card::before,
+  .brutal-card::after {
+    display: none !important;
+  }
+}
+
+/* On small screens (<=420px), cut backdrop blur strength to half so
+   phones with weaker GPUs don't dip below 60fps. */
+@media (max-width: 420px) {
+  .notif-card,
+  .brutal-card {
+    backdrop-filter: blur(16px) saturate(160%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(160%) !important;
+  }
+}
+
+/* ── Page transitions (route-keyed) ───────────────────────────────── */
+@keyframes pageEnter {
+  0% {
+    opacity: 0;
+    transform: translateY(28px);
+    filter: blur(8px);
+  }
+  60% {
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* Parent is only a tiny fade to keep motion tied together. The heavy
+   lifting happens on the staggered children below. */
+.page-transition-enter {
+  animation: fadeIn 0.3s ease-out both;
+  will-change: opacity;
+}
+
+/* Stagger the ACTUAL sections — pages wrap their body in <div class="space-y-*">,
+   so the sections (PageHero, section, section, ...) are grand-children of
+   .page-transition-enter. Target grandchildren explicitly and cascade
+   them down the page with increasing delay so the eye tracks content
+   arriving top → bottom. */
+.page-transition-enter > * > * {
+  animation: pageEnter 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform, filter;
+}
+.page-transition-enter > * > :nth-child(1) { animation-delay: 0.00s; }
+.page-transition-enter > * > :nth-child(2) { animation-delay: 0.14s; }
+.page-transition-enter > * > :nth-child(3) { animation-delay: 0.26s; }
+.page-transition-enter > * > :nth-child(4) { animation-delay: 0.38s; }
+.page-transition-enter > * > :nth-child(5) { animation-delay: 0.50s; }
+.page-transition-enter > * > :nth-child(6) { animation-delay: 0.60s; }
+.page-transition-enter > * > :nth-child(n+7) { animation-delay: 0.68s; }
+
+/* ── Scroll-driven card reveal ─────────────────────────────────────
+   Two layers:
+
+   1) Fallback (all browsers): IntersectionObserver adds .in-view.
+      Cards transition from hidden → visible once when they intersect.
+
+   2) Progressive enhancement (Chrome/Edge 115+, Opera): CSS scroll-
+      driven animations via `animation-timeline: view()`. The card's
+      opacity/translate/blur are CONTINUOUSLY driven by scroll
+      position — you see the card progressively resolve as you scroll
+      toward it, and reverse as it leaves the top. Proper scroll-tied
+      interactivity, not binary visible/invisible. */
+
+/* Baseline hidden state for the IO fallback */
+.notif-card,
+.brutal-card,
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(48px) scale(0.985);
+  filter: blur(8px);
+  transition:
+    opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+    /* Keep existing liquid-glass hover transitions */
+    background 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.notif-card.in-view,
+.brutal-card.in-view,
+[data-reveal].in-view {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  filter: blur(0);
+}
+
+/* Progressive enhancement — scroll-linked animation where supported.
+   Overrides the IO transition approach with a scroll-timeline-driven
+   animation so cards progressively resolve as you scroll, and gently
+   resolve back to fully-faded at the bottom edge to feel alive. */
+@supports (animation-timeline: view()) {
+  .notif-card,
+  .brutal-card,
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    animation: cardScrollReveal linear both;
+    animation-timeline: view();
+    /* Animation plays across: the first 40% of the entry phase (card
+       rising into view from bottom) and the last 20% of the exit
+       phase (card falling out top). */
+    animation-range: entry 0% entry 50%, exit 80% exit 100%;
+  }
+
+  /* .in-view class is redundant under scroll-timeline but keep it
+     transparent in case the IO mutates it. */
+  .notif-card.in-view,
+  .brutal-card.in-view,
+  [data-reveal].in-view {
+    /* no-op */
+  }
+}
+
+@keyframes cardScrollReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(70px) scale(0.97);
+    filter: blur(10px);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  80% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0.4;
+    transform: translateY(-20px) scale(0.99);
+    filter: blur(2px);
+  }
+}
+
+/* Reduced-motion users see cards immediately, no motion. */
+@media (prefers-reduced-motion: reduce) {
+  .notif-card, .brutal-card, [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ── Mobile / tablet: skip the blur-reveal machinery ────────────────
+   iOS Safari (iPhone + iPad) doesn't support `animation-timeline:
+   view()` until Safari 26, so cards fall back to the IntersectionObserver
+   path — which runs inside useEffect and only fires AFTER client hydration.
+   On a slow mobile connection that window is long enough that users see
+   a screen of blurred, invisible cards ("all blurry", "doesn't open up").
+   Below the lg breakpoint, force cards and page transitions to render
+   immediately visible — no reveal animation at all. */
+@media (max-width: 1023px), (hover: none) and (pointer: coarse) {
+  .notif-card, .brutal-card, [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+    transition:
+      background 280ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 280ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 280ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+    animation: none !important;
+  }
+  .page-transition-enter,
+  .page-transition-enter > * > * {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+  /* SVG displacement filter is expensive + flaky on mobile Safari; the
+     remaining blur/saturate stack is enough for the glass effect. */
+  .notif-card,
+  .dark .notif-card,
+  .brutal-card,
+  .dark .brutal-card {
+    backdrop-filter: blur(14px) saturate(160%) !important;
+    -webkit-backdrop-filter: blur(14px) saturate(160%) !important;
+  }
+}
+
+/* ── Liquid-glass notification card ───────────────────────────────── */
+/* A proper glossy liquid-glass treatment inspired by iOS / macOS Aqua:
+   - Vertical gradient background (brighter at top, soft at bottom)
+   - Backdrop blur + saturation boost for refraction
+   - Inset top-rim highlight for the "cap" of light on a glass dome
+   - ::before gloss sheen covers the top ~45% of the card
+   - ::after specular underline at the bottom
+   - Soft double outer shadow for grounding
+   Two variants: light (white glass) and dark (smoked glass). Both keep
+   content above the gloss via z-index on the card's children. */
+
+.notif-card {
+  position: relative;
+  isolation: isolate;
+  border-radius: 22px;
+  overflow: hidden;
+
+  /* Cursor position inside the card (written by PointerGloss).
+     --gloss-on toggles 0/1 so the specular fades in/out. */
+  --gloss-x: 50%;
+  --gloss-y: 0%;
+  --gloss-on: 0;
+
+  background: rgba(255, 255, 255, 0.14);
+
+  backdrop-filter:
+    url(#glass-refract)
+    blur(18px)
+    saturate(180%)
+    brightness(1.05);
+  -webkit-backdrop-filter:
+    blur(18px)
+    saturate(180%)
+    brightness(1.05);
+
+  border: 1px solid rgba(255, 255, 255, 0.22);
+
+  box-shadow:
+    0 0 0 0.5px rgba(10, 10, 10, 0.04),
+    0 0.5px 1px rgba(10, 10, 10, 0.06),
+    0 8px 24px -6px rgba(10, 10, 10, 0.08),
+    0 22px 50px -18px rgba(10, 10, 10, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -0.5px 0 rgba(10, 10, 10, 0.04);
+
+  transition:
+    background 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ::before = static dome sheen — the light that's always there. */
+.notif-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 65%;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 80% at 50% 0%,
+    rgba(255, 255, 255, 0.28) 0%,
+    rgba(255, 255, 255, 0.08) 40%,
+    rgba(255, 255, 255, 0) 75%
+  );
+  z-index: 1;
+}
+
+/* ::after = pointer-tracked specular. Fades in on hover (via --gloss-on)
+   and a radial blob follows the cursor. This is the macOS / iOS trick —
+   the glass catches light from where you "look" at it. */
+.notif-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--gloss-on, 0);
+  transition: opacity 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  background: radial-gradient(
+    220px 160px at var(--gloss-x) var(--gloss-y),
+    rgba(255, 255, 255, 0.42) 0%,
+    rgba(255, 255, 255, 0.12) 30%,
+    rgba(255, 255, 255, 0) 65%
+  );
+  z-index: 1;
+  mix-blend-mode: plus-lighter;
+}
+
+.notif-card > * { position: relative; z-index: 2; }
+
+.notif-card:hover {
+  background: rgba(255, 255, 255, 0.20);
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow:
+    0 0 0 0.5px rgba(10, 10, 10, 0.05),
+    0 1px 2px rgba(10, 10, 10, 0.06),
+    0 14px 34px -6px rgba(10, 10, 10, 0.12),
+    0 30px 70px -18px rgba(10, 10, 10, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    inset 0 -0.5px 0 rgba(10, 10, 10, 0.05);
+  transform: translateY(-1px);
+}
+
+/* Click press — the glass "gives" for a beat, like physical material. */
+.notif-card:active {
+  transform: translateY(0) scale(0.995);
+  transition-duration: 80ms;
+}
+
+/* ── Dark glass — same physics, darker fill + brighter edge ───────── */
+.dark .notif-card {
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter:
+    url(#glass-refract)
+    blur(20px)
+    saturate(160%)
+    brightness(1.1);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.4),
+    0 0.5px 1px rgba(0, 0, 0, 0.35),
+    0 10px 28px -6px rgba(0, 0, 0, 0.45),
+    0 30px 64px -20px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.3);
+}
+
+.dark .notif-card::before {
+  background: radial-gradient(
+    120% 80% at 50% 0%,
+    rgba(255, 255, 255, 0.10) 0%,
+    rgba(255, 255, 255, 0.03) 40%,
+    rgba(255, 255, 255, 0) 75%
+  );
+}
+
+.dark .notif-card::after {
+  background: radial-gradient(
+    240px 180px at var(--gloss-x) var(--gloss-y),
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.06) 30%,
+    rgba(255, 255, 255, 0) 65%
+  );
+}
+
+.dark .notif-card:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.20);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.4),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 18px 42px -6px rgba(0, 0, 0, 0.55),
+    0 40px 88px -22px rgba(0, 0, 0, 0.8),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.35);
+  transform: translateY(-1px);
+}
+
+/* ── Urgent variant — same glass physics with a warm red bias ─────── */
+.notif-card-urgent {
+  background: rgba(255, 220, 220, 0.18);
+  border-color: rgba(193, 39, 45, 0.24);
+  box-shadow:
+    0 0 0 0.5px rgba(193, 39, 45, 0.10),
+    0 0.5px 1px rgba(193, 39, 45, 0.08),
+    0 10px 28px -6px rgba(193, 39, 45, 0.14),
+    0 28px 60px -18px rgba(193, 39, 45, 0.28),
+    inset 0 1px 0 rgba(255, 220, 220, 0.6),
+    inset 0 -0.5px 0 rgba(193, 39, 45, 0.06);
+}
+
+.dark .notif-card-urgent {
+  background: rgba(227, 74, 80, 0.10);
+  border-color: rgba(227, 74, 80, 0.32);
+  box-shadow:
+    0 0 0 0.5px rgba(227, 74, 80, 0.18),
+    0 0.5px 1px rgba(0, 0, 0, 0.3),
+    0 12px 32px -6px rgba(227, 74, 80, 0.22),
+    0 34px 72px -20px rgba(227, 74, 80, 0.4),
+    inset 0 1px 0 rgba(255, 200, 200, 0.28),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* ── Unified status badge ─────────────────────────────────────────── */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.status-badge-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.95;
+}
+
+.status-badge-neutral {
+  background: rgba(10, 10, 10, 0.06);
+  border-color: rgba(10, 10, 10, 0.10);
+  color: var(--muted-foreground);
+}
+.status-badge-info {
+  background: rgba(100, 130, 180, 0.12);
+  border-color: rgba(100, 130, 180, 0.22);
+  color: #4a6a95;
+}
+.status-badge-success {
+  background: rgba(90, 150, 110, 0.12);
+  border-color: rgba(90, 150, 110, 0.22);
+  color: #3b7a4d;
+}
+.status-badge-warning {
+  background: rgba(230, 170, 50, 0.15);
+  border-color: rgba(230, 170, 50, 0.3);
+  color: #a66e16;
+}
+.status-badge-critical {
+  background: rgba(193, 39, 45, 0.14);
+  border-color: rgba(193, 39, 45, 0.28);
+  color: #a3232a;
+}
+
+.dark .status-badge-neutral {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.10);
+  color: rgba(245, 243, 238, 0.75);
+}
+.dark .status-badge-info     { color: #a3b9d9; background: rgba(120,160,210,0.10); border-color: rgba(120,160,210,0.22); }
+.dark .status-badge-success  { color: #9ecfa8; background: rgba(120,190,140,0.10); border-color: rgba(120,190,140,0.22); }
+.dark .status-badge-warning  { color: #edc37a; background: rgba(240,190,90,0.12); border-color: rgba(240,190,90,0.25); }
+.dark .status-badge-critical { color: #f0999c; background: rgba(227,74,80,0.14); border-color: rgba(227,74,80,0.30); }
+
+/* Inside brutal (orange-glass) cards — flip to white-on-transparent */
+.brutal-card .status-badge {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+}
+.brutal-card .status-badge-critical {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(255, 255, 255, 0.95);
+  color: var(--hot);
+}
+.brutal-card .status-badge-success {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(255, 255, 255, 0.95);
+  color: #2a6b3a;
+}
+
+/* ── Unified form inputs ──────────────────────────────────────────── */
+/* Shadcn defaults overridden to match the editorial language. */
+.editorial-input {
+  display: flex;
+  width: 100%;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-size: 14px;
+  font-feature-settings: "ss01";
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.editorial-input::placeholder { color: var(--muted-foreground); }
+.editorial-input:focus-visible {
+  outline: none;
+  border-color: var(--foreground);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06);
+}
+.dark .editorial-input:focus-visible {
+  box-shadow: 0 0 0 3px rgba(245, 243, 238, 0.08);
+}
+
+.editorial-textarea {
+  display: flex;
+  width: 100%;
+  min-height: 96px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.editorial-textarea:focus-visible {
+  outline: none;
+  border-color: var(--foreground);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06);
+}
+
+/* Overall Input/Textarea shadcn defaults → align with editorial. */
+input[data-slot="input"],
+textarea[data-slot="textarea"] {
+  border-radius: 10px !important;
+  font-feature-settings: "ss01";
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+input[data-slot="input"]:focus-visible,
+textarea[data-slot="textarea"]:focus-visible {
+  border-color: var(--foreground) !important;
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06) !important;
+}
+.dark input[data-slot="input"]:focus-visible,
+.dark textarea[data-slot="textarea"]:focus-visible {
+  box-shadow: 0 0 0 3px rgba(245, 243, 238, 0.08) !important;
+}
+
+/* Inputs inside glass cards (notif-card): slightly translucent with
+   subtle inset shadow so they feel built into the glass surface. */
+.notif-card input[data-slot="input"],
+.notif-card textarea[data-slot="textarea"],
+.notif-card select {
+  background: rgba(255, 255, 255, 0.6) !important;
+  border-color: rgba(10, 10, 10, 0.10) !important;
+  box-shadow: inset 0 1px 1px rgba(10, 10, 10, 0.02);
+}
+.dark .notif-card input[data-slot="input"],
+.dark .notif-card textarea[data-slot="textarea"],
+.dark .notif-card select {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+  color: var(--foreground);
+}
+
+/* Native <select> styling to match */
+select.editorial-select,
+.brutal-card select,
+.notif-card select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 40px;
+  padding: 0 36px 0 14px;
+  border-radius: 10px;
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-size: 14px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 12px) 50%;
+  background-size: 6px 6px;
+  background-repeat: no-repeat;
+  transition: border-color 180ms ease, background-color 180ms ease;
+}
+select.editorial-select:focus-visible { outline: none; border-color: var(--foreground); }
+
+/* ── Skeleton that matches the glass/brutal surfaces ──────────────── */
+@keyframes skeletonShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton-line {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(10, 10, 10, 0.06);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.45) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: skeletonShimmer 1.6s linear infinite;
+}
+.dark .skeleton-line {
+  background-color: rgba(255, 255, 255, 0.05);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    transparent 100%
+  );
+}
+
+/* ── Brutalist / Liquid-glass utility-page card ───────────────────── */
+/* Same glass physics as .notif-card, but tinted with the hot orange
+   and forced white text inside. Bold, punchy, still reads the canvas
+   through it. */
+
+.brutal-card {
+  position: relative;
+  isolation: isolate;
+  border-radius: 12px;
+  overflow: hidden;
+  color: #ffffff;
+
+  /* Pointer-gloss vars (fed by PointerGloss) */
+  --gloss-x: 50%;
+  --gloss-y: 0%;
+  --gloss-on: 0;
+
+  /* Orange-tinted glass */
+  background: rgba(255, 77, 0, 0.42);
+  backdrop-filter:
+    url(#glass-refract)
+    blur(22px)
+    saturate(220%)
+    brightness(1.06);
+  -webkit-backdrop-filter: blur(22px) saturate(220%) brightness(1.06);
+
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  box-shadow:
+    0 0 0 0.5px rgba(255, 77, 0, 0.3),
+    0 0.5px 1px rgba(0, 0, 0, 0.12),
+    0 12px 32px -8px rgba(255, 77, 0, 0.30),
+    0 30px 70px -20px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.15);
+  transition:
+    background 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Static dome highlight — same trick as notif-card */
+.brutal-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 60%;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 80% at 50% 0%,
+    rgba(255, 255, 255, 0.28) 0%,
+    rgba(255, 255, 255, 0.08) 40%,
+    rgba(255, 255, 255, 0) 75%
+  );
+  z-index: 1;
+}
+
+/* Pointer-tracked specular */
+.brutal-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--gloss-on, 0);
+  transition: opacity 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  background: radial-gradient(
+    220px 160px at var(--gloss-x) var(--gloss-y),
+    rgba(255, 255, 255, 0.38) 0%,
+    rgba(255, 255, 255, 0.12) 30%,
+    rgba(255, 255, 255, 0) 65%
+  );
+  z-index: 1;
+  mix-blend-mode: plus-lighter;
+}
+
+.brutal-card > * { position: relative; z-index: 2; }
+
+.brutal-card:hover {
+  background: rgba(255, 77, 0, 0.52);
+  border-color: rgba(255, 255, 255, 0.55);
+  transform: translateY(-1.5px);
+  box-shadow:
+    0 0 0 0.5px rgba(255, 77, 0, 0.4),
+    0 1px 2px rgba(0, 0, 0, 0.15),
+    0 18px 44px -8px rgba(255, 77, 0, 0.45),
+    0 40px 90px -22px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.15);
+}
+
+.brutal-card:active {
+  transform: translateY(0) scale(0.995);
+  transition-duration: 80ms;
+}
+
+/* Text variants inside orange glass — muted becomes translucent white */
+.brutal-card .text-muted-foreground { color: rgba(255, 255, 255, 0.78) !important; }
+.brutal-card .text-foreground { color: #ffffff !important; }
+
+/* Chips flip polarity inside orange glass */
+.brutal-card .brutal-chip-outline {
+  border-color: rgba(255, 255, 255, 0.6);
+  color: #ffffff;
+}
+.brutal-card .brutal-chip-hot {
+  background: #ffffff;
+  color: var(--hot);
+}
+
+/* Hot-CTA button — white background, orange text. Works both inside
+   .brutal-card (where it reads as a white button on orange glass) and
+   outside (generic orange-accented CTA). !important-scoped so shadcn
+   Button variant classes like text-primary-foreground don't override. */
+.hot-cta {
+  background: #ffffff !important;
+  color: var(--hot) !important;
+  border-color: #ffffff !important;
+}
+.hot-cta:hover,
+.hot-cta:focus-visible {
+  background: rgba(255, 255, 255, 0.92) !important;
+  color: var(--hot) !important;
+}
+/* Any descendant element (span, svg, etc.) inherits the orange text */
+.hot-cta * { color: inherit !important; }
+
+/* Inputs inside orange glass.
+   Color is pinned dark (not var(--foreground)) because the input bg
+   is always near-white in both themes — cream text on white would be
+   unreadable in dark mode. */
+.brutal-card input[type="text"],
+.brutal-card input[type="number"],
+.brutal-card input[type="email"],
+.brutal-card textarea,
+.brutal-card select {
+  background: rgba(255, 255, 255, 0.95) !important;
+  color: #0A0A0A !important;
+  border-color: rgba(255, 255, 255, 0.6) !important;
+}
+.brutal-card input::placeholder,
+.brutal-card textarea::placeholder {
+  color: rgba(10, 10, 10, 0.5) !important;
+}
+
+/* Two button recipes that work on orange glass:
+     .hot-cta      — solid white bg + orange text (primary CTA)
+     .brutal-btn   — transparent bg + white text + white border (secondary)
+     .brutal-ghost — transparent bg + 85% white text (tertiary / link)
+   Use these explicitly on Buttons inside .brutal-card so no button
+   inherits the parent's white color onto its own light bg. */
+.brutal-btn {
+  background: transparent !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.7) !important;
+}
+.brutal-btn:hover {
+  background: rgba(255, 255, 255, 0.18) !important;
+  color: #ffffff !important;
+}
+
+.brutal-ghost {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.85) !important;
+  border-color: transparent !important;
+}
+.brutal-ghost:hover {
+  background: rgba(255, 255, 255, 0.10) !important;
+  color: #ffffff !important;
+}
+
+/* Urgent variant — denser orange, stronger halo */
+.brutal-card-hot {
+  background: rgba(255, 77, 0, 0.62);
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 0 0 0.5px rgba(255, 77, 0, 0.45),
+    0 0.5px 1px rgba(0, 0, 0, 0.15),
+    0 18px 44px -8px rgba(255, 77, 0, 0.5),
+    0 40px 90px -20px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.2);
+}
+
+/* Dark-mode tuning — same hot glass, slightly deeper shadows */
+.dark .brutal-card {
+  background: rgba(255, 77, 0, 0.38);
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow:
+    0 0 0 0.5px rgba(255, 77, 0, 0.32),
+    0 0.5px 1px rgba(0, 0, 0, 0.3),
+    0 14px 36px -8px rgba(255, 77, 0, 0.35),
+    0 36px 80px -22px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.3);
+}
+.dark .brutal-card-hot {
+  background: rgba(255, 77, 0, 0.58);
+}
+
+/* Brutalist section header: huge uppercase + orange underline */
+.brutal-heading {
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: -0.035em;
+  line-height: 0.9;
+}
+
+.brutal-number {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.brutal-divider {
+  height: 1.5px;
+  background: var(--foreground);
+}
+
+/* Hot chip — small orange badge for priority / counts */
+.brutal-chip-hot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--hot);
+  color: var(--hot-foreground);
+  padding: 2px 8px;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.brutal-chip-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1.5px solid var(--foreground);
+  padding: 2px 8px;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+/* ── Navigation fader (exit only) ─────────────────────────────────── */
+.nav-fader-out {
+  opacity: 0;
+  filter: blur(6px);
+  transform: translateY(-8px);
+  pointer-events: none;
+  transition:
+    opacity 300ms cubic-bezier(0.4, 0, 1, 1),
+    filter 300ms cubic-bezier(0.4, 0, 1, 1),
+    transform 300ms cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* Nav-link ink underline — quick visual feedback when switching tabs */
+@keyframes navActiveIn {
+  from { transform: scaleX(0); opacity: 0; }
+  to   { transform: scaleX(1); opacity: 1; }
+}
+.nav-active-indicator {
+  transform-origin: left center;
+  animation: navActiveIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Smooth color transitions everywhere — tunes hover + theme swap feel */
+a, button, [role="button"] {
+  transition-property: background-color, border-color, color, fill, stroke,
+    opacity, transform;
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }

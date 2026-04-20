@@ -6,6 +6,7 @@ import {
   recordInventoryMovementAction,
   updateInventoryItemAction,
 } from "@/app/actions/operations";
+import { InventoryImageManager } from "@/components/app/inventory-image-manager";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,18 +27,28 @@ export default async function InventoryItemPage({
   const session = await requireSession(Role.SUPERVISOR);
   const { itemId } = await params;
   const item = await getInventoryItemDetail(session.locationId, itemId).catch(() => null);
-  const suppliers = await db.supplier.findMany({
-    where: {
-      locationId: session.locationId,
-    },
-    orderBy: {
-      name: "asc",
-    },
-    select: {
-      id: true,
-      name: true,
-    },
-  });
+  const [suppliers, posMappings] = await Promise.all([
+    db.supplier.findMany({
+      where: {
+        locationId: session.locationId,
+      },
+      orderBy: {
+        name: "asc",
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    }),
+    // Which POS integrations currently deplete this item? A latte
+    // might be split across multiple POS sources; showing the list
+    // lets the owner audit and confirm the math.
+    db.posSimpleMapping.findMany({
+      where: { locationId: session.locationId, inventoryItemId: itemId },
+      include: { integration: { select: { provider: true } } },
+      orderBy: { updatedAt: "desc" },
+    }),
+  ]);
 
   if (!item) {
     notFound();
@@ -78,6 +89,14 @@ export default async function InventoryItemPage({
             />
           </div>
 
+          <InventoryImageManager
+            itemId={item.id}
+            itemName={item.name}
+            imageSource={item.imageSource ?? null}
+            hasStoredBytes={Boolean(item.imageBytes && item.imageBytes.length > 0)}
+            posCatalogImageUrl={item.imageUrl ?? null}
+          />
+
           <div className="grid gap-3 md:grid-cols-4">
             <MetricCard
               label="On hand"
@@ -98,6 +117,51 @@ export default async function InventoryItemPage({
           </div>
         </CardContent>
       </Card>
+
+      {/* POS depletion sources — which POS integrations/products
+          currently deplete this item on every sale. Multi-POS cafés
+          or split-mapping setups (latte drops both beans AND milk
+          AND a cup) can see the full math at a glance. Renders
+          nothing when empty so items not tied to a POS flow stay
+          visually clean. */}
+      {posMappings.length > 0 ? (
+        <section className="rounded-2xl border border-border/50 bg-card/60 p-5">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">POS depletion sources</h2>
+            <Link
+              href="/pos-mapping"
+              className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Manage mappings →
+            </Link>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Every sale of these POS products deplete this item. Change qty
+            per sale from /pos-mapping.
+          </p>
+          <ul className="mt-4 divide-y divide-border/40">
+            {posMappings.map((m) => (
+              <li
+                key={m.id}
+                className="flex items-center justify-between gap-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {m.externalProductName ?? m.externalProductId}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                    {m.integration.provider} · id: {m.externalProductId}
+                  </p>
+                </div>
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  −{m.quantityPerSaleBase}{" "}
+                  {item.displayUnit.toLowerCase()} / sale
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="space-y-6">
@@ -182,7 +246,7 @@ export default async function InventoryItemPage({
                 item.stockMovements.map((movement) => (
                   <div
                     key={movement.id}
-                    className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                    className="notif-card p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -225,7 +289,7 @@ export default async function InventoryItemPage({
                   <Link
                     key={recommendation.id}
                     href="/purchase-orders"
-                    className="block rounded-[24px] border border-border/60 bg-background/80 p-4 transition-colors hover:bg-muted/40"
+                    className="block notif-card p-4 transition-colors hover:bg-muted/40"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -326,7 +390,7 @@ export default async function InventoryItemPage({
                 item.supplierItems.map((supplierItem) => (
                   <div
                     key={supplierItem.id}
-                    className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                    className="notif-card p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -359,7 +423,7 @@ export default async function InventoryItemPage({
                 item.alerts.map((alert) => (
                   <div
                     key={alert.id}
-                    className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                    className="notif-card p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -403,7 +467,7 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <Card className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5">
+    <Card className="notif-card border-none shadow-none bg-transparent">
       <CardContent className="space-y-4 p-5">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
@@ -417,7 +481,7 @@ function Panel({
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[24px] border border-border/60 bg-background/85 p-4 shadow-lg shadow-black/5">
+    <div className="notif-card p-4">
       <p className="text-sm text-muted-foreground">{label}</p>
       <p className="mt-3 text-2xl font-semibold tracking-tight">{value}</p>
     </div>
@@ -426,7 +490,7 @@ function MetricCard({ label, value }: { label: string; value: string }) {
 
 function InfoPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[24px] border border-border/60 bg-background/80 p-4">
+    <div className="notif-card p-4">
       <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
       <p className="mt-2 font-medium">{value}</p>
     </div>
@@ -435,7 +499,7 @@ function InfoPill({ label, value }: { label: string; value: string }) {
 
 function EmptyState({ title, description }: { title: string; description: string }) {
   return (
-    <div className="rounded-[24px] border border-dashed border-border px-4 py-8 text-center">
+    <div className="rounded-[22px] border border-dashed border-border/60 px-4 py-8 text-center">
       <p className="font-medium">{title}</p>
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>
     </div>

@@ -3,226 +3,270 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ChevronRight, Search } from "lucide-react";
+import { Download, Search } from "lucide-react";
 
-import { StatusBadge } from "@/components/app/status-badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { downloadCsv, isoDateForFilename, toCsv } from "@/lib/csv";
+import { toast } from "@/components/app/toaster";
 
 type InventoryBrowserItem = {
   id: string;
   name: string;
   imageUrl: string | null;
   categoryLabel: string;
+  categoryKey: string;
   onHandLabel: string;
   daysLeftLabel: string;
   supplierName: string;
   urgency: "CRITICAL" | "WARNING" | "INFO";
+  stockPercent: number;
 };
 
-type InventoryBrowserProps = {
-  items: InventoryBrowserItem[];
-};
+type InventoryBrowserProps = { items: InventoryBrowserItem[] };
 
-const filters = [
+const statusFilters = [
   { key: "ALL", label: "All" },
-  { key: "ATTENTION", label: "Needs attention" },
+  { key: "ATTENTION", label: "Attention" },
   { key: "CRITICAL", label: "Critical" },
   { key: "HEALTHY", label: "Healthy" },
 ] as const;
 
-type FilterKey = (typeof filters)[number]["key"];
+type StatusKey = (typeof statusFilters)[number]["key"];
 
-function urgencyTone(urgency: InventoryBrowserItem["urgency"]) {
-  if (urgency === "CRITICAL") {
-    return "critical" as const;
-  }
-
-  if (urgency === "WARNING") {
-    return "warning" as const;
-  }
-
-  return "success" as const;
-}
-
-function matchesFilter(item: InventoryBrowserItem, filter: FilterKey) {
-  if (filter === "ALL") {
-    return true;
-  }
-
-  if (filter === "ATTENTION") {
-    return item.urgency === "CRITICAL" || item.urgency === "WARNING";
-  }
-
-  if (filter === "CRITICAL") {
-    return item.urgency === "CRITICAL";
-  }
-
+function matchesStatus(item: InventoryBrowserItem, filter: StatusKey) {
+  if (filter === "ALL") return true;
+  if (filter === "ATTENTION") return item.urgency !== "INFO";
+  if (filter === "CRITICAL") return item.urgency === "CRITICAL";
   return item.urgency === "INFO";
 }
 
 export function InventoryBrowser({ items }: InventoryBrowserProps) {
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<FilterKey>("ALL");
+  const [statusFilter, setStatusFilter] = useState<StatusKey>("ALL");
+  const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
 
-  const counts = useMemo(
-    () => ({
-      total: items.length,
-      attention: items.filter(
-        (item) => item.urgency === "CRITICAL" || item.urgency === "WARNING"
-      ).length,
-      critical: items.filter((item) => item.urgency === "CRITICAL").length,
-      healthy: items.filter((item) => item.urgency === "INFO").length,
-    }),
-    [items]
-  );
+  const categories = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const i of items) if (!map.has(i.categoryKey)) map.set(i.categoryKey, i.categoryLabel);
+    return Array.from(map.entries()).map(([key, label]) => ({ key, label }));
+  }, [items]);
 
   const visibleItems = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return items.filter((item) => {
-      const searchableText = [
-        item.name,
-        item.categoryLabel,
-        item.supplierName,
-        item.daysLeftLabel,
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      return searchableText.includes(query) && matchesFilter(item, filter);
+    const q = search.trim().toLowerCase();
+    return items.filter((i) => {
+      const hay = `${i.name} ${i.categoryLabel} ${i.supplierName}`.toLowerCase();
+      return (
+        (!q || hay.includes(q)) &&
+        matchesStatus(i, statusFilter) &&
+        (categoryFilter === "ALL" || i.categoryKey === categoryFilter)
+      );
     });
-  }, [filter, items, search]);
+  }, [items, search, statusFilter, categoryFilter]);
 
   return (
-    <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="All items" value={counts.total} />
-        <SummaryCard label="Needs attention" value={counts.attention} />
-        <SummaryCard label="Critical now" value={counts.critical} />
-        <SummaryCard label="Looking healthy" value={counts.healthy} />
-      </div>
+    <div className="space-y-6">
+      {/* ── Toolbar ─────────────────────────────────────────────────── */}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="relative w-full max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search items, categories, suppliers…"
+            className="h-10 rounded-md border-border pl-10 text-sm"
+          />
+        </div>
 
-      <div className="rounded-[28px] border border-border/60 bg-card/88 p-4 shadow-lg shadow-black/5 backdrop-blur">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative max-w-xl flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search by item, category, or supplier"
-              className="h-11 rounded-2xl pl-10"
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {filters.map((option) => (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-md border border-border bg-card p-0.5">
+            {statusFilters.map((opt) => (
               <button
-                key={option.key}
+                key={opt.key}
                 type="button"
-                onClick={() => setFilter(option.key)}
+                onClick={() => setStatusFilter(opt.key)}
                 className={cn(
-                  "rounded-full border px-4 py-2 text-sm font-medium transition-colors",
-                  filter === option.key
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-background text-muted-foreground hover:text-foreground"
+                  "rounded-[4px] px-3 py-1.5 font-mono text-[10px] font-medium uppercase tracking-[0.14em] transition-colors",
+                  statusFilter === opt.key
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                {option.label}
+                {opt.label}
               </button>
             ))}
           </div>
-        </div>
-
-        <div className="mt-5 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-          {visibleItems.length ? (
-            visibleItems.map((item) => (
-              <Link
-                key={item.id}
-                href={`/inventory/${item.id}`}
-                className="group rounded-[26px] border border-border/60 bg-background/90 p-4 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg hover:shadow-black/5"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="relative size-16 shrink-0 overflow-hidden rounded-2xl border border-border/60 bg-muted">
-                    {item.imageUrl ? (
-                      <Image src={item.imageUrl} alt={item.name} fill className="object-cover" />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-lg font-semibold text-muted-foreground">
-                        {item.name.charAt(0)}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-base font-semibold">{item.name}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          {item.categoryLabel}
-                        </p>
-                      </div>
-                      <StatusBadge
-                        label={
-                          item.urgency === "INFO"
-                            ? "Good"
-                            : item.urgency === "WARNING"
-                            ? "Watch"
-                            : "Urgent"
-                        }
-                        tone={urgencyTone(item.urgency)}
-                      />
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                      <InfoPair label="On hand" value={item.onHandLabel} />
-                      <InfoPair label="Days left" value={item.daysLeftLabel} />
-                      <InfoPair
-                        label="Supplier"
-                        value={item.supplierName}
-                        className="col-span-2"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between text-sm font-medium text-muted-foreground group-hover:text-foreground">
-                  Open item
-                  <ChevronRight className="size-4" />
-                </div>
-              </Link>
-            ))
-          ) : (
-            <div className="rounded-[24px] border border-dashed border-border p-8 text-center text-sm text-muted-foreground md:col-span-2 2xl:col-span-3">
-              No items match that search yet.
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              const filename = `stockpilot-inventory-${isoDateForFilename()}.csv`;
+              downloadCsv(
+                filename,
+                toCsv(visibleItems, [
+                  { header: "Item", value: (i) => i.name },
+                  { header: "Category", value: (i) => i.categoryLabel },
+                  { header: "On hand", value: (i) => i.onHandLabel },
+                  { header: "Stock % of par", value: (i) => i.stockPercent },
+                  { header: "Days left", value: (i) => i.daysLeftLabel },
+                  { header: "Supplier", value: (i) => i.supplierName },
+                  { header: "Urgency", value: (i) => i.urgency },
+                ])
+              );
+              toast.success(
+                `Exported ${visibleItems.length} item${visibleItems.length === 1 ? "" : "s"} — ${filename}`
+              );
+            }}
+            disabled={visibleItems.length === 0}
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
+            title="Download the filtered list as CSV"
+          >
+            <Download className="h-3.5 w-3.5" />
+            CSV
+          </button>
         </div>
       </div>
+
+      {/* ── Category chips ──────────────────────────────────────────── */}
+      {categories.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <CatChip
+            label="All"
+            active={categoryFilter === "ALL"}
+            onClick={() => setCategoryFilter("ALL")}
+          />
+          {categories.map((c) => (
+            <CatChip
+              key={c.key}
+              label={c.label}
+              active={categoryFilter === c.key}
+              onClick={() => setCategoryFilter(c.key)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* ── List ───────────────────────────────────────────────────── */}
+      {visibleItems.length ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {visibleItems.map((item) => (
+            <InventoryCard key={item.id} item={item} />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-[22px] border border-dashed border-border/60 bg-background/40 p-10 text-center text-sm text-muted-foreground backdrop-blur">
+          No items match those filters.
+        </div>
+      )}
     </div>
   );
 }
 
-function SummaryCard({ label, value }: { label: string; value: number }) {
+// ── Card ─────────────────────────────────────────────────────────────────
+function InventoryCard({ item }: { item: InventoryBrowserItem }) {
+  const urgency = urgencyMeta(item.urgency);
+  const pct = Math.min(100, Math.max(0, item.stockPercent));
   return (
-    <div className="rounded-[24px] border border-border/60 bg-card/84 p-4 shadow-lg shadow-black/5">
-      <p className="text-sm text-muted-foreground">{label}</p>
-      <p className="mt-3 text-3xl font-semibold tracking-tight">{value}</p>
-    </div>
+    <Link
+      href={`/inventory/${item.id}`}
+      className={cn(
+        "notif-card group flex gap-4 p-3",
+        item.urgency === "CRITICAL" && "notif-card-urgent"
+      )}
+    >
+      <div className="relative size-20 shrink-0 overflow-hidden rounded-2xl bg-muted/70">
+        {item.imageUrl ? (
+          <Image
+            src={item.imageUrl}
+            alt={item.name}
+            fill
+            sizes="80px"
+            className="object-cover"
+            unoptimized
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-2xl font-bold text-muted-foreground">
+            {item.name.charAt(0).toUpperCase()}
+          </div>
+        )}
+      </div>
+
+      <div className="flex min-w-0 flex-1 flex-col justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <p className="truncate text-base font-semibold tracking-tight">{item.name}</p>
+            <span
+              className={cn(
+                "shrink-0 rounded-sm px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.16em]",
+                urgency.chip
+              )}
+            >
+              {urgency.label}
+            </span>
+          </div>
+          <p className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+            {item.categoryLabel} · {item.supplierName}
+          </p>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-xs tabular-nums">{item.onHandLabel}</span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+              {item.daysLeftLabel}
+            </span>
+          </div>
+          <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-muted">
+            <div className={cn("h-full", urgency.bar)} style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      </div>
+    </Link>
   );
 }
 
-function InfoPair({
+function CatChip({
   label,
-  value,
-  className,
+  active,
+  onClick,
 }: {
   label: string;
-  value: string;
-  className?: string;
+  active: boolean;
+  onClick: () => void;
 }) {
   return (
-    <div className={cn("rounded-2xl border border-border/60 bg-card px-3 py-2", className)}>
-      <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-      <p className="mt-1 font-medium">{value}</p>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-full border px-3 py-1 font-mono text-[10px] font-medium uppercase tracking-[0.16em] transition-colors",
+        active
+          ? "border-foreground bg-foreground text-background"
+          : "border-border bg-transparent text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+      )}
+    >
+      {label}
+    </button>
   );
+}
+
+function urgencyMeta(u: InventoryBrowserItem["urgency"]) {
+  if (u === "CRITICAL") {
+    return {
+      label: "Urgent",
+      chip: "bg-accent text-accent-foreground",
+      bar: "bg-accent",
+    };
+  }
+  if (u === "WARNING") {
+    return {
+      label: "Watch",
+      chip: "bg-foreground/80 text-background",
+      bar: "bg-foreground/60",
+    };
+  }
+  return {
+    label: "Good",
+    chip: "bg-muted text-muted-foreground",
+    bar: "bg-muted-foreground/30",
+  };
 }

@@ -106,6 +106,12 @@ enum RecommendationStatus {
 
 enum PosProviderType {
   SQUARE
+  TOAST
+  CLOVER
+  LIGHTSPEED
+  SHOPIFY
+  GENERIC_WEBHOOK
+  MANUAL
 }
 
 enum IntegrationStatus {
@@ -232,6 +238,14 @@ enum BotChannel {
   TELEGRAM
 }
 
+enum ChannelType {
+  TELEGRAM
+  WHATSAPP
+  EMAIL_SMTP
+  EMAIL_GMAIL
+  EMAIL_RESEND
+}
+
 model User {
   id                          String                  @id @default(cuid())
   email                       String                  @unique
@@ -253,12 +267,17 @@ model User {
   countEntries                StockCountEntry[]       @relation("CountEntryCreatedBy")
   botConnectRequests          BotConnectRequest[]
   botMessageReceipts          BotMessageReceipt[]
+  appliedCalibrationSuggestions RecipeCalibrationSuggestion[] @relation("CalibrationSuggestionAppliedBy")
 }
 
 model Business {
   id        String     @id @default(cuid())
   name      String
   slug      String     @unique
+  brandIdentity       Json?
+  brandIdentityAt     DateTime?
+  streetAddress       String?
+  postalCode          String?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   locations Location[]
@@ -270,6 +289,11 @@ model Location {
   name                  String
   timezone              String
   isPrimary             Boolean                 @default(true)
+  /// Bot auto-approves EMAIL-mode orders whose total is at or under
+  /// this cap (in cents). null = off. Lets the manager sleep through
+  /// small recurring orders without touching Telegram.
+  autoApproveEmailUnderCents Int?
+  defaultMarginPercent  Float                   @default(70)
   createdAt             DateTime                @default(now())
   updatedAt             DateTime                @updatedAt
   business              Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -293,6 +317,10 @@ model Location {
   auditLogs             AuditLog[]
   botConnectRequests    BotConnectRequest[]
   botMessageReceipts    BotMessageReceipt[]
+  botConversationStates BotConversationState[]
+  locationChannels      LocationChannel[]
+  calibrationWeeks      InventoryCalibrationWeek[]
+  calibrationSuggestions RecipeCalibrationSuggestion[]
 }
 
 model UserLocationRole {
@@ -335,7 +363,7 @@ model InventoryItem {
   locationId              String
   primarySupplierId       String?
   name                    String
-  sku                     String                  @unique
+  sku                     String
   category                InventoryCategory
   imageUrl                String?
   baseUnit                BaseUnit
@@ -355,6 +383,10 @@ model InventoryItem {
   latestCostNote          String?
   notes                   String?
   confidenceScore         Float                   @default(0.8)
+  imageBytes              Bytes?
+  imageContentType        String?
+  imageSource             String?                 @default("none")
+  imageGeneratedAt        DateTime?
   createdAt               DateTime                @default(now())
   updatedAt               DateTime                @updatedAt
   location                Location                @relation(fields: [locationId], references: [id], onDelete: Cascade)
@@ -368,6 +400,10 @@ model InventoryItem {
   reorderRecommendations  ReorderRecommendation[]
   purchaseOrderLines      PurchaseOrderLine[]
   alerts                  Alert[]
+  calibrationWeeks        InventoryCalibrationWeek[]
+  recipeChoiceOptions     RecipeChoiceOption[]
+
+  @@unique([locationId, sku])
 }
 
 model InventoryUnitConversion {
@@ -460,6 +496,8 @@ model Supplier {
   minimumOrderQuantity   Int                     @default(1)
   notes                  String?
   credentialsConfigured  Boolean                 @default(false)
+  /// AES-256-GCM-encrypted JSON blob of website-login credentials.
+  websiteCredentials     String?
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   location               Location                @relation(fields: [locationId], references: [id], onDelete: Cascade)
@@ -490,30 +528,34 @@ model SupplierItem {
 }
 
 model PurchaseOrder {
-  id               String                @id @default(cuid())
-  locationId       String
-  supplierId       String
-  recommendationId String?               @unique
-  orderNumber      String                @unique
-  status           PurchaseOrderStatus
-  totalLines       Int                   @default(0)
-  notes            String?
-  approvalNotes    String?
-  placedById       String?
-  approvedById     String?
-  metadata         Json?
-  createdAt        DateTime              @default(now())
-  approvedAt       DateTime?
-  sentAt           DateTime?
-  deliveredAt      DateTime?
-  location         Location              @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  supplier         Supplier              @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  placedBy         User?                 @relation("PurchaseOrderPlacedBy", fields: [placedById], references: [id], onDelete: SetNull)
-  approvedBy       User?                 @relation("PurchaseOrderApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
-  recommendation   ReorderRecommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
-  lines            PurchaseOrderLine[]
-  communications   SupplierCommunication[]
-  agentTasks       AgentTask[]
+  id                   String                @id @default(cuid())
+  locationId           String
+  supplierId           String
+  recommendationId     String?               @unique
+  orderNumber          String                @unique
+  status               PurchaseOrderStatus
+  totalLines           Int                   @default(0)
+  notes                String?
+  approvalNotes        String?
+  placedById           String?
+  approvedById         String?
+  metadata             Json?
+  createdAt            DateTime              @default(now())
+  approvedAt           DateTime?
+  sentAt               DateTime?
+  deliveredAt          DateTime?
+  invoiceImage         Bytes?
+  invoiceContentType   String?
+  invoiceParsed        Json?
+  invoiceParsedAt      DateTime?
+  location             Location              @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  supplier             Supplier              @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  placedBy             User?                 @relation("PurchaseOrderPlacedBy", fields: [placedById], references: [id], onDelete: SetNull)
+  approvedBy           User?                 @relation("PurchaseOrderApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  recommendation       ReorderRecommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  lines                PurchaseOrderLine[]
+  communications       SupplierCommunication[]
+  agentTasks           AgentTask[]
 }
 
 model PurchaseOrderLine {
@@ -527,16 +569,25 @@ model PurchaseOrderLine {
   packSizeBase         Int
   notes                String?
   latestCostCents      Int?
+  actualQuantityBase   Int?
+  actualUnitCostCents  Int?
   purchaseOrder        PurchaseOrder   @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   inventoryItem        InventoryItem   @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
 }
 
 model MenuItem {
   id         String          @id @default(cuid())
+  /// Stored menu photo — manual upload or AI generated. Separate
+  /// from POS catalog image since menu = customer-facing aesthetic.
+  /// Declared at top so the field order matches schema.prisma.
   locationId String
   name       String
   category   String?
   imageUrl   String?
+  imageBytes          Bytes?
+  imageContentType    String?
+  imageSource         String?         @default("none")
+  imageGeneratedAt    DateTime?
   source     PosProviderType
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
@@ -574,12 +625,17 @@ model Recipe {
   completenessScore Float                @default(0)
   confidenceScore   Float                @default(0)
   notes             String?
+  targetMarginPercent Float?
+  stockPilotOwnsPrice Boolean            @default(false)
+  salePriceCents      Int?
+  lastPushedToPosAt   DateTime?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
   location          Location             @relation(fields: [locationId], references: [id], onDelete: Cascade)
   menuItemVariant   MenuItemVariant      @relation(fields: [menuItemVariantId], references: [id], onDelete: Cascade)
   approvedBy        User?                @relation("RecipeApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
   components        RecipeComponent[]
+  choiceGroups      RecipeChoiceGroup[]
   mappings          PosVariationMapping[]
 
   @@unique([menuItemVariantId, version])
@@ -601,6 +657,59 @@ model RecipeComponent {
   notes                String?
   recipe               Recipe              @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   inventoryItem        InventoryItem       @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  calibrationSuggestions RecipeCalibrationSuggestion[]
+}
+
+model RecipeChoiceGroup {
+  id               String                  @id @default(cuid())
+  recipeId         String
+  name             String
+  groupType        RecipeChoiceGroupType   @default(SINGLE_SELECT)
+  modifierCategory String
+  required         Boolean                 @default(false)
+  sortOrder        Int                     @default(0)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  recipe           Recipe                  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  options          RecipeChoiceOption[]
+
+  @@index([recipeId])
+}
+
+model RecipeChoiceOption {
+  id               String            @id @default(cuid())
+  choiceGroupId    String
+  inventoryItemId  String?
+  label            String
+  modifierKey      String
+  quantityBase     Int               @default(0)
+  sizeScaleFactor  Float             @default(1.0)
+  displayUnit      MeasurementUnit   @default(COUNT)
+  isDefault        Boolean           @default(false)
+  sortOrder        Int               @default(0)
+  choiceGroup      RecipeChoiceGroup @relation(fields: [choiceGroupId], references: [id], onDelete: Cascade)
+  inventoryItem    InventoryItem?    @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+
+  @@index([choiceGroupId])
+  @@index([modifierKey])
+}
+
+enum RecipeChoiceGroupType {
+  SINGLE_SELECT
+  MULTI_SELECT
+  SIZE_SCALE
+}
+
+model RecipeDuplicateDismissal {
+  id                  String   @id @default(cuid())
+  locationId          String
+  recipeAId           String
+  recipeBId           String
+  dismissedAt         DateTime @default(now())
+  dismissedById       String?
+
+  @@unique([locationId, recipeAId, recipeBId])
+  @@index([locationId, dismissedAt])
 }
 
 model PosIntegration {
@@ -691,7 +800,7 @@ model PosSaleEvent {
   id               String               @id @default(cuid())
   locationId       String
   integrationId    String?
-  externalOrderId  String?              @unique
+  externalOrderId  String?
   status           String
   source           PosProviderType
   serviceMode      ServiceMode?
@@ -703,6 +812,8 @@ model PosSaleEvent {
   location         Location             @relation(fields: [locationId], references: [id], onDelete: Cascade)
   integration      PosIntegration?      @relation(fields: [integrationId], references: [id], onDelete: SetNull)
   lines            PosSaleLine[]
+
+  @@unique([integrationId, externalOrderId])
 }
 
 model PosSaleLine {
@@ -816,6 +927,22 @@ model AgentTask {
   location         Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
   supplier         Supplier?       @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   purchaseOrder    PurchaseOrder?  @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  steps            AgentTaskStep[]
+}
+
+model AgentTaskStep {
+  id          String    @id @default(cuid())
+  agentTaskId String
+  sequence    Int
+  name        String
+  status      String
+  notes       String?
+  screenshot  Bytes?
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  agentTask   AgentTask @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
+
+  @@index([agentTaskId, sequence])
 }
 
 model JobRun {
@@ -871,4 +998,95 @@ model BotMessageReceipt {
 
   @@unique([channel, externalMessageId])
   @@index([senderId, channel, createdAt])
+}
+
+model BotConversationState {
+  id         String     @id @default(cuid())
+  locationId String
+  userId     String
+  senderId   String
+  channel    BotChannel
+  workflow   String
+  step       String
+  data       Json       @default("{}")
+  expiresAt  DateTime
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  location   Location   @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, senderId, channel])
+  @@index([senderId, channel, expiresAt])
+}
+
+/// Per-tenant, per-channel notification & bot connection record.
+/// Credentials are stored AES-256-GCM encrypted in credentialsEncrypted.
+model LocationChannel {
+  id                   String      @id @default(cuid())
+  locationId           String
+  channel              ChannelType
+  enabled              Boolean     @default(false)
+  telegramChatId       String?
+  whatsappPhone        String?
+  emailAddress         String?
+  emailProvider        String?
+  credentialsEncrypted String?
+  pairingCode          String?
+  pairingExpiresAt     DateTime?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  location             Location    @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, channel])
+  @@index([pairingCode])
+}
+
+model InventoryCalibrationWeek {
+  id                   String        @id @default(cuid())
+  locationId           String
+  inventoryItemId      String
+  weekStart            DateTime
+  weekEnd              DateTime
+  deliveredBase        Int
+  recipePredictedBase  Int
+  wasteLoggedBase      Int           @default(0)
+  observedExcessBase   Int
+  deliveryCount        Int           @default(0)
+  salesCount           Int           @default(0)
+  computedAt           DateTime      @default(now())
+  location             Location      @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  inventoryItem        InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@unique([inventoryItemId, weekStart])
+  @@index([locationId, weekStart])
+}
+
+model RecipeCalibrationSuggestion {
+  id                      String                            @id @default(cuid())
+  locationId              String
+  recipeComponentId       String
+  currentQuantityBase     Int
+  suggestedQuantityBase   Int
+  excessPct               Float
+  weeksOfData             Int
+  confidenceScore         Float
+  status                  RecipeCalibrationSuggestionStatus @default(PENDING)
+  rationalePlain          String
+  evidenceJson            Json
+  createdAt               DateTime                          @default(now())
+  appliedAt               DateTime?
+  appliedById             String?
+  dismissedAt             DateTime?
+  location                Location                          @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  recipeComponent         RecipeComponent                   @relation(fields: [recipeComponentId], references: [id], onDelete: Cascade)
+  appliedBy               User?                             @relation("CalibrationSuggestionAppliedBy", fields: [appliedById], references: [id], onDelete: SetNull)
+
+  @@index([locationId, status])
+  @@index([recipeComponentId])
+}
+
+enum RecipeCalibrationSuggestionStatus {
+  PENDING
+  APPLIED
+  DISMISSED
+  SUPERSEDED
 }

@@ -13,6 +13,13 @@ export function calculateDaysLeft(
   stockOnHandBase: number,
   averageDailyUsageBase: number
 ) {
+  // Stockout (or oversold) trumps a missing burn rate. Without this,
+  // a brand-new item at 0 stock with no usage history classifies as
+  // INFO — hiding a literal stockout behind "insufficient data."
+  if (stockOnHandBase <= 0) {
+    return 0;
+  }
+
   if (averageDailyUsageBase <= 0) {
     return null;
   }

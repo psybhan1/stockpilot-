@@ -1,0 +1,57 @@
+{
+  "name": "02 - Daily Stock Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 8 * * *" }]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every Day 8am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.STOCKBUDDY_BASE_URL }}/api/n8n/low-stock-report",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-StockPilot-Webhook-Secret", "value": "={{ $env.STOCKBUDDY_WEBHOOK_SECRET }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-brief",
+      "name": "Fetch Daily Brief",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "credentials",
+        "chatId": "={{ $env.MANAGER_TELEGRAM_CHAT_ID }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "send-brief",
+      "name": "Send Brief to Manager",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [720, 300]
+    }
+  ],
+  "connections": {
+    "Every Day 8am": {
+      "main": [[{ "node": "Fetch Daily Brief", "type": "main", "index": 0 }]]
+    },
+    "Fetch Daily Brief": {
+      "main": [[{ "node": "Send Brief to Manager", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "stockbuddy" }]
+}

@@ -5,6 +5,7 @@ import { env } from "@/lib/env";
 import type {
   PosProvider,
   ProviderCatalogItem,
+  ProviderModifierHint,
   ProviderSaleEvent,
 } from "@/providers/contracts";
 
@@ -24,9 +25,31 @@ type SquareCatalogObject = {
   category_data?: {
     name?: string;
   };
+  image_data?: {
+    url?: string;
+  };
+  modifier_list_data?: {
+    name?: string;
+    selection_type?: "SINGLE" | "MULTIPLE";
+    modifiers?: Array<{
+      id: string;
+      modifier_data?: {
+        name?: string;
+        price_money?: { amount?: number };
+        on_by_default?: boolean;
+      };
+    }>;
+  };
   item_data?: {
     name?: string;
     category_id?: string;
+    image_ids?: string[];
+    modifier_list_info?: Array<{
+      modifier_list_id: string;
+      enabled?: boolean;
+      min_selected_modifiers?: number;
+      max_selected_modifiers?: number;
+    }>;
     variations?: Array<{
       id: string;
       item_variation_data?: {
@@ -66,7 +89,27 @@ export class SquareProvider implements PosProvider {
     state: string;
     accessToken?: string | null;
   }) {
+    const hasOAuth = Boolean(env.SQUARE_CLIENT_ID && env.SQUARE_CLIENT_SECRET);
     const accessToken = input.accessToken ?? env.SQUARE_ACCESS_TOKEN;
+
+    // When OAuth creds are configured, prefer the OAuth redirect flow —
+    // that's the "Log in with Square" UX the merchant expects and the
+    // only path that supports multi-tenant per-merchant tokens. PAT is
+    // the fallback for single-tenant setups where no OAuth app exists.
+    if (hasOAuth) {
+      const params = new URLSearchParams({
+        client_id: env.SQUARE_CLIENT_ID!,
+        scope: env.SQUARE_SCOPES,
+        state: input.state,
+        redirect_uri: input.callbackUrl,
+      });
+
+      return {
+        status: "redirect_required" as const,
+        sandbox: this.isSandbox(),
+        authUrl: `${this.getAuthorizeBaseUrl()}?${params.toString()}`,
+      };
+    }
 
     if (accessToken) {
       const context = await this.fetchMerchantContext(accessToken);
@@ -79,25 +122,9 @@ export class SquareProvider implements PosProvider {
       };
     }
 
-    if (!env.SQUARE_CLIENT_ID || !env.SQUARE_CLIENT_SECRET) {
-      throw new Error(
-        "Square client credentials or a Square access token are not configured."
-      );
-    }
-
-    const params = new URLSearchParams({
-      client_id: env.SQUARE_CLIENT_ID,
-      scope: env.SQUARE_SCOPES,
-      session: this.isSandbox() ? "true" : "false",
-      state: input.state,
-      redirect_uri: input.callbackUrl,
-    });
-
-    return {
-      status: "redirect_required" as const,
-      sandbox: this.isSandbox(),
-      authUrl: `${this.getAuthorizeBaseUrl()}?${params.toString()}`,
-    };
+    throw new Error(
+      "Square client credentials or a Square access token are not configured."
+    );
   }
 
   async exchangeCode(input: { code: string; callbackUrl: string }) {
@@ -147,6 +174,58 @@ export class SquareProvider implements PosProvider {
     };
   }
 
+  /**
+   * Exchange a refresh_token for a fresh access_token pair. Square's
+   * access tokens live ~30 days; refresh tokens live ~90. Called by
+   * the daily cron (`refreshExpiringPosTokens`) so connected merchants
+   * don't silently go dead a month after connecting.
+   */
+  async refreshAccessToken(input: { refreshToken: string }): Promise<{
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt: Date | null;
+  }> {
+    if (!env.SQUARE_CLIENT_ID || !env.SQUARE_CLIENT_SECRET) {
+      throw new Error("Square client credentials are not configured.");
+    }
+
+    const response = await fetch(`${this.getTokenBaseUrl()}/oauth2/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Square-Version": env.SQUARE_API_VERSION,
+      },
+      body: JSON.stringify({
+        client_id: env.SQUARE_CLIENT_ID,
+        client_secret: env.SQUARE_CLIENT_SECRET,
+        refresh_token: input.refreshToken,
+        grant_type: "refresh_token",
+      }),
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_at?: string;
+      message?: string;
+      errors?: Array<{ detail?: string }>;
+    };
+
+    if (!response.ok || !payload.access_token) {
+      throw new Error(
+        payload.errors?.[0]?.detail ??
+          payload.message ??
+          `Square token refresh failed with status ${response.status}`
+      );
+    }
+
+    return {
+      accessToken: payload.access_token,
+      refreshToken: payload.refresh_token,
+      expiresAt: payload.expires_at ? new Date(payload.expires_at) : null,
+    };
+  }
+
   async syncCatalog(input?: {
     accessToken?: string | null;
     locationId?: string | null;
@@ -158,6 +237,53 @@ export class SquareProvider implements PosProvider {
         .filter((object) => object.type === "CATEGORY")
         .map((object) => [object.id, object.category_data?.name ?? undefined])
     );
+    // Square returns IMAGE objects separately; items reference them
+    // by id in item_data.image_ids. Build a lookup once so we can
+    // resolve the first image url per item on the fly.
+    const imagesById = new Map(
+      objects
+        .filter((object) => object.type === "IMAGE" && object.image_data?.url)
+        .map((object) => [object.id, object.image_data!.url!])
+    );
+    // MODIFIER_LIST objects are the tree the user cares about —
+    // "Milk", "Size", "Syrup". Each item references them via
+    // item_data.modifier_list_info[]. Build a normalised hint per
+    // list once so we can attach to each item that uses it.
+    const modifierHintsById = new Map<string, ProviderModifierHint>();
+    for (const obj of objects) {
+      if (obj.type !== "MODIFIER_LIST") continue;
+      const data = obj.modifier_list_data;
+      if (!data?.name) continue;
+      const name = data.name.trim();
+      const category = slugCategory(name);
+      const isSizeGroup = /size|sizes/i.test(name);
+      const options = (data.modifiers ?? [])
+        .filter((m) => m.modifier_data?.name)
+        .map((m) => {
+          const label = m.modifier_data!.name!.trim();
+          const slug = slugValue(label);
+          const sizeScaleFactor = isSizeGroup
+            ? inferSizeScale(label)
+            : undefined;
+          return {
+            externalModifierId: m.id,
+            label,
+            modifierKey: `${category}:${slug}`,
+            isDefault: m.modifier_data!.on_by_default === true,
+            sizeScaleFactor,
+            priceCents: m.modifier_data!.price_money?.amount,
+          };
+        });
+      if (options.length === 0) continue;
+      modifierHintsById.set(obj.id, {
+        externalModifierListId: obj.id,
+        name,
+        modifierCategory: category,
+        required: false, // per-item enablement carries minimums; keep simple
+        isSizeGroup,
+        options,
+      });
+    }
 
     return objects
       .filter((object) => object.type === "ITEM" && object.item_data?.name)
@@ -181,12 +307,30 @@ export class SquareProvider implements PosProvider {
             };
           }) ?? [];
 
+        const firstImageId = item.item_data?.image_ids?.[0];
+        const imageUrl = firstImageId ? imagesById.get(firstImageId) : undefined;
+        // Attach enabled modifier list hints so the recipe-draft AI
+        // can auto-populate choiceGroups[] from the POS tree.
+        const modifierHints: ProviderModifierHint[] = [];
+        for (const ref of item.item_data?.modifier_list_info ?? []) {
+          if (ref.enabled === false) continue;
+          const hint = modifierHintsById.get(ref.modifier_list_id);
+          if (!hint) continue;
+          modifierHints.push({
+            ...hint,
+            required:
+              typeof ref.min_selected_modifiers === "number" &&
+              ref.min_selected_modifiers > 0,
+          });
+        }
         return {
           externalItemId: item.id,
           name: item.item_data?.name ?? "Unnamed item",
           category: item.item_data?.category_id
             ? categories.get(item.item_data.category_id)
             : undefined,
+          imageUrl,
+          modifierHints: modifierHints.length > 0 ? modifierHints : undefined,
           variations,
         };
       });
@@ -304,7 +448,9 @@ export class SquareProvider implements PosProvider {
 
     do {
       const searchParams = new URLSearchParams({
-        types: "ITEM,CATEGORY",
+        // Pull IMAGE + MODIFIER_LIST too so catalog sync populates
+        // product photos and the modifier tree in one pass.
+        types: "ITEM,CATEGORY,IMAGE,MODIFIER_LIST",
       });
 
       if (cursor) {
@@ -381,9 +527,13 @@ export class SquareProvider implements PosProvider {
   }
 
   private getAuthorizeBaseUrl() {
+    // Square's OAuth authorize endpoint lives under the `connect.`
+    // subdomain alongside the API, per their current docs. The bare
+    // squareup.com variants 404, which means the old code 404'd the
+    // "Log in with Square" button the first time it ran.
     return this.isSandbox()
-      ? "https://squareupsandbox.com/oauth2/authorize"
-      : "https://squareup.com/oauth2/authorize";
+      ? "https://connect.squareupsandbox.com/oauth2/authorize"
+      : "https://connect.squareup.com/oauth2/authorize";
   }
 
   private getApiBaseUrl() {
@@ -417,6 +567,48 @@ function inferSizeLabel(name: string) {
   if (lowerName.includes("small")) return "Small";
   if (lowerName.includes("medium")) return "Medium";
   if (lowerName.includes("large")) return "Large";
+  return undefined;
+}
+
+/** Map a modifier-list name to the <category> half of modifier keys. */
+function slugCategory(name: string): string {
+  const lower = name.toLowerCase();
+  if (/milk/.test(lower)) return "milk";
+  if (/size|sizes/.test(lower)) return "size";
+  if (/syrup|flavou?r/.test(lower)) return "syrup";
+  if (/shot|espresso/.test(lower)) return "shot";
+  if (/temp|iced|hot/.test(lower)) return "temp";
+  if (/sweet|sugar/.test(lower)) return "sweet";
+  if (/topping|add.?on/.test(lower)) return "topping";
+  if (/prep|style/.test(lower)) return "prep";
+  return lower.replace(/[^a-z0-9]+/g, "-").slice(0, 32) || "modifier";
+}
+
+function slugValue(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+/**
+ * Best-effort size-scale inference. Parses "8oz/12oz/16oz/20oz" or
+ * "small/medium/large" and returns a multiplier anchored at medium/12oz
+ * = 1.0. Used as a starting hint — the user can tweak in chat.
+ */
+function inferSizeScale(label: string): number | undefined {
+  const lower = label.toLowerCase();
+  const ozMatch = lower.match(/(\d{1,2})\s*oz/);
+  if (ozMatch) {
+    const oz = Number(ozMatch[1]);
+    if (oz > 0) return oz / 12; // 12oz = 1.0
+  }
+  if (/xs|extra small/.test(lower)) return 0.67;
+  if (/small/.test(lower)) return 0.83;
+  if (/medium|reg|regular/.test(lower)) return 1.0;
+  if (/large/.test(lower)) return 1.25;
+  if (/xl|extra large/.test(lower)) return 1.5;
   return undefined;
 }
 

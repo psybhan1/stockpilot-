@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { updatePosMappingAction } from "@/app/actions/operations";
+import { MenuChatPanel } from "@/components/app/menu-chat-panel";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -57,8 +58,30 @@ export default async function PosMappingDetailPage({
         </CardContent>
       </Card>
 
+      {/* AI draft CTA — the fastest path to a working recipe. One-
+          click, then a chat loop to tweak. Lives above the manual form
+          so new users land on the easy path first. */}
+      <Link
+        href={`/pos-mapping/${mapping.id}/draft`}
+        className="flex items-center justify-between gap-3 rounded-2xl border border-amber-500/40 bg-gradient-to-br from-amber-500/10 to-orange-500/5 p-5 hover:from-amber-500/20 hover:to-orange-500/10"
+      >
+        <div className="flex items-center gap-3">
+          <span className="inline-flex size-10 items-center justify-center rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-300 text-xl">
+            ✨
+          </span>
+          <div>
+            <p className="font-semibold">Draft this recipe with AI</p>
+            <p className="text-xs text-muted-foreground">
+              StockBuddy picks components from your inventory, then you
+              tweak by chat — &ldquo;use oat milk&rdquo;, &ldquo;add paper straw&rdquo;.
+            </p>
+          </div>
+        </div>
+        <span className="font-mono text-xs">draft →</span>
+      </Link>
+
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <Card className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5">
+        <Card className="notif-card border-none shadow-none bg-transparent">
           <CardContent className="space-y-5 p-5">
             <div>
               <h2 className="text-xl font-semibold tracking-tight">Mapping control</h2>
@@ -146,7 +169,7 @@ export default async function PosMappingDetailPage({
         </Card>
 
         <div className="space-y-6">
-          <Card className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5">
+          <Card className="notif-card border-none shadow-none bg-transparent">
             <CardContent className="space-y-4 p-5">
               <div>
                 <h2 className="text-xl font-semibold tracking-tight">Source variation</h2>
@@ -161,7 +184,7 @@ export default async function PosMappingDetailPage({
             </CardContent>
           </Card>
 
-          <Card className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5">
+          <Card className="notif-card border-none shadow-none bg-transparent">
             <CardContent className="space-y-4 p-5">
               <div>
                 <h2 className="text-xl font-semibold tracking-tight">Linked recipe</h2>
@@ -196,6 +219,7 @@ export default async function PosMappingDetailPage({
           </Card>
         </div>
       </div>
+      <MenuChatPanel />
     </div>
   );
 }

@@ -20,11 +20,21 @@ import {
   normalizeReceivedPackCount,
   receivedQuantityBaseFromPacks,
 } from "@/modules/purchasing/lifecycle";
-import { getAiProvider } from "@/providers/ai-provider";
-import { getSupplierOrderProvider } from "@/providers/supplier-order-provider";
+import { getSupplierOrderProviderForLocation } from "@/providers/supplier-order-provider";
+import { buildSupplierOrderEmail } from "@/modules/purchasing/email-template";
+import { getGmailCredentials } from "@/modules/channels/service";
 
-function nextOrderNumber() {
-  return `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+export function nextOrderNumber() {
+  // Format: PO-YYYY-<6 base36> — about 2B values per year, plus a
+  // millisecond-timestamp prefix so two POs approved in the same
+  // second don't share digits. The old format (4 random digits,
+  // ~9k values) collided in the wild on any busy café and in any
+  // test that approved >10 POs back-to-back — the @@unique on
+  // orderNumber would throw P2002 and the whole transaction would
+  // roll back.
+  const ms = Date.now().toString(36);
+  const rand = Math.floor(Math.random() * 36 ** 4).toString(36).padStart(4, "0");
+  return `PO-${new Date().getFullYear()}-${ms}${rand}`;
 }
 
 function appendOperationalNote(existing: string | null | undefined, next: string | null | undefined) {
@@ -40,23 +50,50 @@ function appendOperationalNote(existing: string | null | undefined, next: string
 export async function approveRecommendation(
   recommendationId: string,
   userId: string,
-  overridePackCount?: number
+  overridePackCount: number | undefined,
+  locationId: string
 ) {
-  const recommendation = await db.reorderRecommendation.findUniqueOrThrow({
-    where: { id: recommendationId },
+  const recommendation = await db.reorderRecommendation.findFirst({
+    where: { id: recommendationId, locationId },
     include: {
       inventoryItem: true,
       supplier: true,
+      location: { select: { name: true, business: { select: { name: true } } } },
     },
   });
+  if (!recommendation) {
+    throw new Error("Recommendation not found at this location.");
+  }
 
-  const supplierOrderProvider = getSupplierOrderProvider();
-  const ai = getAiProvider();
+  const approver = await db.user.findUnique({
+    where: { id: userId },
+    select: { name: true },
+  });
+
+  const supplierOrderProvider = await getSupplierOrderProviderForLocation(
+    recommendation.locationId
+  );
   const orderNumber = nextOrderNumber();
   const approvedPackCount = Number.isFinite(overridePackCount) && overridePackCount && overridePackCount > 0
     ? Math.max(1, Math.round(overridePackCount))
     : recommendation.recommendedPackCount;
   const approvedQuantityBase = approvedPackCount * recommendation.inventoryItem.packSizeBase;
+
+  // Capture the expected unit cost at PO-creation time from the
+  // preferred SupplierItem row. Without this, the delivery-time
+  // variance comparison has no baseline to diff the actual cost
+  // against, and `deliverPurchaseOrder`'s variance-audit logic
+  // silently does nothing — which hid the price-creep signal until
+  // now. Read the cheapest-supplier's price (same policy as the
+  // margin + pricing dashboards so the numbers agree across pages).
+  const supplierItemForCost = await db.supplierItem.findFirst({
+    where: {
+      supplierId: recommendation.supplierId,
+      inventoryItemId: recommendation.inventoryItemId,
+    },
+    select: { lastUnitCostCents: true },
+  });
+  const expectedLineCostCents = supplierItemForCost?.lastUnitCostCents ?? null;
 
   const purchaseOrder = await db.$transaction(async (tx) => {
     const po = await tx.purchaseOrder.create({
@@ -86,6 +123,7 @@ export async function approveRecommendation(
         expectedQuantityBase: approvedQuantityBase,
         purchaseUnit: recommendation.recommendedPurchaseUnit,
         packSizeBase: recommendation.inventoryItem.packSizeBase,
+        latestCostCents: expectedLineCostCents,
       },
     });
 
@@ -130,27 +168,44 @@ export async function approveRecommendation(
     unit: recommendation.recommendedPurchaseUnit.toLowerCase(),
   };
 
-  const draft =
+  // Build the same branded HTML email as the bot path uses, so
+  // suppliers see one consistent template no matter how the order
+  // was approved.
+  const gmailCreds =
+    recommendation.supplier.orderingMode === "EMAIL"
+      ? await getGmailCredentials(recommendation.locationId).catch(() => null)
+      : null;
+
+  const composed =
     recommendation.supplier.orderingMode === "WEBSITE"
       ? null
-      : (await ai.draftSupplierMessage({
+      : buildSupplierOrderEmail({
           supplierName: recommendation.supplier.name,
+          businessName:
+            recommendation.location?.business?.name?.trim() || "Our team",
+          locationName: recommendation.location?.name?.trim() || null,
           orderNumber,
+          orderedByName: approver?.name?.trim() || null,
+          replyToEmail: gmailCreds?.email?.trim() || "",
           lines: [line],
-        })) ??
-        (await supplierOrderProvider.createDraft({
-          supplierName: recommendation.supplier.name,
-          mode: recommendation.supplier.orderingMode,
-          orderNumber,
-          lines: [line],
-        }));
+          notes: recommendation.rationale ?? null,
+        });
+
+  const draft = composed
+    ? { subject: composed.subject, body: composed.text, html: composed.html }
+    : null;
 
   if (recommendation.supplier.orderingMode === "EMAIL") {
     try {
+      const { buildSupplierReplyAddress } = await import(
+        "@/modules/purchasing/reply-address"
+      );
       const sendResult = await supplierOrderProvider.sendApprovedOrder({
         recipient: recommendation.supplier.email ?? "orders@example.com",
         subject: draft?.subject ?? `PO ${orderNumber} from StockPilot`,
         body: draft?.body ?? recommendation.rationale,
+        html: draft?.html,
+        replyTo: buildSupplierReplyAddress(purchaseOrder.id) ?? undefined,
       });
 
       await db.$transaction(async (tx) => {
@@ -172,6 +227,13 @@ export async function approveRecommendation(
             body: draft?.body ?? recommendation.rationale,
             status: "SENT",
             providerMessageId: sendResult.providerMessageId,
+            metadata: {
+              ...(("metadata" in sendResult && sendResult.metadata
+                ? (sendResult.metadata as Record<string, unknown>)
+                : {})),
+              ...(draft?.html ? { html: draft.html } : {}),
+              recipient: recommendation.supplier.email ?? "orders@example.com",
+            } satisfies Prisma.InputJsonValue,
             sentAt: new Date(),
           },
         });
@@ -321,10 +383,17 @@ export async function approveRecommendation(
   );
 }
 
-export async function deferRecommendation(recommendationId: string, userId: string) {
-  const recommendation = await db.reorderRecommendation.findUniqueOrThrow({
-    where: { id: recommendationId },
+export async function deferRecommendation(
+  recommendationId: string,
+  userId: string,
+  locationId: string
+) {
+  const recommendation = await db.reorderRecommendation.findFirst({
+    where: { id: recommendationId, locationId },
   });
+  if (!recommendation) {
+    throw new Error("Recommendation not found at this location.");
+  }
 
   return db.$transaction(async (tx) => {
     await tx.reorderRecommendation.update({
@@ -356,10 +425,17 @@ export async function deferRecommendation(recommendationId: string, userId: stri
   });
 }
 
-export async function rejectRecommendation(recommendationId: string, userId: string) {
-  const recommendation = await db.reorderRecommendation.findUniqueOrThrow({
-    where: { id: recommendationId },
+export async function rejectRecommendation(
+  recommendationId: string,
+  userId: string,
+  locationId: string
+) {
+  const recommendation = await db.reorderRecommendation.findFirst({
+    where: { id: recommendationId, locationId },
   });
+  if (!recommendation) {
+    throw new Error("Recommendation not found at this location.");
+  }
 
   return db.$transaction(async (tx) => {
     await tx.reorderRecommendation.update({
@@ -395,15 +471,19 @@ export async function rejectRecommendation(recommendationId: string, userId: str
 export async function markPurchaseOrderSent(
   purchaseOrderId: string,
   userId: string,
-  notes?: string
+  notes: string | undefined,
+  locationId: string
 ) {
-  const purchaseOrder = await db.purchaseOrder.findUniqueOrThrow({
-    where: { id: purchaseOrderId },
+  const purchaseOrder = await db.purchaseOrder.findFirst({
+    where: { id: purchaseOrderId, locationId },
     include: {
       supplier: true,
       communications: true,
     },
   });
+  if (!purchaseOrder) {
+    throw new Error("Purchase order not found at this location.");
+  }
 
   if (!canMarkPurchaseOrderSent(purchaseOrder.status)) {
     throw new Error("This purchase order cannot be marked as sent from its current status.");
@@ -470,11 +550,15 @@ export async function markPurchaseOrderSent(
 export async function acknowledgePurchaseOrder(
   purchaseOrderId: string,
   userId: string,
-  notes?: string
+  notes: string | undefined,
+  locationId: string
 ) {
-  const purchaseOrder = await db.purchaseOrder.findUniqueOrThrow({
-    where: { id: purchaseOrderId },
+  const purchaseOrder = await db.purchaseOrder.findFirst({
+    where: { id: purchaseOrderId, locationId },
   });
+  if (!purchaseOrder) {
+    throw new Error("Purchase order not found at this location.");
+  }
 
   if (!canAcknowledgePurchaseOrder(purchaseOrder.status)) {
     throw new Error("This purchase order cannot be acknowledged from its current status.");
@@ -510,11 +594,15 @@ export async function acknowledgePurchaseOrder(
 export async function cancelPurchaseOrder(
   purchaseOrderId: string,
   userId: string,
-  notes?: string
+  notes: string | undefined,
+  locationId: string
 ) {
-  const purchaseOrder = await db.purchaseOrder.findUniqueOrThrow({
-    where: { id: purchaseOrderId },
+  const purchaseOrder = await db.purchaseOrder.findFirst({
+    where: { id: purchaseOrderId, locationId },
   });
+  if (!purchaseOrder) {
+    throw new Error("Purchase order not found at this location.");
+  }
 
   if (!canCancelPurchaseOrder(purchaseOrder.status)) {
     throw new Error("This purchase order is already closed.");
@@ -550,23 +638,44 @@ export async function cancelPurchaseOrder(
 export async function deliverPurchaseOrder(input: {
   purchaseOrderId: string;
   userId: string;
+  locationId: string;
   notes?: string;
   lineReceipts?: Record<string, number>;
+  /**
+   * Per-line actual unit cost in cents, captured from the delivery
+   * invoice. When present, we (a) store it on the PurchaseOrderLine,
+   * (b) update SupplierItem.lastUnitCostCents so future reorder
+   * suggestions use the real recent price, (c) emit an audit entry
+   * if the price variance vs the PO estimate is significant. Lines
+   * not in this map keep their estimate.
+   */
+  actualUnitCostsCents?: Record<string, number>;
 }) {
-  const purchaseOrder = await db.purchaseOrder.findUniqueOrThrow({
-    where: { id: input.purchaseOrderId },
+  const purchaseOrder = await db.purchaseOrder.findFirst({
+    where: { id: input.purchaseOrderId, locationId: input.locationId },
     include: {
       supplier: true,
       lines: true,
       agentTasks: true,
     },
   });
+  if (!purchaseOrder) {
+    throw new Error("Purchase order not found at this location.");
+  }
 
   if (!canDeliverPurchaseOrder(purchaseOrder.status)) {
     throw new Error("This purchase order has already been closed for receiving.");
   }
 
   const touchedInventoryItemIds = new Set<string>();
+  const varianceFindings: Array<{
+    lineId: string;
+    description: string;
+    expectedCents: number | null;
+    actualCents: number;
+    deltaPct: number;
+    severity: "watch" | "review";
+  }> = [];
 
   const updatedOrder = await db.$transaction(async (tx) => {
     for (const line of purchaseOrder.lines) {
@@ -579,38 +688,88 @@ export async function deliverPurchaseOrder(input: {
         line.packSizeBase
       );
 
-      if (receivedQuantityBase <= 0) {
+      const rawActualCost = input.actualUnitCostsCents?.[line.id];
+      const actualUnitCostCents =
+        typeof rawActualCost === "number" &&
+        Number.isFinite(rawActualCost) &&
+        rawActualCost >= 0
+          ? Math.round(rawActualCost)
+          : null;
+
+      if (receivedQuantityBase <= 0 && actualUnitCostCents == null) {
         continue;
       }
 
-      touchedInventoryItemIds.add(line.inventoryItemId);
+      if (receivedQuantityBase > 0) {
+        touchedInventoryItemIds.add(line.inventoryItemId);
 
-      await postStockMovementTx(tx, {
-        locationId: purchaseOrder.locationId,
-        inventoryItemId: line.inventoryItemId,
-        quantityDeltaBase: receivedQuantityBase,
-        movementType: "RECEIVING",
-        sourceType: "purchase_order",
-        sourceId: purchaseOrder.id,
-        notes: input.notes,
-        metadata: {
-          purchaseOrderLineId: line.id,
-          orderNumber: purchaseOrder.orderNumber,
-          quantityReceived: receivedPackCount,
-          purchaseUnit: line.purchaseUnit,
-        },
-        userId: input.userId,
-      });
+        await postStockMovementTx(tx, {
+          locationId: purchaseOrder.locationId,
+          inventoryItemId: line.inventoryItemId,
+          quantityDeltaBase: receivedQuantityBase,
+          movementType: "RECEIVING",
+          sourceType: "purchase_order",
+          sourceId: purchaseOrder.id,
+          notes: input.notes,
+          metadata: {
+            purchaseOrderLineId: line.id,
+            orderNumber: purchaseOrder.orderNumber,
+            quantityReceived: receivedPackCount,
+            purchaseUnit: line.purchaseUnit,
+            actualUnitCostCents,
+          },
+          userId: input.userId,
+        });
+      }
 
       await tx.purchaseOrderLine.update({
         where: { id: line.id },
         data: {
+          actualQuantityBase: receivedQuantityBase,
+          ...(actualUnitCostCents != null ? { actualUnitCostCents } : {}),
           notes: appendOperationalNote(
             line.notes,
-            `Received ${receivedPackCount} ${line.purchaseUnit.toLowerCase()} from ${purchaseOrder.orderNumber}.`
+            `Received ${receivedPackCount} ${line.purchaseUnit.toLowerCase()} from ${purchaseOrder.orderNumber}${
+              actualUnitCostCents != null
+                ? ` @ $${(actualUnitCostCents / 100).toFixed(2)}/${line.purchaseUnit.toLowerCase()}`
+                : ""
+            }.`
           ),
         },
       });
+
+      // Price history: when an actual cost landed, write it to the
+      // SupplierItem row so the reorder engine + cart builder use
+      // recent real pricing instead of whatever was on the last PO
+      // at creation time.
+      if (actualUnitCostCents != null) {
+        await tx.supplierItem
+          .updateMany({
+            where: {
+              supplierId: purchaseOrder.supplierId,
+              inventoryItemId: line.inventoryItemId,
+            },
+            data: { lastUnitCostCents: actualUnitCostCents },
+          })
+          .catch(() => null);
+      }
+
+      // Variance classification — capture for the audit log below.
+      if (actualUnitCostCents != null && line.latestCostCents != null && line.latestCostCents > 0) {
+        const deltaCents = actualUnitCostCents - line.latestCostCents;
+        const deltaPct = deltaCents / line.latestCostCents;
+        const absPct = Math.abs(deltaPct);
+        if (absPct >= 0.05) {
+          varianceFindings.push({
+            lineId: line.id,
+            description: line.description,
+            expectedCents: line.latestCostCents,
+            actualCents: actualUnitCostCents,
+            deltaPct,
+            severity: absPct >= 0.15 ? "review" : "watch",
+          });
+        }
+      }
     }
 
     await tx.agentTask.updateMany({
@@ -648,17 +807,42 @@ export async function deliverPurchaseOrder(input: {
       action: "purchaseOrder.delivered",
       entityType: "purchaseOrder",
       entityId: purchaseOrder.id,
+      details: {
+        orderNumber: purchaseOrder.orderNumber,
+        lineReceipts: purchaseOrder.lines.map((line) => ({
+          purchaseOrderLineId: line.id,
+          quantityReceived: normalizeReceivedPackCount(
+            input.lineReceipts?.[line.id],
+            line.quantityOrdered
+          ),
+          actualUnitCostCents:
+            input.actualUnitCostsCents?.[line.id] ?? null,
+        })),
+      },
+    });
+
+    // Surface price-variance findings as their own audit rows so
+    // dashboards / alerts can pick them up without parsing the
+    // delivery entry's details blob.
+    for (const finding of varianceFindings) {
+      await createAuditLogTx(tx, {
+        locationId: purchaseOrder.locationId,
+        userId: input.userId,
+        action:
+          finding.severity === "review"
+            ? "purchaseOrder.priceVariance.review"
+            : "purchaseOrder.priceVariance.watch",
+        entityType: "purchaseOrderLine",
+        entityId: finding.lineId,
         details: {
           orderNumber: purchaseOrder.orderNumber,
-          lineReceipts: purchaseOrder.lines.map((line) => ({
-            purchaseOrderLineId: line.id,
-            quantityReceived: normalizeReceivedPackCount(
-              input.lineReceipts?.[line.id],
-              line.quantityOrdered
-            ),
-          })),
+          description: finding.description,
+          expectedCents: finding.expectedCents,
+          actualCents: finding.actualCents,
+          deltaPct: Math.round(finding.deltaPct * 10000) / 10000,
         },
       });
+    }
 
     return nextOrder;
   });
@@ -667,6 +851,52 @@ export async function deliverPurchaseOrder(input: {
     await refreshOperationalState(purchaseOrder.locationId, [...touchedInventoryItemIds]);
   }
 
+  // Invoice-OCR-driven image hunt. For every item on this delivery
+  // that doesn't yet have a stored image, try the stock-image
+  // finder (Brave Image Search) in the background. Fire-and-forget,
+  // never blocks delivery completion.
+  void backfillStockImagesForItems({
+    locationId: purchaseOrder.locationId,
+    inventoryItemIds: [...touchedInventoryItemIds],
+  });
+
   return updatedOrder;
+}
+
+/**
+ * Background fill: for each item without an existing stored image,
+ * run the Brave-backed stock-image finder. Never throws — image
+ * failures shouldn't affect the delivery receipt.
+ */
+async function backfillStockImagesForItems(input: {
+  locationId: string;
+  inventoryItemIds: string[];
+}): Promise<void> {
+  if (input.inventoryItemIds.length === 0) return;
+  try {
+    const { findAndPersistStockImage } = await import(
+      "@/modules/images/stock-image-finder"
+    );
+    const { db } = await import("@/lib/db");
+    // Only target items without bytes already stored.
+    const items = await db.inventoryItem.findMany({
+      where: {
+        id: { in: input.inventoryItemIds },
+        locationId: input.locationId,
+        OR: [{ imageBytes: null }, { imageSource: "none" }, { imageSource: "pos" }],
+      },
+      select: { id: true },
+    });
+    // Serialise — we don't want to hammer Brave with 20 concurrent
+    // requests on a big delivery.
+    for (const item of items) {
+      await findAndPersistStockImage({
+        inventoryItemId: item.id,
+        locationId: input.locationId,
+      }).catch(() => null);
+    }
+  } catch {
+    // fire-and-forget
+  }
 }
 

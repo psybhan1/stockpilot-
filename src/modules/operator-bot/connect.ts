@@ -10,6 +10,25 @@ import {
   failBotMessageReceipt,
   reserveBotMessageReceipt,
 } from "@/modules/operator-bot/receipts";
+import {
+  buildTelegramConnectUrl,
+  buildWhatsAppConnectUrl,
+  isPublicAppUrl,
+  isTwilioSandboxSender,
+  normalizePhoneNumber,
+  normalizeTelegramChatId,
+  normalizeTelegramUsername,
+  readConnectStatus,
+  readConnectTokenFromText,
+} from "./connect-primitives";
+
+export {
+  buildTelegramConnectUrl,
+  buildWhatsAppConnectUrl,
+  isPublicAppUrl,
+  isTwilioSandboxSender,
+  readConnectTokenFromText,
+};
 
 const BOT_CONNECT_TTL_MINUTES = 15;
 
@@ -107,8 +126,8 @@ export async function connectManagerBotChannel(input: {
   if (!normalizedSenderId) {
     const reply =
       input.channel === BotChannel.WHATSAPP
-        ? "I couldn't read that WhatsApp number. Open StockPilot and tap Connect WhatsApp again."
-        : "I couldn't read that Telegram chat. Open StockPilot and tap Connect Telegram again.";
+        ? "⚠️ Something went wrong reading your WhatsApp number. Open StockPilot and tap Connect WhatsApp again."
+        : "⚠️ Something went wrong reading your Telegram chat. Open StockPilot and tap Connect Telegram again.";
 
     await recordConnectAttempt(input, "invalid", {
       senderId: input.senderId,
@@ -142,7 +161,7 @@ export async function connectManagerBotChannel(input: {
   });
 
   if (!request) {
-    const reply = "This connection link is no longer valid. Open StockPilot and tap connect again.";
+    const reply = "❌ This link is no longer valid. Open StockPilot → Settings and tap Connect again to get a fresh one.";
 
     await recordConnectAttempt(input, "invalid", {
       senderId: normalizedSenderId,
@@ -166,7 +185,7 @@ export async function connectManagerBotChannel(input: {
 
   if (request.expiresAt <= new Date()) {
     const reply =
-      "This connection link expired. Open StockPilot and tap connect again for a fresh link.";
+      "⏱️ This link has expired. Open StockPilot → Settings and tap Connect again to get a fresh one.";
 
     await db.botConnectRequest.update({
       where: {
@@ -229,8 +248,8 @@ export async function connectManagerBotChannel(input: {
   if (conflict) {
     const reply =
       input.channel === BotChannel.WHATSAPP
-        ? "That WhatsApp account is already linked to another StockPilot manager."
-        : "That Telegram chat is already linked to another StockPilot manager.";
+        ? "⚠️ This WhatsApp number is already linked to another StockPilot account. Contact your admin if this is a mistake."
+        : "⚠️ This Telegram account is already linked to another StockPilot account. Contact your admin if this is a mistake.";
 
     await recordConnectAttempt(input, "conflict", {
       locationId: request.locationId,
@@ -314,8 +333,8 @@ export async function connectManagerBotChannel(input: {
 
     const reply =
       input.channel === BotChannel.WHATSAPP
-        ? `WhatsApp is now connected to StockPilot for ${request.user.name}. You can message things like "Whole milk 2 left, order more."`
-        : `Telegram is now connected to StockPilot for ${request.user.name}. You can message things like "Whole milk 2 left, order more."`;
+        ? `✅ You're all set, ${request.user.name}! WhatsApp is now linked to StockPilot.\n\nYou'll receive stock alerts here. You can also send messages like:\n• "Whole milk — 2 left, order more"\n• "Order 5 cases of olive oil"`
+        : `✅ You're all set, ${request.user.name}! Telegram is now linked to StockPilot.\n\nYou'll receive stock alerts here. You can also send messages like:\n• "Whole milk — 2 left, order more"\n• "Order 5 cases of olive oil"`;
 
     await completeBotMessageReceipt({
       receiptId,
@@ -516,34 +535,6 @@ export async function connectManagerTelegramLoginChannel(input: {
   };
 }
 
-export function buildTelegramConnectUrl(botUsername: string, token: string) {
-  const normalizedBotUsername = botUsername.replace(/^@/, "").trim();
-  return `https://t.me/${normalizedBotUsername}?start=connect-${token}`;
-}
-
-export function buildWhatsAppConnectUrl(senderNumber: string, token: string) {
-  const normalizedSender = senderNumber
-    .replace(/^whatsapp:/i, "")
-    .replace(/[^\d]/g, "");
-  const message = encodeURIComponent(`connect ${token}`);
-  return `https://wa.me/${normalizedSender}?text=${message}`;
-}
-
-export function readConnectTokenFromText(input: {
-  channel: BotChannel;
-  text: string;
-}) {
-  const normalized = input.text.trim();
-
-  if (input.channel === BotChannel.TELEGRAM) {
-    const match = normalized.match(/^\/start\s+connect-([A-Za-z0-9_-]+)$/i);
-    return match?.[1] ?? null;
-  }
-
-  const match = normalized.match(/^connect\s+([A-Za-z0-9_-]+)$/i);
-  return match?.[1] ?? null;
-}
-
 export function verifyTelegramWidgetAuth(input: Record<string, string>) {
   if (!env.TELEGRAM_BOT_TOKEN) {
     throw new Error("Missing TELEGRAM_BOT_TOKEN.");
@@ -569,21 +560,6 @@ export function verifyTelegramWidgetAuth(input: Record<string, string>) {
   const isFresh = Number.isFinite(authDate) && Date.now() / 1000 - authDate <= maxAgeSeconds;
 
   return isFresh && computedHash === receivedHash;
-}
-
-export function isPublicAppUrl(url: string) {
-  try {
-    const parsed = new URL(url);
-    const hostname = parsed.hostname.toLowerCase();
-
-    if (parsed.protocol !== "https:" && hostname !== "localhost" && hostname !== "127.0.0.1") {
-      return false;
-    }
-
-    return !["localhost", "127.0.0.1", "0.0.0.0"].includes(hostname);
-  } catch {
-    return false;
-  }
 }
 
 export async function getTelegramBotUsername() {
@@ -622,47 +598,6 @@ export async function getTelegramBotUsername() {
 
 function hashConnectToken(token: string) {
   return createHash("sha256").update(`${token}:${env.SESSION_SECRET}`).digest("hex");
-}
-
-function normalizePhoneNumber(value: string) {
-  const normalized = value.replace(/^whatsapp:/i, "").replace(/[^\d+]/g, "");
-  if (!normalized) {
-    return null;
-  }
-
-  return normalized.startsWith("+") ? normalized : `+${normalized}`;
-}
-
-function normalizeTelegramChatId(value: string) {
-  const normalized = value.trim();
-  return normalized.length > 0 ? normalized : null;
-}
-
-function normalizeTelegramUsername(value: string | null) {
-  if (!value) {
-    return null;
-  }
-
-  return value.startsWith("@") ? value : `@${value}`;
-}
-
-function readConnectStatus(metadata: Prisma.JsonValue | null | undefined): BotConnectStatus["status"] {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return "connected";
-  }
-
-  const connectStatus = (metadata as Record<string, unknown>).connectStatus;
-
-  if (
-    connectStatus === "connected" ||
-    connectStatus === "expired" ||
-    connectStatus === "invalid" ||
-    connectStatus === "conflict"
-  ) {
-    return connectStatus;
-  }
-
-  return "connected";
 }
 
 async function recordConnectAttempt(
@@ -704,10 +639,3 @@ async function recordConnectAttempt(
   });
 }
 
-export function isTwilioSandboxSender(value: string | null | undefined) {
-  if (!value) {
-    return false;
-  }
-
-  return value.replace(/^whatsapp:/i, "") === "+14155238886";
-}

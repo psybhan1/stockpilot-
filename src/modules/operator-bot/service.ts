@@ -23,14 +23,29 @@ import { postStockMovementTx, refreshOperationalState } from "@/modules/inventor
 import { enqueueJobTx } from "@/modules/jobs/dispatcher";
 import { calculateRestockToParOrder } from "@/modules/operator-bot/order";
 import { parseManagerRestockMessage } from "@/modules/operator-bot/parser";
+import { buildSupplierOrderEmail } from "@/modules/purchasing/email-template";
+import { getGmailCredentials } from "@/modules/channels/service";
 import {
   completeBotMessageReceipt,
   failBotMessageReceipt,
   reserveBotMessageReceipt,
 } from "@/modules/operator-bot/receipts";
-import { getAiProvider } from "@/providers/ai-provider";
+import {
+  advanceActiveWorkflow,
+  clearWorkflowState,
+  getActiveWorkflow,
+  saveWorkflowState,
+} from "@/modules/operator-bot/workflows/engine";
+import { startAddItem } from "@/modules/operator-bot/workflows/add-item";
+import { startAddSupplier } from "@/modules/operator-bot/workflows/add-supplier";
+import { startAddRecipe } from "@/modules/operator-bot/workflows/add-recipe";
+import { startUpdateItem } from "@/modules/operator-bot/workflows/update-item";
 import { getBotLanguageProvider } from "@/providers/bot-language-provider";
-import { getSupplierOrderProvider } from "@/providers/supplier-order-provider";
+import {
+  getSupplierOrderProvider,
+  getSupplierOrderProviderForLocation,
+} from "@/providers/supplier-order-provider";
+import { env } from "@/lib/env";
 
 export type ManagerBotChannel = "WHATSAPP" | "TELEGRAM";
 
@@ -43,7 +58,7 @@ type InboundManagerBotMessage = {
   rawPayload?: Prisma.InputJsonValue;
 };
 
-type BotHandlingResult = {
+export type BotHandlingResult = {
   ok: boolean;
   reply: string;
   purchaseOrderId?: string | null;
@@ -91,7 +106,7 @@ export async function handleInboundManagerBotMessage(
       const result = {
         ok: false,
         reply:
-          "I couldn't match this sender to a manager account yet. Open StockPilot settings and use the Connect WhatsApp or Connect Telegram button first.",
+          "I couldn't match this sender to a manager account yet. Open StockBuddy settings and use the Connect WhatsApp or Connect Telegram button first.",
         replyScenario: "unlinked",
       } satisfies BotHandlingResult;
 
@@ -137,19 +152,59 @@ export async function handleInboundManagerBotMessage(
       },
     });
 
-    const inventoryChoices = await db.inventoryItem.findMany({
-      where: {
+    // ── Load inventory and suppliers (shared by workflow engine and LLM) ────────
+    const [inventoryChoices, suppliersForWorkflow] = await Promise.all([
+      db.inventoryItem.findMany({
+        where: { locationId: managerContext.locationId },
+        select: { id: true, name: true, sku: true },
+        orderBy: { name: "asc" },
+      }),
+      db.supplier.findMany({
+        where: { locationId: managerContext.locationId },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      }),
+    ]);
+
+    const workflowContext = {
+      locationId: managerContext.locationId,
+      userId: managerContext.userId,
+      channel: toBotChannel(input.channel),
+      inventoryItems: inventoryChoices.map((i) => ({ id: i.id, name: i.name, sku: i.sku ?? "" })),
+      suppliers: suppliersForWorkflow,
+    };
+
+    // ── Check for an active multi-turn workflow ────────────────────────────────
+    const activeWorkflow = await getActiveWorkflow(
+      managerContext.locationId,
+      input.senderId,
+      toBotChannel(input.channel)
+    );
+
+    if (activeWorkflow) {
+      const workflowResult = await advanceActiveWorkflow(activeWorkflow, input.text, workflowContext);
+
+      await completeBotMessageReceipt({
+        receiptId,
         locationId: managerContext.locationId,
-      },
-      select: {
-        id: true,
-        name: true,
-        sku: true,
-      },
-      orderBy: {
-        name: "asc",
-      },
-    });
+        userId: managerContext.userId,
+        reply: workflowResult.reply,
+        metadata: toInputJsonValue({
+          channel: input.channel,
+          replyScenario: "workflow",
+          workflow: activeWorkflow.workflow,
+          workflowStep: activeWorkflow.step,
+          workflowDone: workflowResult.done,
+          sourceMessageId: input.sourceMessageId ?? null,
+          senderId: input.senderId,
+        }),
+      });
+
+      return {
+        ok: true,
+        reply: workflowResult.reply,
+      };
+    }
 
     const recentReceipts = await db.botMessageReceipt.findMany({
       where: {
@@ -158,7 +213,11 @@ export async function handleInboundManagerBotMessage(
         status: "COMPLETED",
       },
       orderBy: { createdAt: "desc" },
-      take: 6,
+      // Wider context window — the agent uses live-data injection now
+      // so prompt size isn't dominated by conversation replay, but
+      // 20 turns gives it enough memory to handle multi-step back-
+      // and-forth without losing track of what the user just said.
+      take: 20,
       select: { inboundText: true, replyText: true, metadata: true },
     });
 
@@ -170,6 +229,300 @@ export async function handleInboundManagerBotMessage(
       ]);
 
     const pendingContext = extractPendingContext(recentReceipts[0]?.metadata);
+
+    // ── Pre-LLM deterministic approve/cancel sniffer ───────────────────────
+    // "nvm", "yes", "cancel that", "looks good" etc. must ACTUALLY fire
+    // the cancel/approve tool — Llama-4-Scout sometimes replies
+    // "Cancelled." without calling the tool, leaving the PO alive in the
+    // DB. Route these around the LLM entirely when there's a pending PO.
+    {
+      const { sniffApproveOrCancel } = await import(
+        "@/modules/operator-bot/order-sniffer"
+      );
+      const decision = sniffApproveOrCancel(input.text);
+      if (decision) {
+        const pendingPo = await db.purchaseOrder.findFirst({
+          where: {
+            locationId: managerContext.locationId,
+            status: {
+              in: [
+                PurchaseOrderStatus.AWAITING_APPROVAL,
+                PurchaseOrderStatus.DRAFT,
+                ...(decision === "cancel" ? [PurchaseOrderStatus.APPROVED] : []),
+              ],
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, orderNumber: true, supplier: { select: { name: true } } },
+        });
+        if (pendingPo) {
+          const { executeTool } = await import("@/modules/operator-bot/agent");
+          const toolName =
+            decision === "approve" ? "approve_recent_order" : "cancel_recent_order";
+          const result = await executeTool(
+            toolName,
+            {},
+            {
+              locationId: managerContext.locationId,
+              userId: managerContext.userId,
+              channel: input.channel,
+              senderId: input.senderId,
+              sourceMessageId: input.sourceMessageId ?? null,
+              conversation: [],
+            }
+          );
+          const reply = result.finalReply || result.content;
+          await db.auditLog.create({
+            data: {
+              locationId: managerContext.locationId,
+              userId: managerContext.userId,
+              action: `bot.sniffer_${decision}`,
+              entityType: "botChannel",
+              entityId:
+                input.sourceMessageId ?? `${input.channel.toLowerCase()}-message`,
+              details: {
+                channel: input.channel,
+                purchaseOrderId: pendingPo.id,
+                orderNumber: pendingPo.orderNumber,
+                userText: input.text.slice(0, 200),
+              },
+            },
+          });
+          await completeBotMessageReceipt({
+            receiptId,
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            reply,
+            purchaseOrderId: result.purchaseOrderId ?? pendingPo.id,
+            orderNumber: pendingPo.orderNumber,
+            metadata: toInputJsonValue({
+              channel: input.channel,
+              replyScenario: `sniffer_${decision}`,
+              sourceMessageId: input.sourceMessageId ?? null,
+              senderId: input.senderId,
+              replyProvider: "deterministic-sniffer",
+            }),
+          });
+          return {
+            ok: true,
+            reply,
+            replyScenario: `sniffer_${decision}`,
+            purchaseOrderId: pendingPo.id,
+            orderNumber: pendingPo.orderNumber,
+          };
+        }
+        // No pending PO → let the LLM explain (or the user's saying
+        // "yes" about something else entirely).
+      }
+    }
+
+    // ── Pre-LLM deterministic sniffer ─────────────────────────────────────────
+    // Unambiguous order intents ("add 5 jp wisers from lcbo", "order this
+    // https://...") bypass the model entirely. The model sometimes refuses
+    // these with "I can't access external websites" — a safety-training
+    // artifact that no amount of prompt engineering fully suppresses — so
+    // we route them deterministically instead.
+    //
+    // Falls through to the agent when (a) not an order intent, or (b)
+    // an order intent we can't parse confidently, or (c) there's an
+    // active multi-turn workflow (would confuse the workflow engine).
+    {
+      const { sniffOrderIntent } = await import(
+        "@/modules/operator-bot/order-sniffer"
+      );
+      const sniffed = await sniffOrderIntent(input.text);
+      if (sniffed && sniffed.orders.length > 0) {
+        const { executeTool } = await import("@/modules/operator-bot/agent");
+        const replies: string[] = [];
+        let firstPoId: string | null = null;
+        let firstOrderNumber: string | null = null;
+        for (const order of sniffed.orders) {
+          try {
+            const result = await executeTool(
+              "quick_add_and_order",
+              {
+                item_name: order.itemName,
+                category: "SUPPLY",
+                quantity: String(order.quantity),
+                supplier_name: order.supplierName,
+                website_url: order.websiteUrl,
+              },
+              {
+                locationId: managerContext.locationId,
+                userId: managerContext.userId,
+                channel: input.channel,
+                senderId: input.senderId,
+                sourceMessageId: input.sourceMessageId ?? null,
+                conversation: [],
+              }
+            );
+            replies.push(result.finalReply || result.content);
+            if (!firstPoId && result.purchaseOrderId) {
+              firstPoId = result.purchaseOrderId;
+              firstOrderNumber = result.orderNumber ?? null;
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            replies.push(`⚠ Couldn't draft ${order.itemName}: ${msg.slice(0, 120)}`);
+          }
+        }
+        const combinedReply =
+          sniffed.orders.length > 1
+            ? `📋 Drafted ${sniffed.orders.length} orders from *${sniffed.orders[0].supplierName}*:\n` +
+              sniffed.orders
+                .map((o) => `• ${o.quantity}× ${o.itemName}`)
+                .join("\n") +
+              `\n\nApprove each to send.`
+            : replies[0] ?? "Drafted.";
+
+        await db.auditLog.create({
+          data: {
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            action: "bot.outbound_replied",
+            entityType: "botChannel",
+            entityId:
+              input.sourceMessageId ?? `${input.channel.toLowerCase()}-message`,
+            details: {
+              channel: input.channel,
+              reply: combinedReply,
+              replyScenario: "sniffer",
+              orders: sniffed.orders.length,
+            },
+          },
+        });
+
+        await completeBotMessageReceipt({
+          receiptId,
+          locationId: managerContext.locationId,
+          userId: managerContext.userId,
+          reply: combinedReply,
+          purchaseOrderId: firstPoId,
+          orderNumber: firstOrderNumber,
+          metadata: toInputJsonValue({
+            channel: input.channel,
+            replyScenario: "sniffer",
+            sourceMessageId: input.sourceMessageId ?? null,
+            senderId: input.senderId,
+            replyProvider: "deterministic-sniffer",
+            ordersCount: sniffed.orders.length,
+          }),
+        });
+
+        return {
+          ok: true,
+          reply: combinedReply,
+          replyScenario: "sniffer",
+          purchaseOrderId: firstPoId,
+          orderNumber: firstOrderNumber,
+        };
+      }
+    }
+
+    // ── Tool-calling agent path ────────────────────────────────────────────────
+    // Try the real agent first — it sees the conversation, has tools, and
+    // decides what to do. Falls through to the legacy intent-classifier only
+    // if GROQ isn't configured or the agent throws.
+    if (process.env.GROQ_API_KEY) {
+      try {
+        const { runBotAgent } = await import("@/modules/operator-bot/agent");
+        const agentResult = await runBotAgent({
+          locationId: managerContext.locationId,
+          userId: managerContext.userId,
+          channel: input.channel,
+          senderId: input.senderId,
+          sourceMessageId: input.sourceMessageId ?? null,
+          conversation: [
+            ...conversationHistory.map((turn) => ({
+              role: turn.role === "manager" ? ("user" as const) : ("assistant" as const),
+              content: turn.text,
+            })),
+            { role: "user" as const, content: input.text },
+          ],
+        });
+
+        await db.auditLog.create({
+          data: {
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            action: "bot.outbound_replied",
+            entityType: "botChannel",
+            entityId: input.sourceMessageId ?? `${input.channel.toLowerCase()}-message`,
+            details: {
+              channel: input.channel,
+              reply: agentResult.reply,
+              replyScenario: agentResult.replyScenario ?? "agent",
+            },
+          },
+        });
+
+        await completeBotMessageReceipt({
+          receiptId,
+          locationId: managerContext.locationId,
+          userId: managerContext.userId,
+          reply: agentResult.reply,
+          purchaseOrderId: agentResult.purchaseOrderId ?? null,
+          orderNumber: agentResult.orderNumber ?? null,
+          metadata: toInputJsonValue({
+            channel: input.channel,
+            replyScenario: agentResult.replyScenario ?? "agent",
+            sourceMessageId: input.sourceMessageId ?? null,
+            senderId: input.senderId,
+            replyProvider: "groq-agent",
+          }),
+        });
+
+        return agentResult;
+      } catch (agentError) {
+        const errMsg = agentError instanceof Error ? agentError.message : String(agentError);
+        console.error("[bot] Agent failed:", errMsg);
+        await db.auditLog.create({
+          data: {
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            action: "bot.agent_failed",
+            entityType: "botChannel",
+            entityId: input.sourceMessageId ?? `${input.channel.toLowerCase()}-message`,
+            details: { error: errMsg },
+          },
+        }).catch(() => {});
+
+        // If the error is a rate limit or model issue, DON'T fall
+        // through to the legacy classifier — it gives wrong answers.
+        // Instead return a helpful "try again" message. Only fall
+        // through for genuine agent bugs (unexpected exceptions).
+        if (/rate.limit|429|413|model.*decommission|model.*not.found/i.test(errMsg)) {
+          // Parse the actual wait from the upstream body.
+          // Covers both TPM ("try again in 7.572s") and TPD ("try again in 13m16.0896s").
+          const waitMatch = errMsg.match(/try again in\s+(?:(\d+)m)?\s*([\d.]+)s/i);
+          let friendlyWait = "a moment";
+          if (waitMatch) {
+            const minutes = waitMatch[1] ? parseInt(waitMatch[1], 10) : 0;
+            const seconds = Math.ceil(parseFloat(waitMatch[2] ?? "0"));
+            const totalSecs = minutes * 60 + seconds;
+            if (totalSecs <= 30) friendlyWait = "30 seconds";
+            else if (totalSecs <= 120) friendlyWait = `${Math.ceil(totalSecs / 10) * 10} seconds`;
+            else if (totalSecs <= 900) friendlyWait = `${Math.ceil(totalSecs / 60)} minutes`;
+            else friendlyWait = "a while (daily quota hit — try again later today)";
+          }
+          const reply = `I'm a bit overloaded right now — give me ${friendlyWait} and try again.`;
+          await completeBotMessageReceipt({
+            receiptId,
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            reply,
+            purchaseOrderId: null,
+            orderNumber: null,
+            metadata: toInputJsonValue({ error: errMsg, source: "rate_limit", waitSeconds: waitMatch ? (parseInt(waitMatch[1] ?? "0", 10) * 60 + Math.ceil(parseFloat(waitMatch[2] ?? "0"))) : null }),
+          });
+          return {
+            ok: true,
+            reply,
+            replyScenario: "rate_limited",
+          };
+        }
+      }
+    }
 
     const botLanguage = getBotLanguageProvider();
     const interpretation = await botLanguage.interpretMessage({
@@ -197,7 +550,7 @@ export async function handleInboundManagerBotMessage(
           result = {
             ok: true,
             reply:
-              "Hey. I'm here and ready to help with stock. You can ask what's low, check an item, or say something like 'Whole milk 2 left, order more.'",
+              "Hey! I'm StockBuddy, your inventory assistant. You can text or send a voice message — try something like 'Oat milk 3 left, order more.'",
             replyScenario: "greeting",
             replyFacts: {
               interpretation,
@@ -208,7 +561,7 @@ export async function handleInboundManagerBotMessage(
           result = {
             ok: true,
             reply:
-              "I can check stock, explain what's low, and create a reorder to par from chat. Try 'How much oat milk do we have?' or 'Whole milk 2 left, order more.'",
+              "Here's what I can do:\n\n📦 *Stock* — 'How much oat milk do we have?' / 'What are we low on?'\n🔁 *Restock* — 'Whole milk 2 left, order more'\n✏️ *Correct stock* — 'We actually have 30 bananas'\n➕ *Add item* — 'We now have bananas'\n🏪 *Add supplier* — 'Add supplier FreshCo'\n🍽️ *Add recipe* — 'Banana smoothie uses 2 bananas and 200ml oat milk'\n⚙️ *Update item* — 'Change banana par to 50'\n\nYou can also send voice messages!",
             replyScenario: "help",
             replyFacts: {
               interpretation,
@@ -247,6 +600,147 @@ export async function handleInboundManagerBotMessage(
             reportedOnHandDisplay: interpretation.reportedOnHand,
           });
           break;
+
+        case "ADD_INVENTORY_ITEM": {
+          const itemName = interpretation.newItemName || interpretation.inventoryItemName || null;
+          if (!itemName) {
+            result = {
+              ok: false,
+              reply: "What's the name of the item you want to add?",
+              replyScenario: "clarification",
+              replyFacts: { interpretation },
+            };
+            break;
+          }
+          const { reply: firstQ, initialData } = startAddItem(itemName);
+          await saveWorkflowState({
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            senderId: input.senderId,
+            channel: toBotChannel(input.channel),
+            workflow: "ADD_ITEM",
+            step: "init",
+            data: initialData,
+          });
+          result = { ok: true, reply: firstQ, replyScenario: "workflow_add_item" };
+          break;
+        }
+
+        case "ADD_SUPPLIER": {
+          const rawSupplierName = interpretation.supplierName || null;
+          const supplierName = sanitizeSupplierName(rawSupplierName);
+          if (!supplierName) {
+            result = {
+              ok: false,
+              reply: "What's the name of the supplier you want to add?",
+              replyScenario: "clarification",
+              replyFacts: { interpretation },
+            };
+            break;
+          }
+          const { reply: firstQ, initialData } = startAddSupplier(supplierName);
+          await saveWorkflowState({
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            senderId: input.senderId,
+            channel: toBotChannel(input.channel),
+            workflow: "ADD_SUPPLIER",
+            step: "init",
+            data: initialData,
+          });
+          result = { ok: true, reply: firstQ, replyScenario: "workflow_add_supplier" };
+          break;
+        }
+
+        case "ADD_RECIPE": {
+          const dishName = interpretation.dishName || interpretation.inventoryItemName || null;
+          if (!dishName) {
+            result = {
+              ok: false,
+              reply: "What dish or drink do you want to set up a recipe for?",
+              replyScenario: "clarification",
+              replyFacts: { interpretation },
+            };
+            break;
+          }
+          const { reply: firstQ, initialData } = startAddRecipe(dishName);
+          await saveWorkflowState({
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            senderId: input.senderId,
+            channel: toBotChannel(input.channel),
+            workflow: "ADD_RECIPE",
+            step: "init",
+            data: initialData,
+          });
+          result = { ok: true, reply: firstQ, replyScenario: "workflow_add_recipe" };
+          break;
+        }
+
+        case "UPDATE_ITEM": {
+          const updateItemId = interpretation.inventoryItemId ?? null;
+          const updateItemName = interpretation.inventoryItemName ?? null;
+          if (!updateItemId || !updateItemName) {
+            result = {
+              ok: false,
+              reply: "Which item do you want to update? (Give me the name)",
+              replyScenario: "clarification",
+              replyFacts: { interpretation },
+            };
+            break;
+          }
+          const { reply: firstQ, initialData } = startUpdateItem(updateItemId, updateItemName);
+          await saveWorkflowState({
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            senderId: input.senderId,
+            channel: toBotChannel(input.channel),
+            workflow: "UPDATE_ITEM",
+            step: "init",
+            data: initialData,
+          });
+          result = { ok: true, reply: firstQ, replyScenario: "workflow_update_item" };
+          break;
+        }
+
+        case "UPDATE_STOCK_COUNT": {
+          if (!interpretation.inventoryItemId || interpretation.reportedOnHand == null) {
+            result = {
+              ok: false,
+              reply: "Tell me the item and the correct count. Example: 'we actually have 30 bananas'.",
+              replyScenario: "clarification",
+              replyFacts: { interpretation },
+            };
+            break;
+          }
+          // Safety guard: voice transcripts can be garbled and the LLM can pick the
+          // wrong item. Before applying a large drop, require the item's name to
+          // actually appear in the user's message as a sanity check.
+          const interpretedItem = inventoryChoices.find(
+            (choice) => choice.id === interpretation.inventoryItemId
+          );
+          const userTextLower = input.text.toLowerCase();
+          const itemNameInMessage =
+            interpretedItem != null &&
+            interpretedItem.name
+              .toLowerCase()
+              .split(/\s+/)
+              .some((token) => token.length >= 3 && userTextLower.includes(token));
+          const hasConfirmWord = /\b(confirm|yes|correct|i\s*mean\s*it)\b/i.test(
+            input.text
+          );
+
+          result = await updateStockCountFromBotMessage({
+            locationId: managerContext.locationId,
+            userId: managerContext.userId,
+            inventoryItemId: interpretation.inventoryItemId,
+            correctedOnHand: interpretation.reportedOnHand,
+            requireConfirmationForLargeDrop: !hasConfirmWord,
+            itemNameInMessage,
+          });
+          break;
+        }
+
         case "UNKNOWN":
         default: {
           const parsed = parseManagerRestockMessage(input.text, inventoryChoices);
@@ -264,10 +758,19 @@ export async function handleInboundManagerBotMessage(
             break;
           }
 
+          const unknownFallbacks = [
+            "I didn't quite catch that. You can ask me about stock ('how much oat milk?'), reorder something ('whole milk 2 left, order more'), or add a new item ('we now have bananas'). Voice messages work too.",
+            "Not sure what you meant there. Try 'whats low?', 'oat milk 2 left order more', or 'add supplier FreshCo'.",
+            "Hmm, I couldn't parse that. Want to check stock, reorder an item, or add something new?",
+            "I'm StockBuddy — I handle stock checks and restocks. Could you phrase that differently? e.g. 'oat milk 2 left, order more'.",
+          ];
+          const lastBot = [...conversationHistory].reverse().find((turn) => turn.role === "bot")?.text ?? "";
+          const candidates = unknownFallbacks.filter((candidate) => candidate !== lastBot);
+          const pool = candidates.length > 0 ? candidates : unknownFallbacks;
+          const chosen = pool[Math.floor(Math.random() * pool.length)]!;
           result = {
             ok: false,
-            reply:
-              "I can help with stock checks and restocks. Ask what's low, check a specific item, or say 'Whole milk 2 left, order more.'",
+            reply: chosen,
             replyScenario: "unknown",
             replyFacts: {
               interpretation,
@@ -278,14 +781,19 @@ export async function handleInboundManagerBotMessage(
       }
     }
 
-    const draftedReply = await botLanguage.draftReply({
-      channel: input.channel,
-      managerText: input.text,
-      scenario: result.replyScenario ?? "default",
-      fallbackReply: result.reply,
-      facts: result.replyFacts ?? {},
-      conversationHistory,
-    });
+    // Workflow replies are precise operational questions — don't run them through Groq paraphrasing
+    const isWorkflowReply = result.replyScenario?.startsWith("workflow");
+
+    const draftedReply = isWorkflowReply
+      ? { provider: "local", reply: result.reply }
+      : await botLanguage.draftReply({
+          channel: input.channel,
+          managerText: input.text,
+          scenario: result.replyScenario ?? "default",
+          fallbackReply: result.reply,
+          facts: result.replyFacts ?? {},
+          conversationHistory,
+        });
 
     result = {
       ...result,
@@ -344,12 +852,99 @@ export async function handleInboundManagerBotMessage(
   }
 }
 
-async function createRestockOrderFromBotMessage(input: {
+export async function updateStockCountFromBotMessage(input: {
+  locationId: string;
+  userId: string;
+  inventoryItemId: string;
+  correctedOnHand: number;
+  requireConfirmationForLargeDrop?: boolean;
+  itemNameInMessage?: boolean;
+}): Promise<BotHandlingResult> {
+  const item = await db.inventoryItem.findFirst({
+    where: { id: input.inventoryItemId, locationId: input.locationId },
+    select: { id: true, name: true, stockOnHandBase: true, baseUnit: true },
+  });
+
+  if (!item) {
+    return {
+      ok: false,
+      reply: "I couldn't find that item in your inventory.",
+      replyScenario: "unknown",
+    };
+  }
+
+  const delta = input.correctedOnHand - item.stockOnHandBase;
+
+  // Safety valve: voice misrecognition can produce wrong-item + huge delta combos
+  // that silently wipe real inventory. If the drop is large AND the user's original
+  // message didn't actually mention the item, stop and ask for confirmation.
+  const isLargeDrop =
+    delta < 0 && Math.abs(delta) > Math.max(20, item.stockOnHandBase * 0.5);
+  const needsConfirmation =
+    isLargeDrop &&
+    input.requireConfirmationForLargeDrop !== false &&
+    input.itemNameInMessage === false;
+
+  if (needsConfirmation) {
+    return {
+      ok: false,
+      reply: [
+        `⚠️ Hold on — that would drop *${item.name}* from ${item.stockOnHandBase} to ${input.correctedOnHand} (${delta} change).`,
+        "",
+        `I'm not sure you meant ${item.name} — I didn't see it in your message.`,
+        `If you really meant it, reply with: *confirm ${item.name.toLowerCase()} ${input.correctedOnHand}*. Otherwise, ignore this.`,
+      ].join("\n"),
+      replyScenario: "stock_update_needs_confirmation",
+      replyFacts: {
+        itemName: item.name,
+        beforeOnHand: item.stockOnHandBase,
+        proposedOnHand: input.correctedOnHand,
+        delta,
+      },
+    };
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.inventoryItem.update({
+      where: { id: item.id },
+      data: { stockOnHandBase: input.correctedOnHand },
+    });
+
+    if (delta !== 0) {
+      await tx.stockMovement.create({
+        data: {
+          locationId: input.locationId,
+          inventoryItemId: item.id,
+          userId: input.userId,
+          movementType: MovementType.MANUAL_COUNT_ADJUSTMENT,
+          quantityDeltaBase: delta,
+          beforeBalanceBase: item.stockOnHandBase,
+          afterBalanceBase: input.correctedOnHand,
+          sourceType: "bot_correction",
+          sourceId: `bot-correction-${Date.now()}`,
+          notes: `Manual count correction via bot: ${input.correctedOnHand}`,
+        },
+      });
+    }
+  });
+
+  return {
+    ok: true,
+    reply: `✅ *${item.name}* stock updated to ${input.correctedOnHand}. ${delta > 0 ? `(+${delta} added)` : delta < 0 ? `(${delta} removed)` : "(no change)"}`,
+    replyScenario: "stock_corrected",
+    replyFacts: { itemName: item.name, correctedOnHand: input.correctedOnHand, delta },
+  };
+}
+
+export async function createRestockOrderFromBotMessage(input: {
   locationId: string;
   userId: string;
   channel: ManagerBotChannel;
   inventoryItemId: string;
   reportedOnHandDisplay: number;
+  /** When the user explicitly specified an order quantity, honor it
+   *  verbatim instead of letting par-based math round to a pack. */
+  requestedQuantity?: { value: number; unit: string } | null;
   sourceMessageId: string | null;
   originalText: string;
 }): Promise<BotHandlingResult> {
@@ -449,12 +1044,28 @@ async function createRestockOrderFromBotMessage(input: {
     };
   }
 
-  const order = calculateRestockToParOrder({
-    parLevelBase: refreshedItem.parLevelBase,
-    reportedOnHandBase,
-    packSizeBase: supplierContext.packSizeBase,
-    minimumOrderQuantity: supplierContext.minimumOrderQuantity,
-  });
+  // If the user specified an order quantity verbatim ("order 12 oz"),
+  // honor it exactly. We convert the user's value to base units using
+  // the same conversion logic as everywhere else, then derive a pack
+  // count for display. We DO NOT round to the nearest pack size — if
+  // the user said 12, the order is for 12 of whatever they said.
+  const userOrder = input.requestedQuantity
+    ? buildUserSpecifiedOrder({
+        value: input.requestedQuantity.value,
+        unit: input.requestedQuantity.unit,
+        item: refreshedItem,
+        packSizeBase: supplierContext.packSizeBase,
+      })
+    : null;
+
+  const order =
+    userOrder ??
+    calculateRestockToParOrder({
+      parLevelBase: refreshedItem.parLevelBase,
+      reportedOnHandBase,
+      packSizeBase: supplierContext.packSizeBase,
+      minimumOrderQuantity: supplierContext.minimumOrderQuantity,
+    });
 
   if (order.orderQuantityBase <= 0) {
     return {
@@ -529,6 +1140,17 @@ async function createRestockOrderFromBotMessage(input: {
       },
     });
 
+    // Stamp the expected unit cost from the supplier's last-paid
+    // price (same as approveRecommendation). Without this, the
+    // delivery-time variance audit has no baseline to diff against
+    // and a supplier raising prices silently lands in the books.
+    const supplierItemForCost = await tx.supplierItem.findFirst({
+      where: {
+        supplierId: supplierContext.supplier.id,
+        inventoryItemId: refreshedItem.id,
+      },
+      select: { lastUnitCostCents: true },
+    });
     await tx.purchaseOrderLine.create({
       data: {
         purchaseOrderId: createdPurchaseOrder.id,
@@ -538,6 +1160,7 @@ async function createRestockOrderFromBotMessage(input: {
         expectedQuantityBase: order.orderQuantityBase,
         purchaseUnit: refreshedItem.purchaseUnit,
         packSizeBase: supplierContext.packSizeBase,
+        latestCostCents: supplierItemForCost?.lastUnitCostCents ?? null,
       },
     });
 
@@ -586,60 +1209,107 @@ async function createRestockOrderFromBotMessage(input: {
     return createdPurchaseOrder;
   });
 
-  const finalOrder = await dispatchBotPurchaseOrder({
-    purchaseOrderId: purchaseOrder.id,
-    locationId: input.locationId,
-    userId: input.userId,
-    supplier: supplierContext.supplier,
-    inventoryName: refreshedItem.name,
-    purchaseUnit: refreshedItem.purchaseUnit,
-    packCount: order.recommendedPackCount,
-    orderQuantityBase: order.orderQuantityBase,
-    reportedOnHandBase,
-    parLevelBase: refreshedItem.parLevelBase,
+  // If n8n order-approval webhook is configured, hand off to n8n for Telegram approval flow
+  const n8nApprovalUrl = env.N8N_ORDER_APPROVAL_WEBHOOK_URL;
+  if (n8nApprovalUrl) {
+    // Mark PO as AWAITING_APPROVAL — n8n will send to supplier after manager confirms
+    await db.purchaseOrder.update({
+      where: { id: purchaseOrder.id },
+      data: { status: PurchaseOrderStatus.AWAITING_APPROVAL },
+    });
+
+    // Fire-and-forget: tell n8n to start the approval flow
+    void fetch(n8nApprovalUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        purchaseOrderId: purchaseOrder.id,
+        locationId: input.locationId,
+        orderNumber: purchaseOrder.orderNumber,
+        supplierName: supplierContext.supplier.name,
+        itemName: refreshedItem.name,
+        quantity: order.recommendedPackCount,
+        purchaseUnit: refreshedItem.purchaseUnit,
+        telegramChatId: process.env.MANAGER_TELEGRAM_CHAT_ID ?? "",
+      }),
+    }).catch((err) => console.error("[n8n order-approval] fire-and-forget failed:", err));
+
+    const displayQty = `${order.recommendedPackCount} ${refreshedItem.purchaseUnit.toLowerCase()}`;
+    return {
+      ok: true,
+      purchaseOrderId: purchaseOrder.id,
+      orderNumber: purchaseOrder.orderNumber,
+      reply: `📋 Got it! I've queued *Order ${purchaseOrder.orderNumber}* — ${displayQty} of *${refreshedItem.name}* from *${supplierContext.supplier.name}*.\n\nCheck your Telegram for a confirmation message. Reply *YES* there to send, or *NO* to cancel.`,
+      replyScenario: "order_awaiting_n8n_approval",
+      replyFacts: {
+        inventoryItemName: refreshedItem.name,
+        supplierName: supplierContext.supplier.name,
+        orderNumber: purchaseOrder.orderNumber,
+        orderedPackCount: order.recommendedPackCount,
+        purchaseUnit: refreshedItem.purchaseUnit,
+      },
+    };
+  }
+
+  // Fallback (no n8n): leave the PO at AWAITING_APPROVAL and let the
+  // user tap Approve on the Telegram inline button. The callback
+  // handler will call approveAndDispatchPurchaseOrder when they do.
+  await db.purchaseOrder.update({
+    where: { id: purchaseOrder.id },
+    data: { status: PurchaseOrderStatus.AWAITING_APPROVAL },
   });
 
+  // "Order while I sleep" — if the location configured an auto-
+  // approve cap AND this is an EMAIL supplier AND the PO total is
+  // under the cap, send it without waiting for the manager's tap.
+  const { maybeAutoApprovePurchaseOrder, formatMoney } = await import(
+    "@/modules/purchasing/auto-approve"
+  );
+  const autoApproved = await maybeAutoApprovePurchaseOrder({
+    purchaseOrderId: purchaseOrder.id,
+    userId: input.userId,
+  });
+
+  const displayQty = `${order.recommendedPackCount} ${refreshedItem.purchaseUnit.toLowerCase()}`;
+  if (autoApproved.autoApproved && autoApproved.status === PurchaseOrderStatus.SENT) {
+    return {
+      ok: true,
+      purchaseOrderId: purchaseOrder.id,
+      orderNumber: purchaseOrder.orderNumber,
+      reply:
+        `✅ Auto-sent *${purchaseOrder.orderNumber}* — ${displayQty} of *${refreshedItem.name}* from *${supplierContext.supplier.name}* (${formatMoney(autoApproved.totalCents)}, under your ${formatMoney(autoApproved.thresholdCents)} rule).`,
+      replyScenario: "order_auto_approved",
+      replyFacts: {
+        inventoryItemName: refreshedItem.name,
+        supplierName: supplierContext.supplier.name,
+        orderNumber: purchaseOrder.orderNumber,
+        orderedPackCount: order.recommendedPackCount,
+        purchaseUnit: refreshedItem.purchaseUnit,
+      },
+    };
+  }
+
+  const draftReply =
+    `📋 Drafted *${purchaseOrder.orderNumber}* — ${displayQty} of *${refreshedItem.name}* from *${supplierContext.supplier.name}*.\n\n` +
+    `Tap *✅ Approve & send* to send it to the supplier, or *✖ Cancel* to scrap it.`;
+
   return {
-    ok: finalOrder.status !== PurchaseOrderStatus.FAILED,
-    purchaseOrderId: finalOrder.id,
-    orderNumber: finalOrder.orderNumber,
-    reply: buildBotReply({
-      itemName: refreshedItem.name,
-      displayUnit: refreshedItem.displayUnit,
-      itemPackSizeBase: refreshedItem.packSizeBase,
-      reportedOnHandBase,
-      parLevelBase: refreshedItem.parLevelBase,
-      orderedQuantityBase: order.orderQuantityBase,
-      orderedPackCount: order.recommendedPackCount,
-      purchaseUnit: refreshedItem.purchaseUnit,
-      supplierName: supplierContext.supplier.name,
-      supplierOrderingMode: supplierContext.supplier.orderingMode,
-      purchaseOrderId: finalOrder.id,
-      orderNumber: finalOrder.orderNumber,
-      status: finalOrder.status,
-      lastError: readPurchaseOrderFailure(finalOrder.metadata),
-    }),
-    replyScenario: mapPurchaseOrderReplyScenario({
-      supplierOrderingMode: supplierContext.supplier.orderingMode,
-      status: finalOrder.status,
-    }),
+    ok: true,
+    purchaseOrderId: purchaseOrder.id,
+    orderNumber: purchaseOrder.orderNumber,
+    reply: draftReply,
+    replyScenario: "order_awaiting_approval",
     replyFacts: {
       inventoryItemName: refreshedItem.name,
       supplierName: supplierContext.supplier.name,
-      supplierOrderingMode: supplierContext.supplier.orderingMode,
-      reportedOnHandBase,
-      parLevelBase: refreshedItem.parLevelBase,
-      orderedQuantityBase: order.orderQuantityBase,
+      orderNumber: purchaseOrder.orderNumber,
       orderedPackCount: order.recommendedPackCount,
       purchaseUnit: refreshedItem.purchaseUnit,
-      orderNumber: finalOrder.orderNumber,
-      orderStatus: finalOrder.status,
-      lastError: readPurchaseOrderFailure(finalOrder.metadata),
     },
   };
 }
 
-async function answerStockStatusFromBotMessage(input: {
+export async function answerStockStatusFromBotMessage(input: {
   locationId: string;
   userId: string;
   inventoryItemId: string | null;
@@ -731,10 +1401,189 @@ async function answerStockStatusFromBotMessage(input: {
   };
 }
 
+/**
+ * Public, callback-friendly approve + dispatch. Loads the PO, moves it
+ * to APPROVED (if not already), then runs the internal dispatch path.
+ *
+ * Returns a compact summary the Telegram callback handler can render.
+ */
+export type ApproveAndDispatchResult = {
+  ok: boolean;
+  status: PurchaseOrderStatus;
+  orderNumber: string;
+  supplierName: string;
+  supplierOrderingMode: SupplierOrderingMode;
+  locationId: string;
+  reason?: string;
+};
+
+export async function approveAndDispatchPurchaseOrder(input: {
+  purchaseOrderId: string;
+  userId: string | null;
+}): Promise<ApproveAndDispatchResult> {
+  const po = await db.purchaseOrder.findUnique({
+    where: { id: input.purchaseOrderId },
+    include: {
+      supplier: true,
+      lines: { include: { inventoryItem: true } },
+    },
+  });
+
+  if (!po) {
+    return {
+      ok: false,
+      status: PurchaseOrderStatus.FAILED,
+      orderNumber: "",
+      supplierName: "",
+      supplierOrderingMode: SupplierOrderingMode.EMAIL,
+      locationId: "",
+      reason: "Order not found.",
+    };
+  }
+
+  if (po.status === PurchaseOrderStatus.SENT) {
+    return {
+      ok: true,
+      status: PurchaseOrderStatus.SENT,
+      orderNumber: po.orderNumber,
+      supplierName: po.supplier.name,
+      supplierOrderingMode: po.supplier.orderingMode,
+      locationId: po.locationId,
+      reason: "Already sent.",
+    };
+  }
+
+  if (po.status === PurchaseOrderStatus.CANCELLED) {
+    return {
+      ok: false,
+      status: PurchaseOrderStatus.CANCELLED,
+      orderNumber: po.orderNumber,
+      supplierName: po.supplier.name,
+      supplierOrderingMode: po.supplier.orderingMode,
+      locationId: po.locationId,
+      reason: "Order was cancelled.",
+    };
+  }
+
+  // Transition to APPROVED with a CONDITIONAL update so a concurrent
+  // double-tap can't run through this block twice. Prisma's updateMany
+  // returns the count so we know whether we claimed the transition
+  // or lost the race. If we lost, re-read the PO and fall through —
+  // whoever won will dispatch.
+  if (
+    po.status === PurchaseOrderStatus.DRAFT ||
+    po.status === PurchaseOrderStatus.AWAITING_APPROVAL
+  ) {
+    const { count } = await db.purchaseOrder.updateMany({
+      where: {
+        id: po.id,
+        // Only transition from the states we saw above, and only once.
+        status: {
+          in: [PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.AWAITING_APPROVAL],
+        },
+      },
+      data: {
+        status: PurchaseOrderStatus.APPROVED,
+        approvedAt: new Date(),
+        approvedById: input.userId ?? undefined,
+      },
+    });
+    if (count === 0) {
+      // Someone else already approved — return the current state instead
+      // of racing into a second dispatch.
+      const fresh = await db.purchaseOrder.findUnique({
+        where: { id: po.id },
+        select: { status: true, orderNumber: true, supplier: { select: { name: true } } },
+      });
+      return {
+        ok: fresh?.status === PurchaseOrderStatus.SENT,
+        status: fresh?.status ?? PurchaseOrderStatus.APPROVED,
+        orderNumber: fresh?.orderNumber ?? po.orderNumber,
+        supplierName: fresh?.supplier?.name ?? po.supplier.name,
+        supplierOrderingMode: po.supplier.orderingMode,
+        locationId: po.locationId,
+        reason: "Already being processed.",
+      };
+    }
+  } else if (po.status === PurchaseOrderStatus.APPROVED) {
+    // Already approved — retry path. Fall through to dispatch.
+  } else {
+    // Shouldn't happen given earlier guards, but handle defensively.
+    return {
+      ok: false,
+      status: po.status,
+      orderNumber: po.orderNumber,
+      supplierName: po.supplier.name,
+      supplierOrderingMode: po.supplier.orderingMode,
+      locationId: po.locationId,
+      reason: `Can't dispatch from ${po.status.toLowerCase()}.`,
+    };
+  }
+
+  const firstLine = po.lines[0];
+  if (!firstLine) {
+    await db.purchaseOrder.update({
+      where: { id: po.id },
+      data: { status: PurchaseOrderStatus.FAILED },
+    });
+    return {
+      ok: false,
+      status: PurchaseOrderStatus.FAILED,
+      orderNumber: po.orderNumber,
+      supplierName: po.supplier.name,
+      supplierOrderingMode: po.supplier.orderingMode,
+      locationId: po.locationId,
+      reason: "Order had no line items.",
+    };
+  }
+
+  const result = await dispatchBotPurchaseOrder({
+    purchaseOrderId: po.id,
+    locationId: po.locationId,
+    // null is valid for "no authenticated user" (e.g. a Telegram
+    // callback tap from a paired chat) — empty string is NOT, because
+    // the audit log has a FK constraint on User.id.
+    userId: input.userId ?? null,
+    supplier: {
+      id: po.supplier.id,
+      name: po.supplier.name,
+      email: po.supplier.email,
+      website: po.supplier.website,
+      orderingMode: po.supplier.orderingMode,
+    },
+    // Pass ALL lines, not just firstLine. Multi-line POs (low-stock
+    // batch-approve, Square-POS-driven orders, rescue PO swaps) would
+    // otherwise silently drop items 2..N from the supplier email.
+    lines: po.lines.map((l) => ({
+      inventoryName: l.inventoryItem.name,
+      purchaseUnit: l.purchaseUnit,
+      packCount: l.quantityOrdered,
+      orderQuantityBase: l.expectedQuantityBase,
+      reportedOnHandBase: l.inventoryItem.stockOnHandBase,
+      parLevelBase: l.inventoryItem.parLevelBase,
+    })),
+  });
+
+  const reason = readPurchaseOrderFailure(result.metadata) ?? undefined;
+
+  return {
+    ok: result.status === PurchaseOrderStatus.SENT,
+    status: result.status,
+    orderNumber: result.orderNumber,
+    supplierName: po.supplier.name,
+    supplierOrderingMode: po.supplier.orderingMode,
+    locationId: po.locationId,
+    reason: result.status === PurchaseOrderStatus.FAILED ? reason : undefined,
+  };
+}
+
 async function dispatchBotPurchaseOrder(input: {
   purchaseOrderId: string;
   locationId: string;
-  userId: string;
+  // Callers can pass null when the action is bot-driven and no
+  // authenticated StockPilot user is in the loop (e.g. a Telegram
+  // inline-button tap). The audit log's User FK accepts null.
+  userId: string | null;
   supplier: {
     id: string;
     name: string;
@@ -742,58 +1591,91 @@ async function dispatchBotPurchaseOrder(input: {
     website: string | null;
     orderingMode: SupplierOrderingMode;
   };
-  inventoryName: string;
-  purchaseUnit: string;
-  packCount: number;
-  orderQuantityBase: number;
-  reportedOnHandBase: number;
-  parLevelBase: number;
+  lines: Array<{
+    inventoryName: string;
+    purchaseUnit: string;
+    packCount: number;
+    orderQuantityBase: number;
+    reportedOnHandBase: number;
+    parLevelBase: number;
+  }>;
 }) {
-  const supplierOrderProvider = getSupplierOrderProvider();
-  const ai = getAiProvider();
+  // Per-location provider: picks up the business's own connected
+  // Gmail (free, uses their own quota) before falling through to
+  // Resend / console. Each email therefore goes out *from* the
+  // business's real address, not a generic StockPilot one.
+  const supplierOrderProvider = await getSupplierOrderProviderForLocation(
+    input.locationId
+  );
 
   const line = {
-    description: input.inventoryName,
-    quantity: input.packCount,
-    unit: input.purchaseUnit.toLowerCase(),
+    description: input.lines[0].inventoryName,
+    quantity: input.lines[0].packCount,
+    unit: input.lines[0].purchaseUnit.toLowerCase(),
   };
+  const emailLines = input.lines.map((l) => ({
+    description: l.inventoryName,
+    quantity: l.packCount,
+    unit: l.purchaseUnit.toLowerCase(),
+  }));
 
-  const draft =
-    input.supplier.orderingMode === SupplierOrderingMode.WEBSITE
-      ? null
-      : (await ai.draftSupplierMessage({
-          supplierName: input.supplier.name,
-          orderNumber: (
-            await db.purchaseOrder.findUniqueOrThrow({
-              where: { id: input.purchaseOrderId },
-              select: { orderNumber: true },
-            })
-          ).orderNumber,
-          lines: [line],
-        })) ??
-        (await supplierOrderProvider.createDraft({
-          supplierName: input.supplier.name,
-          mode: input.supplier.orderingMode,
-          orderNumber: (
-            await db.purchaseOrder.findUniqueOrThrow({
-              where: { id: input.purchaseOrderId },
-              select: { orderNumber: true },
-            })
-          ).orderNumber,
-          lines: [line],
-        }));
-
+  // Pull richer context for the email (business name, location name,
+  // who approved, sender's Gmail address) so the supplier sees a
+  // proper PO from a real cafe — not a bland one-line "please
+  // confirm" from "StockPilot".
   const currentPurchaseOrder = await db.purchaseOrder.findUniqueOrThrow({
-    where: {
-      id: input.purchaseOrderId,
-    },
+    where: { id: input.purchaseOrderId },
     select: {
       id: true,
       orderNumber: true,
       notes: true,
       status: true,
+      approvedBy: { select: { name: true } },
+      placedBy: { select: { name: true } },
+      location: {
+        select: {
+          name: true,
+          business: { select: { name: true } },
+        },
+      },
     },
   });
+
+  // Sender email = the connected Gmail address for the location, when
+  // we're using GmailEmailProvider. Falls back to a no-op string for
+  // simulated providers (the template just renders without it).
+  const gmailCreds =
+    input.supplier.orderingMode === SupplierOrderingMode.EMAIL
+      ? await getGmailCredentials(input.locationId).catch(() => null)
+      : null;
+
+  const businessName =
+    currentPurchaseOrder.location?.business?.name?.trim() || "Our team";
+  const locationName =
+    currentPurchaseOrder.location?.name?.trim() || null;
+  const orderedByName =
+    currentPurchaseOrder.approvedBy?.name?.trim() ||
+    currentPurchaseOrder.placedBy?.name?.trim() ||
+    null;
+  const replyToEmail = gmailCreds?.email?.trim() || "";
+
+  const composed =
+    input.supplier.orderingMode === SupplierOrderingMode.WEBSITE
+      ? null
+      : buildSupplierOrderEmail({
+          supplierName: input.supplier.name,
+          businessName,
+          locationName,
+          orderNumber: currentPurchaseOrder.orderNumber,
+          orderedByName,
+          replyToEmail,
+          lines: emailLines,
+          notes: currentPurchaseOrder.notes ?? null,
+        });
+
+  const draft = composed
+    ? { subject: composed.subject, body: composed.text, html: composed.html }
+    : null;
 
   if (input.supplier.orderingMode === SupplierOrderingMode.EMAIL) {
     try {
@@ -801,13 +1683,29 @@ async function dispatchBotPurchaseOrder(input: {
         throw new Error("Supplier email is missing for this order.");
       }
 
-      const sendResult = await supplierOrderProvider.sendApprovedOrder({
-        recipient: input.supplier.email,
-        subject: draft?.subject ?? `PO ${currentPurchaseOrder.orderNumber} from StockPilot`,
-        body:
-          draft?.body ??
-          `Please confirm ${line.quantity} ${line.unit} of ${line.description}.`,
-      });
+      const { buildSupplierReplyAddress } = await import(
+        "@/modules/purchasing/reply-address"
+      );
+      const supplierReplyTo =
+        buildSupplierReplyAddress(currentPurchaseOrder.id) ?? undefined;
+
+      // Retry transient email-send failures with exponential backoff.
+      // Most provider flakiness is rate-limit or DNS blips that clear
+      // in a few hundred ms. 3 attempts total: 0ms, 400ms, 1200ms.
+      const sendResult = await withBackoff(
+        () =>
+          supplierOrderProvider.sendApprovedOrder({
+            recipient: input.supplier.email!,
+            subject:
+              draft?.subject ?? `PO ${currentPurchaseOrder.orderNumber} from StockPilot`,
+            body:
+              draft?.body ??
+              `Please confirm ${line.quantity} ${line.unit} of ${line.description}.`,
+            html: draft?.html,
+            replyTo: supplierReplyTo,
+          }),
+        { attempts: 3, baseDelayMs: 400 }
+      );
 
       await db.$transaction(async (tx) => {
         await tx.purchaseOrder.update({
@@ -830,6 +1728,16 @@ async function dispatchBotPurchaseOrder(input: {
             body: draft?.body ?? `Please confirm ${line.quantity} ${line.unit} of ${line.description}.`,
             status: CommunicationStatus.SENT,
             providerMessageId: sendResult.providerMessageId,
+            // Persist provider metadata (e.g. Gmail thread id) plus
+            // the rich HTML body so the PO detail page can render the
+            // exact email the supplier received.
+            metadata: {
+              ...(("metadata" in sendResult && sendResult.metadata
+                ? (sendResult.metadata as Record<string, unknown>)
+                : {})),
+              ...(draft?.html ? { html: draft.html } : {}),
+              recipient: input.supplier.email,
+            } satisfies Prisma.InputJsonValue,
             sentAt: new Date(),
           },
         });
@@ -843,9 +1751,53 @@ async function dispatchBotPurchaseOrder(input: {
           details: {
             supplierOrderingMode: input.supplier.orderingMode,
             providerMessageId: sendResult.providerMessageId ?? null,
+            simulated: Boolean(sendResult.simulated),
           },
         });
       });
+
+      // Zero-config path: no email provider was set up, so the
+      // provider returned a mailto: URL instead of sending. Push a
+      // Telegram button to the manager — their native email app
+      // opens pre-filled and they tap Send. Supplier sees a personal
+      // email from the café owner's own account.
+      if (sendResult.simulated && sendResult.mailto) {
+        try {
+          const { sendTelegramMessage } = await import("@/lib/telegram-bot");
+          const managers = await db.user.findMany({
+            where: {
+              telegramChatId: { not: null },
+              roles: { some: { locationId: input.locationId } },
+            },
+            select: { telegramChatId: true },
+            take: 3,
+          });
+
+          const bodyLines = [
+            `📧 *${currentPurchaseOrder.orderNumber}* is ready to send to *${input.supplier.name}*.`,
+            "",
+            "Tap below — your email app opens with everything already filled in. Just hit Send.",
+          ];
+          const keyboard = [
+            [
+              {
+                text: `📧 Send order to ${input.supplier.name}`,
+                url: sendResult.mailto,
+              },
+            ],
+          ];
+
+          for (const m of managers) {
+            if (!m.telegramChatId) continue;
+            await sendTelegramMessage(m.telegramChatId, bodyLines.join("\n"), {
+              parseMode: "Markdown",
+              replyMarkup: keyboard,
+            }).catch(() => null);
+          }
+        } catch {
+          /* notification best-effort — PO is SENT regardless */
+        }
+      }
     } catch (error) {
       await db.$transaction(async (tx) => {
         await tx.purchaseOrder.update({
@@ -891,60 +1843,103 @@ async function dispatchBotPurchaseOrder(input: {
       });
     }
   } else if (input.supplier.orderingMode === SupplierOrderingMode.WEBSITE) {
-    const task = await supplierOrderProvider.prepareWebsiteTask({
-      supplierName: input.supplier.name,
-      website: input.supplier.website,
-      orderNumber: currentPurchaseOrder.orderNumber,
-      lines: [line],
-    });
+    // Pivotal simplification: the browser-ordering agent ONLY runs
+    // when the supplier has saved credentials (cookies). Without
+    // credentials, headless Chrome built a cart in its own ephemeral
+    // session that couldn't be transferred to the manager's own
+    // browser → the user ended up with an empty cart when they
+    // clicked "Open cart". For weeks this was the main source of
+    // "the bot doesn't work" complaints.
+    //
+    // With cookies: agent shops in the manager's real Amazon session.
+    //   Cart actually lands in their account. Worth the complexity.
+    //
+    // Without cookies: skip the agent entirely. Send a clean,
+    //   actionable message with the product URL + quantity +
+    //   step-by-step instructions. No browser launch, no Chrome
+    //   dependency, no cart-empty-ness bug — just the simplest
+    //   thing that solves the user's problem.
+    const hasCredentials = await supplierHasCredentials(input.supplier.id);
 
-    await db.$transaction(async (tx) => {
-      const agentTask = await tx.agentTask.create({
-        data: {
-          locationId: input.locationId,
-          supplierId: input.supplier.id,
-          purchaseOrderId: input.purchaseOrderId,
-          type: AgentTaskType.WEBSITE_ORDER_PREP,
-          status: AgentTaskStatus.PENDING,
-          title: task.title,
-          description: task.description,
-          input: task.input as Prisma.InputJsonValue,
-        },
-      });
-
-      await tx.supplierCommunication.create({
-        data: {
-          supplierId: input.supplier.id,
-          purchaseOrderId: input.purchaseOrderId,
-          channel: input.supplier.orderingMode,
-          direction: CommunicationDirection.OUTBOUND,
-          subject: `PO ${currentPurchaseOrder.orderNumber} website prep queued`,
-          body:
-            "StockPilot queued a website-order preparation workflow from a manager bot command. Final checkout remains approval-first.",
-          status: CommunicationStatus.DRAFT,
-        },
-      });
-
-      await enqueueJobTx(tx, {
-        locationId: input.locationId,
-        type: "PREPARE_WEBSITE_ORDER",
-        payload: {
-          taskId: agentTask.id,
-          queuedById: input.userId,
-        },
-      });
-
-      await createAuditLogTx(tx, {
+    if (!hasCredentials) {
+      await handleWebsiteOrderWithoutCredentials({
+        tx: null,
+        purchaseOrderId: input.purchaseOrderId,
         locationId: input.locationId,
         userId: input.userId,
-        action: "bot.website_order_task_queued",
-        entityType: "agentTask",
-        entityId: agentTask.id,
-        details: {
-          purchaseOrderId: input.purchaseOrderId,
-        },
+        supplier: input.supplier,
+        orderNumber: currentPurchaseOrder.orderNumber,
+        // Show primary item + " + N more" when there's a multi-line PO,
+        // so the chat message isn't silently missing items.
+        lineDescription:
+          emailLines.length > 1
+            ? `${line.description} + ${emailLines.length - 1} more`
+            : line.description,
+        quantity: line.quantity,
       });
-    });
+    } else {
+      const task = await supplierOrderProvider.prepareWebsiteTask({
+        supplierName: input.supplier.name,
+        website: input.supplier.website,
+        orderNumber: currentPurchaseOrder.orderNumber,
+        lines: emailLines,
+      });
+
+      await db.$transaction(async (tx) => {
+        // Transition PO to SENT so the status doesn't stay stuck at
+        // APPROVED forever (Bug #1 from the deep audit).
+        await tx.purchaseOrder.update({
+          where: { id: input.purchaseOrderId },
+          data: { status: PurchaseOrderStatus.SENT, sentAt: new Date() },
+        });
+
+        const agentTask = await tx.agentTask.create({
+          data: {
+            locationId: input.locationId,
+            supplierId: input.supplier.id,
+            purchaseOrderId: input.purchaseOrderId,
+            type: AgentTaskType.WEBSITE_ORDER_PREP,
+            status: AgentTaskStatus.PENDING,
+            title: task.title,
+            description: task.description,
+            input: task.input as Prisma.InputJsonValue,
+          },
+        });
+
+        await tx.supplierCommunication.create({
+          data: {
+            supplierId: input.supplier.id,
+            purchaseOrderId: input.purchaseOrderId,
+            channel: input.supplier.orderingMode,
+            direction: CommunicationDirection.OUTBOUND,
+            subject: `PO ${currentPurchaseOrder.orderNumber} website prep queued`,
+            body:
+              "StockPilot queued a website-order preparation workflow from a manager bot command. Final checkout remains approval-first.",
+            status: CommunicationStatus.DRAFT,
+          },
+        });
+
+        await enqueueJobTx(tx, {
+          locationId: input.locationId,
+          type: "PREPARE_WEBSITE_ORDER",
+          payload: {
+            taskId: agentTask.id,
+            queuedById: input.userId,
+          },
+        });
+
+        await createAuditLogTx(tx, {
+          locationId: input.locationId,
+          userId: input.userId,
+          action: "bot.website_order_task_queued",
+          entityType: "agentTask",
+          entityId: agentTask.id,
+          details: {
+            purchaseOrderId: input.purchaseOrderId,
+          },
+        });
+      });
+    }
   } else {
     await db.$transaction(async (tx) => {
       await tx.supplierCommunication.create({
@@ -977,6 +1972,302 @@ async function dispatchBotPurchaseOrder(input: {
     },
   });
 }
+
+/**
+ * Does this supplier have website-login credentials saved? Without
+ * them the browser-ordering agent can't put items into the manager's
+ * real cart — so we skip the agent entirely and take the simpler,
+ * always-reliable path.
+ */
+async function supplierHasCredentials(supplierId: string): Promise<boolean> {
+  const row = await db.supplier.findUnique({
+    where: { id: supplierId },
+    select: { websiteCredentials: true },
+  });
+  if (!row?.websiteCredentials) return false;
+  const { decryptSupplierCredentials } = await import(
+    "@/modules/suppliers/website-credentials"
+  );
+  return !!decryptSupplierCredentials(row.websiteCredentials);
+}
+
+/**
+ * Simpler path when the supplier has no saved login. Doesn't launch
+ * headless Chrome, doesn't build an ephemeral cart that won't
+ * transfer — just confirms the approval to the manager on Telegram
+ * with the product URL they pasted, the quantity, and a clear
+ * one-tap link so they can add it to their own cart in their own
+ * browser. Marks the PO as SENT (there's nothing more we can do
+ * server-side without credentials) and queues a gentle nudge to
+ * set up cookies so next time is one-tap.
+ */
+async function handleWebsiteOrderWithoutCredentials(input: {
+  tx: null;
+  purchaseOrderId: string;
+  locationId: string;
+  userId: string | null;
+  supplier: {
+    id: string;
+    name: string;
+    website: string | null;
+  };
+  orderNumber: string;
+  lineDescription: string;
+  quantity: number;
+}): Promise<void> {
+  const { extractLineProductUrl } = await import(
+    "@/modules/automation/browser-agent"
+  );
+  const { buildDeepCartAddUrl } = await import(
+    "@/modules/automation/cart-links"
+  );
+
+  // Load ALL PO lines so the deep-link covers a multi-item cart, not
+  // just the first item.
+  const poLines = await db.purchaseOrderLine.findMany({
+    where: { purchaseOrderId: input.purchaseOrderId },
+    select: { description: true, quantityOrdered: true, notes: true },
+  });
+
+  const deepLinkLines = poLines.map((l) => ({
+    description: l.description,
+    quantityOrdered: l.quantityOrdered,
+    productUrl: extractLineProductUrl(l.notes),
+  }));
+
+  const deepLink = buildDeepCartAddUrl({
+    supplierWebsite: input.supplier.website,
+    supplierName: input.supplier.name,
+    lines: deepLinkLines,
+  });
+
+  await db.$transaction(async (tx) => {
+    await tx.purchaseOrder.update({
+      where: { id: input.purchaseOrderId },
+      data: { status: PurchaseOrderStatus.SENT, sentAt: new Date() },
+    });
+    await tx.supplierCommunication.create({
+      data: {
+        supplierId: input.supplier.id,
+        purchaseOrderId: input.purchaseOrderId,
+        channel: SupplierOrderingMode.WEBSITE,
+        direction: CommunicationDirection.OUTBOUND,
+        subject: `PO ${input.orderNumber} — handed off via deep link`,
+        body: deepLink
+          ? `${deepLink.kind} link sent: ${deepLink.primary.url}`
+          : "Handed off to manager — no public cart-add URL for this supplier.",
+        status: CommunicationStatus.SENT,
+        sentAt: new Date(),
+      },
+    });
+    await createAuditLogTx(tx, {
+      locationId: input.locationId,
+      userId: input.userId,
+      action: "bot.website_order_handoff_no_credentials",
+      entityType: "purchaseOrder",
+      entityId: input.purchaseOrderId,
+      details: {
+        supplierId: input.supplier.id,
+        deepLinkUrl: deepLink?.primary.url ?? null,
+        deepLinkKind: deepLink?.kind ?? null,
+        lineCount: poLines.length,
+      },
+    });
+  });
+
+  // Send the handoff message to the manager(s).
+  try {
+    const { sendTelegramMessage } = await import("@/lib/telegram-bot");
+    const { env } = await import("@/lib/env");
+    const managers = await db.user.findMany({
+      where: {
+        telegramChatId: { not: null },
+        roles: { some: { locationId: input.locationId } },
+      },
+      select: { telegramChatId: true },
+      take: 3,
+    });
+    if (managers.length === 0) return;
+
+    const appUrl = env.APP_URL?.replace(/\/$/, "") ?? "";
+    const settingsUrl = appUrl ? `${appUrl}/suppliers/${input.supplier.id}/signin` : null;
+    const keyboard: Array<
+      Array<{ text: string; url: string } | { text: string; callback_data: string }>
+    > = [];
+
+    // Honesty pass: when the user HAS NO CREDENTIALS saved, the only
+    // thing we can give them is links to the product pages they
+    // already sent us. That's useless — they can't "tap to get a
+    // ready cart" until they sign in once. So:
+    //
+    //   - `populates` kind (Walmart): yes, one tap genuinely fills
+    //     the cart. Keep this button.
+    //   - `per_item` / `open_site` kinds: those URLs are at best
+    //     equivalent to what the user already has. Don't echo them
+    //     back. Lead with the single CTA that unlocks real automation.
+    const canGiveRealCart = deepLink?.kind === "populates";
+
+    if (canGiveRealCart && deepLink) {
+      keyboard.push([{ text: deepLink.primary.label, url: deepLink.primary.url }]);
+    }
+
+    // PRIMARY CTA for the common case: connect the supplier once so
+    // the NEXT order fills a real cart in their real session.
+    if (!canGiveRealCart && settingsUrl) {
+      keyboard.push([
+        {
+          text: `🔐 Connect ${input.supplier.name} (30 sec, works on phone)`,
+          url: settingsUrl,
+        },
+      ]);
+    }
+
+    // Secondary "next time: auto" upsell for the Walmart case (they
+    // got a real cart this time, but might want cookie-auth for
+    // bigger speed wins later).
+    if (canGiveRealCart && settingsUrl) {
+      keyboard.push([
+        {
+          text: `⚡ Save login for faster next time`,
+          url: settingsUrl,
+        },
+      ]);
+    }
+
+    // Build a compact item summary: "3× Oat Milk · 2× Paper Cups".
+    const itemsSummary = poLines
+      .slice(0, 4)
+      .map((l) => `${l.quantityOrdered}× ${l.description}`)
+      .join(" · ");
+    const moreSuffix = poLines.length > 4 ? ` + ${poLines.length - 4} more` : "";
+
+    const bodyLines: string[] = [];
+    if (canGiveRealCart && deepLink) {
+      bodyLines.push(
+        `✅ *${input.orderNumber}* approved — ${itemsSummary}${moreSuffix} from *${input.supplier.name}*.`
+      );
+      bodyLines.push("");
+      bodyLines.push(
+        `Tap *${deepLink.primary.label}* — it fills your cart in one tap. Then just checkout.`
+      );
+    } else {
+      // Honest message: don't pretend we built a cart. Tell the user
+      // what needs to happen for that.
+      bodyLines.push(
+        `📋 *${input.orderNumber}* drafted — ${itemsSummary}${moreSuffix} from *${input.supplier.name}*.`
+      );
+      bodyLines.push("");
+      bodyLines.push(
+        `I can't auto-build an *${input.supplier.name}* cart until you sign in once — takes 30 seconds, works on your phone. After that, future orders land in your real cart automatically (no more scrolling links).`
+      );
+      bodyLines.push("");
+      bodyLines.push(
+        `Tap *Connect ${input.supplier.name}* below to set it up.`
+      );
+    }
+
+    const body = bodyLines.join("\n");
+
+    for (const m of managers) {
+      if (!m.telegramChatId) continue;
+      await sendTelegramMessage(m.telegramChatId, body, {
+        parseMode: "Markdown",
+        replyMarkup: keyboard.length > 0 ? keyboard : undefined,
+      }).catch(() => null);
+    }
+  } catch {
+    /* notification best-effort — PO is SENT regardless */
+  }
+}
+
+/**
+ * Convert a free-text quantity+unit pair (what the user typed) into
+ * the same shape the par-based calculator returns, so downstream
+ * code can treat it identically.
+ *
+ * Rules:
+ *   - Mass / volume units (oz, lb, kg, g, ml, l) convert into the
+ *     item's base unit using fixed factors. We trust the user's
+ *     unit over the item's display unit ("12 oz" stays 12 oz even
+ *     if the item is normally tracked in lb).
+ *   - Pack-style units (bag, case, box, bottle, each, count) use the
+ *     supplier's pack size to compute base quantity.
+ *   - Anything we can't recognise falls back to the item's display
+ *     unit so the user's number is at least preserved.
+ *
+ * Returns null if conversion produced a non-positive amount.
+ */
+function buildUserSpecifiedOrder(input: {
+  value: number;
+  unit: string;
+  item: { displayUnit: MeasurementUnitType; baseUnit: BaseUnitType };
+  packSizeBase: number;
+}): { recommendedPackCount: number; orderQuantityBase: number; shortageBase: number } | null {
+  const value = input.value;
+  if (!Number.isFinite(value) || value <= 0) return null;
+
+  const unit = input.unit.toLowerCase().replace(/\.$/, "").trim();
+  const pack = Math.max(1, input.packSizeBase);
+
+  // Mass → grams
+  const G_PER_OZ = 28.3495;
+  const G_PER_LB = 453.592;
+  // Volume → millilitres
+  const ML_PER_FLOZ = 29.5735;
+  const ML_PER_CUP = 240;
+  const ML_PER_GAL = 3785.41;
+
+  let baseQty: number | null = null;
+
+  if (input.item.baseUnit === "GRAM") {
+    if (unit === "g" || unit === "gram" || unit === "grams") baseQty = value;
+    else if (unit === "kg" || unit === "kilo" || unit === "kilos" || unit === "kilogram" || unit === "kilograms")
+      baseQty = value * 1000;
+    else if (unit === "oz" || unit === "ounce" || unit === "ounces") baseQty = value * G_PER_OZ;
+    else if (unit === "lb" || unit === "lbs" || unit === "pound" || unit === "pounds")
+      baseQty = value * G_PER_LB;
+  } else if (input.item.baseUnit === "MILLILITER") {
+    if (unit === "ml" || unit === "millilitre" || unit === "milliliter") baseQty = value;
+    else if (unit === "l" || unit === "litre" || unit === "liter" || unit === "litres" || unit === "liters")
+      baseQty = value * 1000;
+    else if (unit === "fl oz" || unit === "floz" || unit === "fluid oz") baseQty = value * ML_PER_FLOZ;
+    else if (unit === "cup" || unit === "cups") baseQty = value * ML_PER_CUP;
+    else if (unit === "gal" || unit === "gallon" || unit === "gallons") baseQty = value * ML_PER_GAL;
+  }
+
+  // Pack-style units always multiply by pack size regardless of base.
+  if (
+    baseQty == null &&
+    (unit === "bag" || unit === "bags" ||
+      unit === "case" || unit === "cases" ||
+      unit === "box" || unit === "boxes" ||
+      unit === "bottle" || unit === "bottles" ||
+      unit === "pack" || unit === "packs" ||
+      unit === "each" || unit === "ea" || unit === "count" || unit === "ct" || unit === "")
+  ) {
+    baseQty = value * pack;
+  }
+
+  // Last resort: assume the user's number is already in the item's
+  // base unit. Better than refusing.
+  if (baseQty == null) baseQty = value;
+
+  baseQty = Math.round(baseQty);
+  if (baseQty <= 0) return null;
+
+  const recommendedPackCount = Math.max(1, Math.round(baseQty / pack));
+
+  return {
+    recommendedPackCount,
+    orderQuantityBase: baseQty,
+    shortageBase: baseQty,
+  };
+}
+
+type MeasurementUnitType =
+  | "GRAM" | "KILOGRAM" | "MILLILITER" | "LITER" | "COUNT"
+  | "CASE" | "BOTTLE" | "BAG" | "BOX";
+type BaseUnitType = "GRAM" | "MILLILITER" | "COUNT";
 
 function pickSupplierContext(item: {
   primarySupplier: {
@@ -1105,7 +2396,7 @@ function buildBotReply(input: {
   }
 
   if (input.supplierOrderingMode === SupplierOrderingMode.WEBSITE) {
-    return `${countLine} ${orderLine} I queued the website ordering workflow for review before final checkout.`;
+    return `${countLine} ${orderLine} I'm heading to their website now to add this to the cart. I'll send you a screenshot of the cart once it's ready — you'll review it before anything gets paid.`;
   }
 
   if (input.supplierOrderingMode === SupplierOrderingMode.MANUAL) {
@@ -1133,7 +2424,7 @@ function normalizePhoneNumber(value: string) {
   return normalized.startsWith("+") ? normalized : `+${normalized}`;
 }
 
-function toBotChannel(channel: ManagerBotChannel) {
+export function toBotChannel(channel: ManagerBotChannel) {
   return channel === "TELEGRAM" ? BotChannel.TELEGRAM : BotChannel.WHATSAPP;
 }
 
@@ -1160,6 +2451,28 @@ function mapPurchaseOrderReplyScenario(input: {
   return "restock_order_ready";
 }
 
+/**
+ * Tiny exponential-backoff retry for transient network / rate-limit
+ * blips. Throws the last error after all attempts.
+ */
+async function withBackoff<T>(
+  fn: () => Promise<T>,
+  opts: { attempts: number; baseDelayMs: number }
+): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < opts.attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i === opts.attempts - 1) break;
+      const delay = opts.baseDelayMs * Math.pow(3, i);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
 function nextOrderNumber() {
   return `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 }
@@ -1176,6 +2489,159 @@ function appendOperationalNote(existing: string | null | undefined, next: string
 
 function toInputJsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+// ── Supplier name sanitizer ───────────────────────────────────────────────────
+// The LLM sometimes hands us whole sentences as the supplier name (e.g.
+// "the supplier has email, its psybhan@gmail.com"). Extract a clean name:
+//   1. If an email is present, fall back to its local-part (e.g. "psybhan").
+//   2. Otherwise strip filler phrases ("supplier is", "their name is", "called").
+//   3. Reject anything that still looks like a full sentence (verbs, punctuation).
+function sanitizeSupplierName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let cleaned = raw.trim();
+  if (!cleaned) return null;
+
+  const emailMatch = cleaned.match(/([a-z0-9._%+-]+)@[a-z0-9.-]+\.[a-z]{2,}/i);
+  // Filler words that usually precede the real name.
+  cleaned = cleaned
+    .replace(/\b(the\s+)?supplier(?:'s)?\s+(is|name is|called|named)?\b/gi, " ")
+    .replace(/\bcalled\b/gi, " ")
+    .replace(/\bnamed\b/gi, " ")
+    .replace(/\btheir?\s+name(?:'s)?\s+(is|are)?\b/gi, " ")
+    .replace(/\bits?\s+(email|name|number|phone)\b.*$/gi, " ")
+    .replace(/\bhas\s+(email|phone|website)\b.*$/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Drop trailing punctuation.
+  cleaned = cleaned.replace(/[,.!?;:]+$/g, "").trim();
+
+  // If, after cleaning, we still have a long multi-word sentence (>5 tokens),
+  // fall back to the email local-part if available.
+  const tokens = cleaned.split(/\s+/).filter(Boolean);
+  if (tokens.length > 5 && emailMatch) {
+    cleaned = emailMatch[1] ?? cleaned;
+  }
+
+  // If the cleaned name is just an email, reduce it to the local-part.
+  const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned);
+  if (looksLikeEmail) {
+    cleaned = cleaned.split("@")[0] ?? cleaned;
+  }
+
+  cleaned = cleaned.trim();
+  if (!cleaned) return null;
+  if (cleaned.length > 60) cleaned = cleaned.slice(0, 60).trim();
+
+  // Final guard: reject pure filler after stripping.
+  if (/^(is|a|an|the|and|or|but|with|their|its|has)$/i.test(cleaned)) return null;
+
+  return cleaned;
+}
+
+// ── Chit-chat detector ────────────────────────────────────────────────────────
+// Handles common conversational patterns locally, with varied replies that avoid
+// repeating the last bot message. Returns null when the user is clearly trying to
+// do a real operation (contains numbers, inventory-ish verbs, etc.) so the LLM
+// path can take over.
+function detectChitChatReply(
+  text: string,
+  history: BotConversationTurn[]
+): { reply: string; scenario: string } | null {
+  const raw = text.trim();
+  if (!raw) return null;
+  // Already matches an operational pattern → let the LLM interpret it.
+  if (
+    /\d/.test(raw) ||
+    /\b(order|restock|reorder|refill|buy|add|remove|have|left|stock|inventory|par|delete|update|change|set|supplier|recipe|link)\b/i.test(
+      raw
+    )
+  ) {
+    return null;
+  }
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return null;
+
+  const lastBotReply = [...history].reverse().find((turn) => turn.role === "bot")?.text ?? "";
+  const pickDistinct = (options: string[]): string => {
+    const pool = options.filter((candidate) => candidate !== lastBotReply);
+    const source = pool.length > 0 ? pool : options;
+    return source[Math.floor(Math.random() * source.length)] ?? options[0]!;
+  };
+
+  // Identity
+  if (/\b(what(?:'| i)?s| whats)? ?(?:your |ur )?name\b/.test(normalized) || /\bwho are (?:you|u)\b/.test(normalized)) {
+    return {
+      reply: pickDistinct([
+        "I'm StockBuddy 🤖 — your inventory sidekick. I help track stock, reorder from suppliers, and flag low items.",
+        "My name is StockBuddy! I handle inventory for your business — stock checks, restocks, recipe tracking, the works.",
+        "StockBuddy, at your service. I live in your chat and keep an eye on stock levels.",
+      ]),
+      scenario: "chitchat_identity",
+    };
+  }
+
+  // Thanks
+  if (/\b(thanks?|thx|ty|thank you|cheers|appreciate)\b/.test(normalized)) {
+    return {
+      reply: pickDistinct(["You're welcome! 👋", "Anytime!", "Happy to help."]),
+      scenario: "chitchat_thanks",
+    };
+  }
+
+  // How are you
+  if (/\bhow (?:are|r) (?:you|u|ya)\b/.test(normalized) || /\bhow s? (?:it going|things)\b/.test(normalized)) {
+    return {
+      reply: pickDistinct([
+        "Doing great — keeping an eye on stock. How's the shop looking today?",
+        "All good here. Anything running low I should know about?",
+        "Can't complain — inventory's my happy place. What's up?",
+      ]),
+      scenario: "chitchat_howareyou",
+    };
+  }
+
+  // Plain greeting
+  if (
+    /^(hi|hey|yo|hello|hola|sup|yoo+|hiya|heya|boy|ey|oi|morning|evening|afternoon)\b/.test(normalized) ||
+    /^[\p{Emoji}\s]+$/u.test(raw)
+  ) {
+    return {
+      reply: pickDistinct([
+        "Hey 👋 — want a quick stock check, or do you need to reorder something?",
+        "Yo! Ask me about any item, or say something like 'oat milk 2 left, order more'.",
+        "Hi! I can check stock, place restocks, or add new items. What do you need?",
+        "Hey there. Anything I should reorder today?",
+      ]),
+      scenario: "chitchat_greeting",
+    };
+  }
+
+  // Apology / oops
+  if (/\b(sorry|my bad|oops|nvm|never mind|nevermind)\b/.test(normalized)) {
+    return {
+      reply: pickDistinct(["No worries. What do you need?", "All good! What can I help with?"]),
+      scenario: "chitchat_ack",
+    };
+  }
+
+  // Affirm / negate (only when no pending context — let the LLM handle those)
+  if (/^(yes|yeah|yup|ok|okay|sure|cool|nice|great|lol|haha|lmao)$/.test(normalized)) {
+    return {
+      reply: pickDistinct([
+        "👍 Let me know if you need anything.",
+        "Cool. Ping me whenever.",
+      ]),
+      scenario: "chitchat_ack",
+    };
+  }
+
+  return null;
 }
 
 function extractPendingContext(metadata: Prisma.JsonValue | null | undefined): BotPendingContext | undefined {

@@ -333,26 +333,21 @@ test("n8n bot language: prefers local greeting guardrails over unrelated stock a
   }
 });
 
-test("n8n bot language: keeps the local greeting reply when the llm gets too generic", async () => {
+test("n8n bot language: passes through short LLM replies unchanged", async () => {
+  // Per applyReplyGuardrails, short replies (< 450 chars) are trusted as-is —
+  // the old "reject anything generic" behaviour was intentionally relaxed
+  // because Llama models produce plausible-sounding short greetings that
+  // the guardrail couldn't reliably distinguish from canned fallbacks.
   const originalFetch = globalThis.fetch;
+  const llmReply = "Hey! What can I help with today?";
 
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     if (String(input).includes("stockpilot-bot-reply")) {
-      return new Response(
-        JSON.stringify({
-          provider: "n8n-ollama",
-          reply:
-            "Hello! Ready to assist with your inventory needs. Ask about items that are low, check on specific items, or let me know if you need anything else.",
-        }),
-        {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
-      );
+      return new Response(JSON.stringify({ provider: "n8n-ollama", reply: llmReply }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     }
-
     throw new Error("unexpected webhook call");
   }) as typeof fetch;
 
@@ -369,15 +364,51 @@ test("n8n bot language: keeps the local greeting reply when the llm gets too gen
       channel: "TELEGRAM",
       managerText: "how are u",
       scenario: "greeting",
-      fallbackReply:
-        "Hey. I'm here and ready to help with stock. You can ask what's low, check an item, or say something like 'Whole milk 2 left, order more.'",
+      fallbackReply: "Hey, I'm here.",
       facts: {},
     });
 
-    assert.equal(
-      result.reply,
-      "Hey. I'm here and ready to help with stock. You can ask what's low, check an item, or say something like 'Whole milk 2 left, order more.'"
-    );
+    assert.equal(result.reply, llmReply);
+    assert.match(result.provider, /n8n/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("n8n bot language: falls back to local reply when LLM hallucinates a long response", async () => {
+  // The active guardrail: anything over 450 chars is treated as a
+  // hallucination and replaced with the local fallback.
+  const originalFetch = globalThis.fetch;
+  const longReply = "I want to help you with everything in your inventory! ".repeat(20);
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    if (String(input).includes("stockpilot-bot-reply")) {
+      return new Response(JSON.stringify({ provider: "n8n-ollama", reply: longReply }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error("unexpected webhook call");
+  }) as typeof fetch;
+
+  try {
+    const provider = new N8nBotLanguageProvider({
+      interpretWebhookUrl: "http://127.0.0.1:5678/webhook/stockpilot-bot-interpret",
+      replyWebhookUrl: "http://127.0.0.1:5678/webhook/stockpilot-bot-reply",
+      secret: "test-secret",
+      fallback: new LocalBotLanguageProvider(),
+      llmConfig: defaultLlmConfig,
+    });
+
+    const result = await provider.draftReply({
+      channel: "TELEGRAM",
+      managerText: "how are u",
+      scenario: "greeting",
+      fallbackReply: "Hey, I'm here.",
+      facts: {},
+    });
+
+    assert.equal(result.reply, "Hey, I'm here.");
     assert.equal(result.provider, "n8n+local-guardrail");
   } finally {
     globalThis.fetch = originalFetch;

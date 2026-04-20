@@ -1,317 +1,481 @@
 import Link from "next/link";
 import {
   ArrowRight,
-  BellRing,
+  CheckCircle2,
   ClipboardCheck,
-  PackageCheck,
-  RefreshCcw,
+  MessageSquare,
+  Package,
   ShoppingCart,
-  Store,
+  TrendingDown,
+  Zap,
 } from "lucide-react";
 
-import { connectSquareAction, runJobsAction, syncSalesAction } from "@/app/actions/operations";
+import { ConsolidateRecipesCard } from "@/components/app/consolidate-recipes-card";
+import { DuplicateRecipesCard } from "@/components/app/duplicate-recipes-card";
+import { InventoryDuplicatesCard } from "@/components/app/inventory-duplicates-card";
+import { MoneyThisWeekCard } from "@/components/app/money-this-week-card";
+import { PosActivityFeed } from "@/components/app/pos-activity-feed";
+import { RecipeHealthCard } from "@/components/app/recipe-health-card";
 import { StatusBadge } from "@/components/app/status-badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Role } from "@/lib/domain-enums";
 import { formatRelativeDays } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { requireSession } from "@/modules/auth/session";
 import { getDashboardData } from "@/modules/dashboard/queries";
+import { getMoneyThisWeek } from "@/modules/dashboard/money-this-week";
+import { findInventoryDuplicates } from "@/modules/inventory/duplicates";
+import { findConsolidationCandidates } from "@/modules/recipes/consolidation";
+import { findDuplicateRecipeCandidates } from "@/modules/recipes/duplicates";
+import { getRecipeHealth } from "@/modules/recipes/health";
 import { formatQuantityBase } from "@/modules/inventory/units";
+import { getAnalyticsOverview } from "@/modules/analytics/queries";
+import { getMarginDashboard } from "@/modules/recipes/margin-dashboard";
 
-export default async function DashboardPage() {
-  const session = await requireSession(Role.SUPERVISOR);
-  const data = await getDashboardData(session.locationId);
-
+/**
+ * Today — the task-first landing.
+ *
+ * Design rule: the top of this page must answer one question only —
+ * "what do I need to do right now?" — not "what's the state of the
+ * business?". Stats come later, actions come first.
+ */
+export default async function TodayPage() {
+  const session = await requireSession(Role.STAFF);
+  const [{ getPosActivityFeed }] = await Promise.all([
+    import("@/modules/pos/activity-feed"),
+  ]);
+  const [
+    data,
+    analytics,
+    margins,
+    moneyThisWeek,
+    posActivity,
+    recipeHealth,
+    duplicateCandidates,
+    inventoryDuplicateGroups,
+    consolidateCandidates,
+  ] = await Promise.all([
+    getDashboardData(session.locationId),
+    getAnalyticsOverview(session.locationId),
+    getMarginDashboard(session.locationId).catch(() => []),
+    getMoneyThisWeek(session.locationId).catch(() => null),
+    getPosActivityFeed(session.locationId, 10).catch(() => []),
+    getRecipeHealth(session.locationId).catch(() => null),
+    findDuplicateRecipeCandidates(session.locationId).catch(() => []),
+    findInventoryDuplicates(session.locationId).catch(() => []),
+    findConsolidationCandidates(session.locationId).catch(() => []),
+  ]);
   const firstName = session.userName.split(" ")[0];
-  const metrics = [
-    { label: "Items tracked", value: data.metrics.inventoryCount, tone: "neutral" as const },
-    { label: "Running low", value: data.metrics.lowStockCount, tone: "warning" as const },
-    { label: "Urgent today", value: data.metrics.criticalCount, tone: "critical" as const },
-    {
-      label: "Waiting for approval",
-      value: data.metrics.pendingRecommendations + data.metrics.pendingRecipes,
-      tone: "info" as const,
-    },
-  ];
-  const quickActions = [
-    {
-      href: "/stock-count",
-      title: "Count stock",
-      description: "Confirm anything uncertain before service starts.",
-      icon: ClipboardCheck,
-    },
-    {
-      href: "/inventory",
-      title: "Open inventory",
-      description: "Search items, check days left, and review supplier info.",
-      icon: PackageCheck,
-    },
-    {
+  const topSuppliers = analytics.topSuppliers.slice(0, 3);
+
+  const pendingCount = data.recommendations.length;
+  const criticalCount = data.metrics.criticalCount;
+  const lowCount = data.metrics.lowStockCount;
+  const openAlerts = data.alerts.length;
+  const itemsTotal = data.metrics.inventoryCount;
+  const marginReviewCount = margins.filter((m) => m.severity === "review").length;
+  // Shrinkage math needs costed POS depletion to be meaningful — with
+  // no POS sales, everything looks like shrinkage. Gate the task by
+  // Money-this-week coverage so we never surface nonsense numbers.
+  const shrinkageCents =
+    moneyThisWeek && moneyThisWeek.costedLineCount >= 10
+      ? Math.max(0, moneyThisWeek.inventorySpendCents - moneyThisWeek.cogsCents)
+      : 0;
+
+  // Compose prioritised task list
+  type Task = {
+    kind:
+      | "approve"
+      | "critical"
+      | "alert"
+      | "count"
+      | "watch"
+      | "shrinkage"
+      | "margin";
+    title: string;
+    hint: string;
+    cta: string;
+    href: string;
+    tone: "urgent" | "warn" | "info";
+    icon: typeof Zap;
+  };
+  const tasks: Task[] = [];
+
+  if (session.role === Role.MANAGER && pendingCount > 0) {
+    tasks.push({
+      kind: "approve",
+      title: `${pendingCount} order${pendingCount === 1 ? "" : "s"} waiting for your OK`,
+      hint: "Review and approve so StockBuddy can send them to suppliers.",
+      cta: "Review orders",
       href: "/purchase-orders",
-      title: "Review orders",
-      description: "Approve, defer, or adjust supplier recommendations.",
-      icon: BellRing,
-    },
-  ];
+      tone: "urgent",
+      icon: Zap,
+    });
+  }
+
+  if (criticalCount > 0) {
+    tasks.push({
+      kind: "critical",
+      title: `${criticalCount} item${criticalCount === 1 ? "" : "s"} about to run out`,
+      hint: "These will stock out before the next delivery unless we act.",
+      cta: "See items",
+      href: "/inventory",
+      tone: "urgent",
+      icon: TrendingDown,
+    });
+  }
+
+  if (openAlerts > 0) {
+    tasks.push({
+      kind: "alert",
+      title: `${openAlerts} alert${openAlerts === 1 ? "" : "s"} need${openAlerts === 1 ? "s" : ""} a look`,
+      hint: "Sync issues, missing counts, or stock warnings.",
+      cta: "Open alerts",
+      href: "/alerts",
+      tone: "warn",
+      icon: MessageSquare,
+    });
+  }
+
+  if (lowCount > criticalCount && lowCount > 0) {
+    tasks.push({
+      kind: "watch",
+      title: `${lowCount - criticalCount} item${lowCount - criticalCount === 1 ? "" : "s"} getting low`,
+      hint: "Not urgent yet, but worth a glance.",
+      cta: "Watch list",
+      href: "/inventory",
+      tone: "info",
+      icon: Package,
+    });
+  }
+
+  // Shrinkage > $15 in last 7 days is the threshold where it's
+  // worth opening the variance page — matches /variance's own
+  // severity floors. Over $50 → urgent; anything else lives in the
+  // "watch" pile.
+  if (shrinkageCents >= 1500 && session.role !== Role.STAFF) {
+    const dollars = (shrinkageCents / 100).toFixed(2);
+    tasks.push({
+      kind: "shrinkage",
+      title: `$${dollars} in unexplained shrinkage this week`,
+      hint: "Ingredient spend outran what recipes accounted for — worth a shelf check.",
+      cta: "Open variance",
+      href: "/variance",
+      tone: shrinkageCents >= 5000 ? "urgent" : "warn",
+      icon: TrendingDown,
+    });
+  }
+
+  // Margin reviews: >= 1 variant under 60% margin is a real call
+  // to re-price or swap ingredient sources. Managers only.
+  if (marginReviewCount > 0 && session.role !== Role.STAFF) {
+    tasks.push({
+      kind: "margin",
+      title: `${marginReviewCount} menu item${marginReviewCount === 1 ? "" : "s"} under 60% margin`,
+      hint: "Either ingredient costs crept up or the sell price is too low. Both are fixable.",
+      cta: "Review margins",
+      href: "/margins",
+      tone: marginReviewCount >= 5 ? "warn" : "info",
+      icon: ShoppingCart,
+    });
+  }
+
+  // Only show Count task if user is staff-role AND no higher-priority tasks
+  if (tasks.length === 0 && itemsTotal > 0) {
+    tasks.push({
+      kind: "count",
+      title: "Quick count",
+      hint: "Keep the numbers honest. Takes 2 minutes.",
+      cta: "Count now",
+      href: "/stock-count",
+      tone: "info",
+      icon: ClipboardCheck,
+    });
+  }
+
+  const allClear = tasks.length === 0;
 
   return (
-    <div className="flex flex-col gap-6">
-      <section className="flex flex-col gap-5 rounded-[30px] border border-border/60 bg-[linear-gradient(135deg,rgba(41,37,36,1),rgba(68,64,60,0.96))] p-6 text-white shadow-2xl shadow-black/10">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="space-y-3">
-            <p className="text-sm uppercase tracking-[0.24em] text-white/60">Home</p>
-            <h1 className="max-w-3xl text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-              Hi {firstName}, here&apos;s what needs attention before today gets busy.
-            </h1>
-            <p className="max-w-2xl text-white/70">
-              StockPilot keeps the busy work simple for {session.locationName}: check urgent
-              items, count anything uncertain, and review supplier work only when it&apos;s ready.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            {session.role === Role.MANAGER ? (
-              <>
-                <form action={connectSquareAction}>
-                  <Button type="submit" variant="secondary" className="h-10 rounded-2xl">
-                    <Store data-icon="inline-start" />
-                    Connect Square
-                  </Button>
-                </form>
-                <form action={syncSalesAction}>
-                  <Button type="submit" variant="secondary" className="h-10 rounded-2xl">
-                    <ShoppingCart data-icon="inline-start" />
-                    Sync sample sale
-                  </Button>
-                </form>
-              </>
-            ) : (
-              <div className="rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/70">
-                Sync actions stay manager-only so the data stays controlled.
-              </div>
-            )}
-
-            <form action={runJobsAction}>
-              <Button
-                type="submit"
-                variant="outline"
-                className="h-10 rounded-2xl border-white/20 bg-white/5 text-white hover:bg-white/10"
-              >
-                <RefreshCcw data-icon="inline-start" />
-                Refresh background jobs
-              </Button>
-            </form>
-          </div>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {metrics.map((metric) => (
-            <div key={metric.label} className="rounded-3xl border border-white/10 bg-white/5 p-4">
-              <p className="text-sm text-white/60">{metric.label}</p>
-              <div className="mt-3 flex items-end justify-between">
-                <p className="text-4xl font-semibold">{metric.value}</p>
-                <StatusBadge label={metric.tone} tone={metric.tone} />
-              </div>
-            </div>
-          ))}
-        </div>
+    <div className="space-y-12">
+      {/* ── Greeting ──────────────────────────────────────────────── */}
+      <section>
+        <p className="text-sm text-muted-foreground">
+          {new Date().toLocaleDateString(undefined, {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+          })}
+          {" · "}
+          <span>{session.locationName}</span>
+        </p>
+        <h1 className="mt-2 text-[clamp(2rem,5vw,3.5rem)] font-bold leading-[1.05] tracking-[-0.025em]">
+          {greetingFor(new Date())}, {firstName}.
+        </h1>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-3">
-        {quickActions.map((action) => (
+      {/* ── Today's ONE thing ─────────────────────────────────────── */}
+      {allClear ? (
+        <AllClearState firstItems={itemsTotal === 0} />
+      ) : (
+        <section className="space-y-4">
+          {/* Hero card for the single highest-priority task. Big,
+              obvious, one tap away. Research directly driving this:
+              managers don't want a dashboard, they want to know
+              "what's the one thing I should do right now?" */}
           <Link
-            key={action.href}
-            href={action.href}
-            className="rounded-[28px] border border-border/60 bg-card/85 p-5 shadow-lg shadow-black/5 transition-all hover:-translate-y-0.5 hover:border-primary/30"
+            href={tasks[0].href}
+            className={cn(
+              "notif-card group relative flex items-start gap-5 overflow-hidden p-6 sm:p-8",
+              tasks[0].tone === "urgent" && "notif-card-urgent"
+            )}
           >
-            <action.icon className="size-5 text-amber-600 dark:text-amber-300" />
-            <h2 className="mt-4 text-lg font-semibold">{action.title}</h2>
-            <p className="mt-2 text-sm text-muted-foreground">{action.description}</p>
-            <div className="mt-4 flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              Open
-              <ArrowRight className="size-4" />
+            <div
+              className={cn(
+                "flex size-14 shrink-0 items-center justify-center rounded-2xl",
+                tasks[0].tone === "urgent"
+                  ? "bg-[var(--destructive)]/10 text-[var(--destructive)]"
+                  : tasks[0].tone === "warn"
+                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                    : "bg-foreground/[0.06] text-foreground/80"
+              )}
+            >
+              {(() => {
+                const Icon = tasks[0].icon;
+                return <Icon className="size-7" />;
+              })()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-mono font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                One thing today
+              </p>
+              <p className="mt-1 text-xl font-semibold leading-tight sm:text-2xl">
+                {tasks[0].title}
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">{tasks[0].hint}</p>
+            </div>
+            <div className="hidden shrink-0 items-center gap-1 rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-xs font-semibold text-foreground/80 group-hover:text-foreground sm:flex">
+              {tasks[0].cta}
+              <ArrowRight className="size-3.5" />
             </div>
           </Link>
-        ))}
-      </section>
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_1.1fr_0.9fr]">
-        <Card className="border-border/60 bg-card/85">
-          <CardHeader className="pb-3">
-            <CardTitle>What needs attention</CardTitle>
-            <CardDescription>Start here if you only have a minute.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {data.alerts.length ? (
-              data.alerts.map((alert) => (
-                <div
-                  key={alert.id}
-                  className="rounded-[24px] border border-border/60 bg-background/85 p-4"
+          {/* Remaining tasks compact — "also today" but visually
+              subordinated so nothing screams for attention at once. */}
+          {tasks.length > 1 && (
+            <div className="space-y-2">
+              <SectionLabel>Also today</SectionLabel>
+              {tasks.slice(1).map((task) => (
+                <Link
+                  key={task.kind}
+                  href={task.href}
+                  className="notif-card group flex items-center gap-3 px-4 py-3"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium">{alert.title}</p>
-                      <p className="mt-1 text-sm text-muted-foreground">{alert.message}</p>
-                    </div>
-                    <StatusBadge
-                      label={alert.severity}
-                      tone={
-                        alert.severity === "CRITICAL"
-                          ? "critical"
-                          : alert.severity === "WARNING"
-                            ? "warning"
-                            : "info"
-                      }
-                    />
-                  </div>
-                </div>
-              ))
-            ) : (
-              <EmptyState
-                title="No urgent alerts"
-                description="Nothing is currently pushing the team off track."
-              />
-            )}
-          </CardContent>
-        </Card>
+                  <task.icon className="size-4 shrink-0 text-muted-foreground" />
+                  <p className="min-w-0 flex-1 truncate text-sm">{task.title}</p>
+                  <ArrowRight className="size-3.5 shrink-0 text-muted-foreground group-hover:text-foreground" />
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
-        <Card className="border-border/60 bg-card/85">
-          <CardHeader className="pb-3">
-            <CardTitle>Inventory to watch</CardTitle>
-            <CardDescription>Simple list of the tightest items right now.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {data.inventory.slice(0, 6).map((item) => (
-              <Link
-                key={item.id}
-                href={`/inventory/${item.id}`}
-                className="flex items-center justify-between gap-3 rounded-[24px] border border-border/60 bg-background/85 p-4 transition-colors hover:bg-muted/40"
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{item.name}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {formatQuantityBase(item.stockOnHandBase, item.displayUnit, item.packSizeBase)}{" "}
-                    on hand
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {formatRelativeDays(item.snapshot?.daysLeft)} left
-                  </p>
-                </div>
-                <div className="text-right">
-                  <StatusBadge
-                    label={
-                      item.snapshot?.urgency === "CRITICAL"
-                        ? "Urgent"
-                        : item.snapshot?.urgency === "WARNING"
-                          ? "Watch"
-                          : "Good"
-                    }
-                    tone={
-                      item.snapshot?.urgency === "CRITICAL"
-                        ? "critical"
-                        : item.snapshot?.urgency === "WARNING"
-                          ? "warning"
-                          : "success"
-                    }
-                  />
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    {item.primarySupplier?.name ?? "No supplier"}
-                  </p>
-                </div>
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
+      {/* ── POS activity feed ─────────────────────────────────────
+          The core workflow view: every recent POS sale + WHAT it
+          depleted + WHICH reorders it triggered. Subsumes the old
+          "unmapped products" nudge and the "recent sales" card —
+          one place that shows the full chain POS → inventory →
+          reorder, with one-click fixes inline. */}
+      <PosActivityFeed rows={posActivity} />
 
-        <div className="flex flex-col gap-6">
-          <Card className="border-border/60 bg-card/85">
-            <CardHeader className="pb-3">
-              <CardTitle>Orders waiting</CardTitle>
-              <CardDescription>Recommended supplier actions that still need review.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {data.recommendations.length ? (
-                data.recommendations.map((recommendation) => (
+
+      {/* ── Money this week ─────────────────────────────────────────
+          The single P&L card — revenue, COGS, gross profit, inventory
+          spend — answering the only money question a café owner
+          actually asks on a Monday morning ("am I making money?").
+          Replaces the old MoneyPulse (PO-spend only → looked broken
+          at $0 revenue) and Shrinkage (thin-data math → showed
+          meaningless 99900% figures). Self-adapts to empty + thin-data
+          states so it never lies about margins. */}
+      {moneyThisWeek ? <MoneyThisWeekCard data={moneyThisWeek} /> : null}
+
+      {/* ── Consolidate look-alike recipes ──────────────────────────
+          Collapses N recipes for the "same drink" (e.g. Latte + Medium
+          Latte + Large Iced Vanilla Latte) into ONE canonical recipe
+          with size/milk/syrup/temp modifiers. Uses Groq to infer the
+          modifier tree from the recipes' differences. */}
+      <ConsolidateRecipesCard groups={consolidateCandidates} />
+
+      {/* ── Duplicate-inventory-item detection ──────────────────────
+          Bulk-ingest flows (Amazon order parsing, invoice OCR, seed
+          scripts) historically created fresh InventoryItem rows
+          instead of reusing same-named ones. Result: 15 copies of
+          "Espresso Machine Cleaner" at 0 stock, polluting every
+          query. Merge re-points every FK + sums stock in one tx. */}
+      <InventoryDuplicatesCard groups={inventoryDuplicateGroups} />
+
+      {/* ── Duplicate-recipe detection (Phase 4) ────────────────────
+          StockBuddy finds likely-duplicate recipes ("Latte" + "Medium
+          Latte" sharing 6 ingredients) and proposes a one-click merge.
+          Renders above Recipe Health so reducing recipe sprawl is the
+          first thing the manager sees when it's relevant. */}
+      <DuplicateRecipesCard rows={duplicateCandidates} />
+
+      {/* ── Recipe health (Build #3 MVP) ────────────────────────────
+          Surfaces high-volume + low-confidence (or stale) recipes
+          with one-click jump into the AI-draft tune flow. Foundation
+          for real sell-through calibration once count cadence is
+          mature enough to compute variance. */}
+      {recipeHealth ? <RecipeHealthCard data={recipeHealth} /> : null}
+
+      {/* Jump-to cards and Supplier-pulse section used to live here.
+          Both removed for the "one page, one question" rewrite — the
+          top nav already exposes Stock/Orders/Count, and supplier
+          pulse is analytics (lives at /analytics). Keeps the
+          dashboard honest: today's actions first, nothing else. */}
+
+      {/* ── Watch list snapshot (only when you have data + things to watch) ── */}
+      {data.inventory.length > 0 && criticalCount + lowCount > 0 && (
+        <section className="space-y-3">
+          <SectionLabel>Running low</SectionLabel>
+          <div className="space-y-2">
+            {data.inventory
+              .filter((i) => i.snapshot?.urgency !== "INFO")
+              .slice(0, 5)
+              .map((item) => {
+                // Brand-new items may not have a snapshot computed
+                // yet (background job hasn't run) — but we can still
+                // classify stock vs thresholds directly. Previously a
+                // 0-stock item showed "OK" here because the nullish
+                // snapshot fell through; now it correctly shows
+                // "Urgent" (or "Low" if above critical threshold).
+                const urgency =
+                  item.snapshot?.urgency ??
+                  (item.stockOnHandBase <= 0
+                    ? "CRITICAL"
+                    : item.stockOnHandBase <= item.lowStockThresholdBase
+                      ? "WARNING"
+                      : "INFO");
+                return (
                   <Link
-                    key={recommendation.id}
-                    href="/purchase-orders"
-                    className="block rounded-[24px] border border-border/60 bg-background/85 p-4 transition-colors hover:bg-muted/40"
+                    key={item.id}
+                    href={`/inventory/${item.id}`}
+                    className={cn(
+                      "notif-card flex items-center justify-between gap-3 p-4",
+                      urgency === "CRITICAL" && "notif-card-urgent"
+                    )}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-medium">{recommendation.inventoryItem.name}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          {recommendation.supplier.name}
-                        </p>
-                      </div>
-                      <StatusBadge
-                        label={recommendation.urgency}
-                        tone={
-                          recommendation.urgency === "CRITICAL"
-                            ? "critical"
-                            : recommendation.urgency === "WARNING"
-                              ? "warning"
-                              : "info"
-                        }
-                      />
-                    </div>
-                    <p className="mt-3 text-sm text-muted-foreground">
-                      {recommendation.rationale}
-                    </p>
-                  </Link>
-                ))
-              ) : (
-                <EmptyState
-                  title="No approvals waiting"
-                  description="Supplier recommendations will show up here when they are ready."
-                />
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/60 bg-card/85">
-            <CardHeader className="pb-3">
-              <CardTitle>Recent activity</CardTitle>
-              <CardDescription>What the system and team touched most recently.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {data.purchaseOrders.length ? (
-                data.purchaseOrders.map((purchaseOrder) => (
-                  <Link
-                    key={purchaseOrder.id}
-                    href={`/purchase-orders/${purchaseOrder.id}`}
-                    className="flex items-center justify-between gap-3 rounded-[24px] border border-border/60 bg-background/85 p-4 transition-colors hover:bg-muted/40"
-                  >
-                    <div>
-                      <p className="font-medium">{purchaseOrder.supplier.name}</p>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {purchaseOrder.lines.length} line
-                        {purchaseOrder.lines.length === 1 ? "" : "s"}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{item.name}</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {formatQuantityBase(item.stockOnHandBase, item.displayUnit, item.packSizeBase)}
+                        {" on hand"}
+                        {item.snapshot?.daysLeft != null
+                          ? ` · ${formatRelativeDays(item.snapshot.daysLeft)} left`
+                          : ""}
                       </p>
                     </div>
-                    <StatusBadge label={purchaseOrder.status} tone="info" />
+                    <StatusBadge
+                      label={
+                        urgency === "CRITICAL"
+                          ? "Urgent"
+                          : urgency === "WARNING"
+                          ? "Low"
+                          : "OK"
+                      }
+                      tone={
+                        urgency === "CRITICAL"
+                          ? "critical"
+                          : urgency === "WARNING"
+                          ? "warning"
+                          : "success"
+                      }
+                    />
                   </Link>
-                ))
-              ) : (
-                <EmptyState
-                  title="No recent orders"
-                  description="Approved purchase orders will appear here."
-                />
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+                );
+              })}
+          </div>
+        </section>
+      )}
+
+      {/* Maintenance section used to live here (Connect Square /
+          Sync sales / Run jobs buttons). Real user feedback: "too
+          much unneeded information" on the dashboard. Those tools
+          still exist at /settings — the dashboard is a task-first
+          landing, not an ops console. */}
     </div>
   );
 }
 
-function EmptyState({ title, description }: { title: string; description: string }) {
+// ── Bits ────────────────────────────────────────────────────────────────
+
+function greetingFor(d: Date) {
+  const h = d.getHours();
+  if (h < 5) return "Still up";
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  if (h < 22) return "Good evening";
+  return "Good night";
+}
+
+function SectionLabel({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className="rounded-[24px] border border-dashed border-border px-4 py-8 text-center">
-      <p className="font-medium">{title}</p>
-      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
-    </div>
+    <h2
+      className={cn(
+        "font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground",
+        className
+      )}
+    >
+      {children}
+    </h2>
+  );
+}
+
+function AllClearState({ firstItems }: { firstItems: boolean }) {
+  if (firstItems) {
+    return (
+      <section className="notif-card p-8 sm:p-12">
+        <div className="flex size-14 items-center justify-center rounded-2xl bg-foreground/[0.06]">
+          <Package className="size-7" />
+        </div>
+        <h2 className="mt-6 text-2xl font-bold tracking-tight sm:text-3xl">
+          Add your first item to get started
+        </h2>
+        <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+          Tell StockBuddy what you sell, and it&apos;ll watch stock, flag low
+          items, and draft reorders for your approval. You can text it on
+          Telegram or WhatsApp — just say&nbsp;
+          <span className="font-medium text-foreground">&ldquo;add oat milk&rdquo;</span> and it&apos;ll walk
+          you through.
+        </p>
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Link
+            href="/settings"
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-foreground px-4 text-sm font-semibold text-background"
+          >
+            Connect the bot
+            <ArrowRight className="size-4" />
+          </Link>
+          <Link
+            href="/inventory"
+            className="inline-flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm font-semibold"
+          >
+            Add items manually
+          </Link>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="notif-card p-8 text-center">
+      <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+        <CheckCircle2 className="size-7" />
+      </div>
+      <h2 className="mt-5 text-2xl font-bold tracking-tight">All clear</h2>
+      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+        Stock is healthy, no orders need approval, no active alerts.
+        StockBuddy is watching — we&apos;ll ping you the moment something needs a decision.
+      </p>
+    </section>
   );
 }

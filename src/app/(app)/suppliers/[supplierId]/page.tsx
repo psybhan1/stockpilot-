@@ -3,7 +3,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Globe, Mail, Phone, Truck } from "lucide-react";
 
-import { upsertSupplierAction, upsertSupplierItemAction } from "@/app/actions/operations";
+import {
+  clearSupplierCredentialsAction,
+  upsertSupplierAction,
+  upsertSupplierItemAction,
+} from "@/app/actions/operations";
+import { summariseStoredCredentials } from "@/modules/suppliers/website-credentials";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -175,6 +180,13 @@ export default async function SupplierDetailPage({
             </form>
           </Panel>
 
+          <WebsiteLoginPanel
+            supplierId={supplier.id}
+            supplierName={supplier.name}
+            credentialsState={summariseStoredCredentials(supplier.websiteCredentials)}
+            siteUrl={supplier.website ?? null}
+          />
+
           <Panel
             title="Supplier catalog"
             description="Linked items with pack rules and current runway."
@@ -184,7 +196,7 @@ export default async function SupplierDetailPage({
                 supplier.supplierItems.map((item) => (
                   <div
                     key={item.id}
-                    className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                    className="notif-card p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -289,7 +301,7 @@ export default async function SupplierDetailPage({
               )}
             </div>
 
-            <form action={upsertSupplierItemAction} className="grid gap-3 rounded-[24px] border border-dashed border-border bg-background/70 p-4 md:grid-cols-2">
+            <form action={upsertSupplierItemAction} className="notif-card grid gap-3 p-4 md:grid-cols-2">
               <input type="hidden" name="supplierId" value={supplier.id} />
               <select
                 name="inventoryItemId"
@@ -350,7 +362,7 @@ export default async function SupplierDetailPage({
                   <Link
                     key={order.id}
                     href={`/purchase-orders/${order.id}`}
-                    className="flex items-center justify-between gap-3 rounded-[24px] border border-border/60 bg-background/80 p-4 transition-colors hover:bg-muted/40"
+                    className="flex items-center justify-between gap-3 notif-card p-4 transition-colors hover:bg-muted/40"
                   >
                     <div>
                       <p className="font-medium">{order.orderNumber}</p>
@@ -408,7 +420,7 @@ export default async function SupplierDetailPage({
               {supplier.communications.map((communication) => (
                 <div
                   key={communication.id}
-                  className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                  className="notif-card p-4"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-medium">{communication.subject ?? "Supplier message"}</p>
@@ -421,7 +433,7 @@ export default async function SupplierDetailPage({
               {supplier.agentTasks.map((task) => (
                 <div
                   key={task.id}
-                  className="rounded-[24px] border border-border/60 bg-background/80 p-4"
+                  className="notif-card p-4"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-medium">{task.title}</p>
@@ -450,7 +462,7 @@ export default async function SupplierDetailPage({
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[24px] border border-border/60 bg-background/85 p-4 shadow-lg shadow-black/5">
+    <div className="notif-card p-4">
       <p className="text-sm text-muted-foreground">{label}</p>
       <p className="mt-3 text-3xl font-semibold tracking-tight">{value}</p>
     </div>
@@ -467,7 +479,7 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <Card className="rounded-[28px] border-border/60 bg-card/88 shadow-lg shadow-black/5">
+    <Card className="notif-card border-none shadow-none bg-transparent">
       <CardContent className="space-y-4 p-5">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
@@ -481,8 +493,8 @@ function Panel({
 
 function InfoPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border/60 bg-card px-3 py-3">
-      <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+    <div className="notif-card px-3 py-3">
+      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
       <p className="mt-1 font-medium">{value}</p>
     </div>
   );
@@ -498,7 +510,7 @@ function ContactRow({
   value: string;
 }) {
   return (
-    <div className="rounded-[24px] border border-border/60 bg-background/80 p-4">
+    <div className="notif-card p-4">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Icon className="size-4" />
         <p className="text-xs uppercase tracking-[0.16em]">{label}</p>
@@ -510,7 +522,7 @@ function ContactRow({
 
 function EmptyState({ title, description }: { title: string; description: string }) {
   return (
-    <div className="rounded-[24px] border border-dashed border-border px-4 py-8 text-center">
+    <div className="notif-card px-4 py-8 text-center">
       <p className="font-medium">{title}</p>
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>
     </div>
@@ -526,3 +538,71 @@ const weekdayOptions = [
   { label: "Fri", value: 5 },
   { label: "Sat", value: 6 },
 ];
+
+type CredentialsState = ReturnType<typeof summariseStoredCredentials>;
+
+function WebsiteLoginPanel({
+  supplierId,
+  supplierName,
+  credentialsState,
+  siteUrl: _siteUrl,
+}: {
+  supplierId: string;
+  supplierName: string;
+  credentialsState: CredentialsState;
+  siteUrl: string | null;
+}) {
+  const isConnected = credentialsState.kind !== "none";
+
+  return (
+    <Panel
+      title="Website login"
+      description={
+        isConnected
+          ? `Agent signs in as you and adds items directly to your real ${supplierName} cart.`
+          : `Agent can't add items to your real ${supplierName} cart until you sign in once. Takes 30 seconds.`
+      }
+    >
+      <div className="rounded-[22px] border border-border/60 bg-card/50 p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="font-medium">
+              {credentialsState.kind === "none" && "Not connected — agent runs anonymously."}
+              {credentialsState.kind === "password" &&
+                `Connected via password (${credentialsState.username})`}
+              {credentialsState.kind === "cookies" &&
+                `Connected via cookies (${credentialsState.cookieCount} cookie${credentialsState.cookieCount === 1 ? "" : "s"}${credentialsState.primaryDomain ? ` · ${credentialsState.primaryDomain}` : ""})`}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {isConnected
+                ? "The agent uses this session on the next website-mode order."
+                : "Sign in once; every future order for this supplier is one tap."}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Link href={`/suppliers/${supplierId}/signin`}>
+              <Button type="button" className="rounded-2xl">
+                {isConnected ? "Re-sign in" : `🔐 Sign in to ${supplierName}`}
+              </Button>
+            </Link>
+            {isConnected ? (
+              <form action={clearSupplierCredentialsAction}>
+                <input type="hidden" name="supplierId" value={supplierId} />
+                <Button type="submit" variant="outline" className="rounded-2xl">
+                  Disconnect
+                </Button>
+              </form>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        You sign in on the real {supplierName} page (not in a StockPilot form). Your session is
+        encrypted with AES-256 at rest and decrypted only inside the browser-agent process at
+        PO dispatch time. The agent never auto-pays — you always review the cart before
+        checkout.
+      </p>
+    </Panel>
+  );
+}

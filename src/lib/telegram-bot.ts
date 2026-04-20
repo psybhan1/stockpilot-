@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { env } from "@/lib/env";
+import { env } from "./env";
 
 type TelegramWebhookInfo = {
   url: string;
@@ -26,7 +26,39 @@ type TelegramWebhookResult =
       reason: string;
     };
 
-const TELEGRAM_ALLOWED_UPDATES = ["message"];
+// Telegram update types we subscribe to. callback_query enables inline
+// keyboard button presses (one-click order approvals etc.).
+const TELEGRAM_ALLOWED_UPDATES = ["message", "callback_query"];
+
+// ── Inline keyboard helpers ────────────────────────────────────────────
+
+// Telegram inline buttons can fire a callback OR open a URL in the
+// user's browser. We model both — callers can mix them in one
+// keyboard (e.g. "Open my cart" url-button next to "Cancel order"
+// callback-button).
+export type InlineButton =
+  | {
+      text: string;
+      /** Callback payload. Max 64 bytes when encoded. */
+      callback_data: string;
+    }
+  | {
+      text: string;
+      /** Tapping opens this URL in the user's default browser. */
+      url: string;
+    };
+
+export type InlineKeyboard = InlineButton[][];
+
+/** Two buttons side-by-side with an optional full-width third below. */
+export function approvalKeyboard(purchaseOrderId: string): InlineKeyboard {
+  return [
+    [
+      { text: "✅ Approve & send", callback_data: `po_approve:${purchaseOrderId}` },
+      { text: "✖ Cancel", callback_data: `po_cancel:${purchaseOrderId}` },
+    ],
+  ];
+}
 
 export function isValidTelegramWebhook(request: Request) {
   const expectedSecret = getTelegramWebhookSecret();
@@ -38,7 +70,24 @@ export function isValidTelegramWebhook(request: Request) {
   return request.headers.get("x-telegram-bot-api-secret-token") === expectedSecret;
 }
 
-export async function sendTelegramMessage(chatId: string, text: string) {
+type SendTelegramMessageOptions = {
+  /** Inline keyboard buttons displayed under the message. */
+  replyMarkup?: InlineKeyboard;
+  /** Markdown / MarkdownV2 / HTML. Defaults to Markdown (bot has always used `*bold*`). */
+  parseMode?: "Markdown" | "MarkdownV2" | "HTML";
+  /** Disable link preview rectangles on URLs in the body. */
+  disablePreview?: boolean;
+};
+
+type SendTelegramMessageResult =
+  | { ok: true; skipped: false; messageId?: number }
+  | { ok: false; skipped: true; reason: string };
+
+export async function sendTelegramMessage(
+  chatId: string,
+  text: string,
+  options?: SendTelegramMessageOptions
+): Promise<SendTelegramMessageResult> {
   if (!env.TELEGRAM_BOT_TOKEN) {
     return {
       ok: false,
@@ -47,17 +96,22 @@ export async function sendTelegramMessage(chatId: string, text: string) {
     };
   }
 
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    text,
+  };
+  if (options?.parseMode) body.parse_mode = options.parseMode;
+  if (options?.disablePreview) body.disable_web_page_preview = true;
+  if (options?.replyMarkup) {
+    body.reply_markup = { inline_keyboard: options.replyMarkup };
+  }
+
   const response = await fetch(
     `${env.TELEGRAM_BOT_API_BASE_URL.replace(/\/$/, "")}/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     }
   );
 
@@ -70,10 +124,129 @@ export async function sendTelegramMessage(chatId: string, text: string) {
     );
   }
 
+  const payload = (await response.json().catch(() => ({}))) as {
+    result?: { message_id?: number };
+  };
   return {
     ok: true,
     skipped: false,
+    messageId: payload.result?.message_id,
   };
+}
+
+/**
+ * Sends a photo (as a Buffer) to a Telegram chat. Used for cart
+ * screenshots from the browser ordering agent.
+ */
+export async function sendTelegramPhoto(
+  chatId: string,
+  photo: Buffer,
+  options?: {
+    caption?: string;
+    parseMode?: "Markdown" | "HTML";
+    replyMarkup?: InlineKeyboard;
+  }
+): Promise<SendTelegramMessageResult> {
+  if (!env.TELEGRAM_BOT_TOKEN) {
+    return { ok: false, skipped: true, reason: "Missing TELEGRAM_BOT_TOKEN" };
+  }
+
+  const form = new FormData();
+  form.append("chat_id", chatId);
+  form.append("photo", new Blob([new Uint8Array(photo)], { type: "image/jpeg" }), "cart.jpg");
+  if (options?.caption) form.append("caption", options.caption);
+  if (options?.parseMode) form.append("parse_mode", options.parseMode);
+  if (options?.replyMarkup) {
+    form.append(
+      "reply_markup",
+      JSON.stringify({ inline_keyboard: options.replyMarkup })
+    );
+  }
+
+  const response = await fetch(
+    `${env.TELEGRAM_BOT_API_BASE_URL.replace(/\/$/, "")}/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`,
+    { method: "POST", body: form }
+  );
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as { description?: string };
+    throw new Error(
+      payload.description ?? `Telegram sendPhoto failed with status ${response.status}`
+    );
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    result?: { message_id?: number };
+  };
+  return { ok: true, skipped: false, messageId: payload.result?.message_id };
+}
+
+/**
+ * Shows a "typing…" indicator in the Telegram chat for up to 5 seconds.
+ * Helpful when a downstream call (supplier dispatch, agent tool) is
+ * going to take more than ~1s — gives the user immediate feedback
+ * that we saw their message.
+ */
+export async function sendTelegramTyping(chatId: string) {
+  if (!env.TELEGRAM_BOT_TOKEN) return;
+  await fetch(
+    `${env.TELEGRAM_BOT_API_BASE_URL.replace(/\/$/, "")}/bot${env.TELEGRAM_BOT_TOKEN}/sendChatAction`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, action: "typing" }),
+    }
+  ).catch(() => null);
+}
+
+/** Removes the loading spinner on an inline button after it's tapped. */
+export async function answerCallbackQuery(
+  callbackQueryId: string,
+  text?: string,
+  showAlert = false
+) {
+  if (!env.TELEGRAM_BOT_TOKEN) return;
+  await fetch(
+    `${env.TELEGRAM_BOT_API_BASE_URL.replace(/\/$/, "")}/bot${env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        callback_query_id: callbackQueryId,
+        text,
+        show_alert: showAlert,
+      }),
+    }
+  ).catch(() => null);
+}
+
+/** Edits a message we already sent so the user sees an immediate state change. */
+export async function editTelegramMessage(
+  chatId: string,
+  messageId: number,
+  text: string,
+  options?: { replyMarkup?: InlineKeyboard | null; parseMode?: "Markdown" | "HTML" }
+) {
+  if (!env.TELEGRAM_BOT_TOKEN) return;
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+  };
+  if (options?.parseMode) body.parse_mode = options.parseMode;
+  if (options?.replyMarkup !== undefined) {
+    body.reply_markup = options.replyMarkup
+      ? { inline_keyboard: options.replyMarkup }
+      : { inline_keyboard: [] };
+  }
+  await fetch(
+    `${env.TELEGRAM_BOT_API_BASE_URL.replace(/\/$/, "")}/bot${env.TELEGRAM_BOT_TOKEN}/editMessageText`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  ).catch(() => null);
 }
 
 export function getTelegramWebhookSecret() {

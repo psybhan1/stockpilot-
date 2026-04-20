@@ -1,18 +1,7 @@
+import { buildN8nWebhookUrl, parsePositiveNumber } from "./env-helpers";
+
 const fallbackSessionSecret = "stockpilot-local-dev-secret";
 const fallbackDatabaseUrl = "file:./dev.db";
-
-function parsePositiveNumber(value: string | undefined, fallback: number) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function buildN8nWebhookUrl(baseUrl: string | undefined, path: string) {
-  if (!baseUrl?.trim()) {
-    return undefined;
-  }
-
-  return `${baseUrl.replace(/\/$/, "")}/webhook/${path}`;
-}
 
 const n8nBaseUrl = process.env.N8N_BASE_URL;
 
@@ -44,6 +33,25 @@ export const env = {
   SQUARE_CLIENT_ID: process.env.SQUARE_CLIENT_ID,
   SQUARE_CLIENT_SECRET: process.env.SQUARE_CLIENT_SECRET,
   SQUARE_WEBHOOK_SIGNATURE_KEY: process.env.SQUARE_WEBHOOK_SIGNATURE_KEY,
+  // Clover — native OAuth + REST. Production uses www.clover.com +
+  // api.clover.com; sandbox uses sandbox.dev.clover.com +
+  // apisandbox.dev.clover.com. One app ID/secret pair per env.
+  CLOVER_ENVIRONMENT:
+    (process.env.CLOVER_ENVIRONMENT as "sandbox" | "production") ??
+    "production",
+  CLOVER_CLIENT_ID: process.env.CLOVER_CLIENT_ID,
+  CLOVER_CLIENT_SECRET: process.env.CLOVER_CLIENT_SECRET,
+  CLOVER_WEBHOOK_SIGNATURE_KEY: process.env.CLOVER_WEBHOOK_SIGNATURE_KEY,
+  // Shopify — OAuth flow is per-shop: {shop}.myshopify.com/admin/oauth
+  // One Client ID/Secret works for every shop that installs the app.
+  // API version is frozen; Shopify publishes quarterly and deprecates
+  // old versions after ~12 months. 2024-10 is the current stable.
+  SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION ?? "2024-10",
+  SHOPIFY_CLIENT_ID: process.env.SHOPIFY_CLIENT_ID,
+  SHOPIFY_CLIENT_SECRET: process.env.SHOPIFY_CLIENT_SECRET,
+  SHOPIFY_SCOPES:
+    process.env.SHOPIFY_SCOPES ??
+    "read_products,read_inventory,read_orders,read_merchant_managed_fulfillment_orders",
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL ?? "gpt-5-mini",
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
@@ -58,8 +66,19 @@ export const env = {
   RESEND_API_KEY: process.env.RESEND_API_KEY,
   RESEND_FROM_EMAIL:
     process.env.RESEND_FROM_EMAIL ?? "StockPilot <onboarding@resend.dev>",
+  // Domain that accepts inbound supplier replies on our behalf. When
+  // set (e.g. "reply.stockpilot.app"), outbound POs are sent with
+  // Reply-To: reply+<poId>@<REPLY_DOMAIN>; your inbound email
+  // service (Resend/Postmark/SendGrid) forwards messages hitting
+  // that domain to /api/inbound/email. Required once gmail.readonly
+  // is dropped — otherwise supplier replies land in the user's
+  // Gmail inbox and the bot can't auto-classify them.
+  REPLY_DOMAIN: process.env.REPLY_DOMAIN ?? null,
+  INBOUND_EMAIL_SECRET: process.env.INBOUND_EMAIL_SECRET ?? null,
   EXPO_ACCESS_TOKEN: process.env.EXPO_ACCESS_TOKEN,
   EXPO_TEST_PUSH_TOKEN: process.env.EXPO_TEST_PUSH_TOKEN,
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
   TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
   TWILIO_WHATSAPP_FROM: process.env.TWILIO_WHATSAPP_FROM,
@@ -86,5 +105,11 @@ export const env = {
   N8N_BOT_REPLY_WEBHOOK_URL:
     process.env.N8N_BOT_REPLY_WEBHOOK_URL ??
     buildN8nWebhookUrl(n8nBaseUrl, "stockpilot-bot-reply"),
+  N8N_ORDER_APPROVAL_WEBHOOK_URL:
+    process.env.N8N_ORDER_APPROVAL_WEBHOOK_URL ??
+    buildN8nWebhookUrl(n8nBaseUrl, "order-approval"),
+  N8N_POS_SALE_WEBHOOK_URL:
+    process.env.N8N_POS_SALE_WEBHOOK_URL ??
+    buildN8nWebhookUrl(n8nBaseUrl, "pos-sale"),
   N8N_WEBHOOK_SECRET: process.env.N8N_WEBHOOK_SECRET,
 };

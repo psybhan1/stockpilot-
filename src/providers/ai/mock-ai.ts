@@ -42,14 +42,20 @@ export class MockAiProvider implements AiProvider {
     orderNumber: string;
     lines: Array<{ description: string; quantity: number; unit: string }>;
   }) {
-    const lineSummary = input.lines
-      .map((line) => `${line.quantity} ${line.unit} ${line.description}`)
-      .join(", ");
-
-    return {
-      subject: `Purchase order ${input.orderNumber}`,
-      body: `Hello ${input.supplierName},\n\nPlease confirm PO ${input.orderNumber} for ${lineSummary}.\n\nThank you,\nStockPilot`,
-    };
+    // Delegate to the same deterministic template every other path
+    // uses, so callers don't accidentally produce the old bland
+    // "Please confirm PO PO-XXXX for N units" body.
+    const { buildSupplierOrderEmail } = await import(
+      "@/modules/purchasing/email-template"
+    );
+    const composed = buildSupplierOrderEmail({
+      supplierName: input.supplierName,
+      businessName: "Our team",
+      orderNumber: input.orderNumber,
+      replyToEmail: "",
+      lines: input.lines,
+    });
+    return { subject: composed.subject, body: composed.text };
   }
 
   async answerOpsQuery(input: {

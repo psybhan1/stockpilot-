@@ -1,8 +1,0 @@
-[phases.install]
-cmds = ["npm install --legacy-peer-deps"]
-
-[phases.build]
-cmds = ["npm run vercel-build"]
-
-[start]
-cmd = "node .next/standalone/server.js"
