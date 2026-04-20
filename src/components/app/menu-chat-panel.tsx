@@ -16,9 +16,9 @@ type Turn = {
 };
 
 const EXAMPLES = [
-  "Find duplicate recipes I should merge",
-  "Which drink costs the most to make?",
-  "Which recipes have no cost data yet?",
+  "Find drinks I should merge",
+  "Which drink makes me the most profit?",
+  "Which recipes are missing supplier prices?",
 ];
 
 export function MenuChatPanel() {
@@ -61,7 +61,7 @@ export function MenuChatPanel() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-violet-500 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-violet-500/90"
+        className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-violet-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition-transform hover:-translate-y-0.5 hover:bg-violet-500/90 hover:shadow-xl"
       >
         <Sparkles className="size-4" />
         Ask StockBuddy
@@ -90,7 +90,7 @@ export function MenuChatPanel() {
         {history.length === 0 ? (
           <>
             <p className="text-xs text-muted-foreground">
-              Ask about costs, duplicates, or tell me to merge something.
+              Ask me about your menu, or just tell me what to fix.
             </p>
             <div className="mt-2 flex flex-col gap-1.5">
               {EXAMPLES.map((e) => (

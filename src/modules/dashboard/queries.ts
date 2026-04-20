@@ -1,4 +1,5 @@
 import { AlertStatus, MappingStatus, RecipeStatus } from "@/lib/domain-enums";
+import { InventoryCategory } from "@/lib/prisma";
 
 import { db } from "@/lib/db";
 
@@ -194,9 +195,24 @@ export async function getRecipeDetail(locationId: string, recipeId: string) {
 }
 
 export async function getMenuPickerData(locationId: string) {
+  // Recipes only ever deplete ingredients and packaging — surface
+  // those categories in the picker so a latte editor doesn't see
+  // cleaning chemicals or retail merch in the dropdown.
+  const recipeableCategories: InventoryCategory[] = [
+    InventoryCategory.COFFEE,
+    InventoryCategory.DAIRY,
+    InventoryCategory.ALT_DAIRY,
+    InventoryCategory.SYRUP,
+    InventoryCategory.BAKERY_INGREDIENT,
+    InventoryCategory.PACKAGING,
+    InventoryCategory.PAPER_GOODS,
+  ];
   const [inventoryItems, menuItemVariants] = await Promise.all([
     db.inventoryItem.findMany({
-      where: { locationId },
+      where: {
+        locationId,
+        category: { in: recipeableCategories },
+      },
       select: {
         id: true,
         name: true,
@@ -209,7 +225,7 @@ export async function getMenuPickerData(locationId: string) {
           take: 1,
         },
       },
-      orderBy: [{ name: "asc" }],
+      orderBy: [{ category: "asc" }, { name: "asc" }],
     }),
     db.menuItemVariant.findMany({
       where: {

@@ -20,7 +20,6 @@ export function RecipePricing({
   locationDefaultMarginPercent,
   canEdit,
   approvedSalePriceCents,
-  stockPilotOwnsPrice,
   hasSquareMapping,
   posPriceCents,
   lastPushedAt,
@@ -32,7 +31,6 @@ export function RecipePricing({
   locationDefaultMarginPercent: number;
   canEdit: boolean;
   approvedSalePriceCents: number | null;
-  stockPilotOwnsPrice: boolean;
   hasSquareMapping: boolean;
   posPriceCents: number | null;
   lastPushedAt: string | null;
@@ -63,29 +61,29 @@ export function RecipePricing({
     });
   }
 
-  function approvePrice() {
+  async function approveAndPush() {
     if (recommended === null) return;
     setPushMessage(null);
     startTransition(async () => {
-      await approveRecommendedPriceAction({
-        recipeId,
-        salePriceCents: recommended,
-      });
-      router.refresh();
-    });
-  }
-
-  function pushToSquare() {
-    setPushMessage(null);
-    startTransition(async () => {
+      if (recommended !== approvedSalePriceCents) {
+        const approveRes = await approveRecommendedPriceAction({
+          recipeId,
+          salePriceCents: recommended,
+        });
+        if (!approveRes.ok) {
+          setPushMessage(`⚠ ${approveRes.reason}`);
+          return;
+        }
+      }
       const res = await pushRecipeToSquareAction({ recipeId });
       if (!res.ok) {
         setPushMessage(`⚠ ${res.reason}`);
         return;
       }
-      setPushMessage(
-        `Pushed to Square: ${res.pushedFields.join(", ") || "no changes"}.`,
-      );
+      const nice = res.pushedFields.includes("created")
+        ? `Created on Square at ${formatCents(recommended)}.`
+        : `Pushed ${formatCents(recommended)} to Square.`;
+      setPushMessage(nice);
       router.refresh();
     });
   }
@@ -95,14 +93,14 @@ export function RecipePricing({
       <div className="flex items-center gap-2">
         <TrendingUp className="size-4 text-emerald-600 dark:text-emerald-300" />
         <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">
-          Pricing recommendation
+          What to charge
         </p>
       </div>
 
       {missingCost ? (
         <p className="mt-2 text-sm text-muted-foreground">
-          Can&apos;t recommend a price until every component has a supplier
-          cost. Add a supplier + invoice to the ingredients first.
+          Drop a supplier bill into this recipe&apos;s ingredients and
+          we&apos;ll tell you exactly what to charge.
         </p>
       ) : (
         <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
@@ -124,9 +122,9 @@ export function RecipePricing({
               <>
                 <input
                   type="range"
-                  min={0}
-                  max={95}
-                  step={5}
+                  min={40}
+                  max={92}
+                  step={1}
                   value={margin}
                   onChange={(e) => {
                     setMargin(Number(e.target.value));
@@ -138,8 +136,8 @@ export function RecipePricing({
                   className="w-full accent-emerald-500"
                 />
                 <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>break-even</span>
-                  <span>premium</span>
+                  <span>thin margin</span>
+                  <span>specialty</span>
                 </div>
                 {overridden ? (
                   <button
@@ -174,56 +172,48 @@ export function RecipePricing({
           </div>
         </div>
       )}
-      {canEdit && !missingCost ? (
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-emerald-500/20 pt-3">
-          {recommended !== null &&
-          recommended !== approvedSalePriceCents ? (
-            <Button
-              type="button"
-              onClick={approvePrice}
-              disabled={isPending}
-              variant="outline"
-              size="sm"
-              className="gap-1 rounded-xl border-emerald-500/60 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
-            >
-              <Check className="size-3.5" />
-              Approve {formatCents(recommended)} as StockPilot price
-            </Button>
-          ) : null}
-          {approvedSalePriceCents !== null ? (
-            <div className="text-[11px] text-muted-foreground">
-              Approved: {formatCents(approvedSalePriceCents)}
-              {stockPilotOwnsPrice ? " · StockPilot-owned" : ""}
-            </div>
-          ) : null}
+      {canEdit && !missingCost && recommended !== null ? (
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-emerald-500/20 pt-4">
           <Button
             type="button"
-            onClick={pushToSquare}
+            onClick={approveAndPush}
             disabled={isPending}
-            size="sm"
-            className="gap-1 rounded-xl bg-emerald-500 hover:bg-emerald-500/90"
+            className="gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-500/90"
           >
-            <Upload className="size-3.5" />
-            {hasSquareMapping ? "Push to Square" : "Create on Square"}
+            <Upload className="size-4" />
+            {isPending
+              ? "Syncing with Square…"
+              : hasSquareMapping
+                ? `Make it ${formatCents(recommended)} on Square`
+                : `Put this on the till at ${formatCents(recommended)}`}
           </Button>
+          {recommended === approvedSalePriceCents &&
+          recommended === posPriceCents &&
+          lastPushedAt ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+              <Check className="size-3" />
+              Matches Square · synced{" "}
+              {new Date(lastPushedAt).toLocaleDateString()}
+            </span>
+          ) : hasSquareMapping ? (
+            <span className="text-[11px] text-muted-foreground">
+              Square shows {formatCents(posPriceCents)}
+              {lastPushedAt
+                ? ` · last synced ${new Date(lastPushedAt).toLocaleDateString()}`
+                : " · never synced"}
+            </span>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">
+              Not on your till yet.
+            </span>
+          )}
         </div>
       ) : null}
 
-      {hasSquareMapping ? (
-        <p className="mt-2 text-[11px] text-muted-foreground">
-          Square price: {formatCents(posPriceCents)}
-          {lastPushedAt
-            ? ` · last pushed ${new Date(lastPushedAt).toLocaleDateString()}`
-            : ""}
-        </p>
-      ) : (
-        <p className="mt-2 text-[11px] text-muted-foreground">
-          Not on Square yet — tap &ldquo;Create on Square&rdquo; and this
-          recipe becomes a new sellable item on your till.
-        </p>
-      )}
       {pushMessage ? (
-        <p className="mt-1 text-[11px] text-foreground">{pushMessage}</p>
+        <p className="mt-2 text-[12px] font-medium text-emerald-700 dark:text-emerald-300">
+          {pushMessage}
+        </p>
       ) : null}
     </section>
   );

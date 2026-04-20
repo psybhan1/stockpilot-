@@ -3,6 +3,7 @@ import { ArrowRight, Plus } from "lucide-react";
 
 import { saveSimpleMappingAction } from "@/app/actions/operations";
 import { MenuChatPanel } from "@/components/app/menu-chat-panel";
+import { MenuImage } from "@/components/app/menu-image";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,24 +61,27 @@ export default async function RecipesPage({
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-500 dark:text-amber-300">
-            Menu
+            Your menu
           </p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-            {recipes.length === 1
-              ? "One recipe"
-              : `${recipes.length} recipes`}
+            {recipes.length === 0
+              ? "Nothing on the menu yet"
+              : recipes.length === 1
+                ? "One drink on the menu"
+                : `${recipes.length} drinks on your menu`}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Tap a card to see components, cost math, and edit.
+            Tap one to see what&apos;s inside, what it costs, and what to
+            charge.
           </p>
         </div>
         {session.role === Role.MANAGER ? (
           <Link
             href="/recipes/new"
-            className="inline-flex h-10 items-center gap-2 rounded-xl bg-amber-500 px-4 text-sm font-semibold text-white shadow-sm hover:bg-amber-500/90"
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-amber-500 px-4 text-sm font-semibold text-white shadow-sm transition-transform hover:-translate-y-0.5 hover:bg-amber-500/90 hover:shadow-md"
           >
             <Plus className="size-4" />
-            New recipe
+            New drink
           </Link>
         ) : null}
       </header>
@@ -87,12 +91,12 @@ export default async function RecipesPage({
           <div className="flex items-end justify-between gap-3">
             <div>
               <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-300">
-                Sales arriving with no recipe
+                Sales we can&apos;t track yet
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Webhook sales fired but StockBuddy doesn&apos;t know which
-                inventory to deplete. Wire each once, every future sale
-                auto-depletes.
+                Your till rang these up but we don&apos;t know what to
+                deduct. Point each one at an ingredient, then your stock
+                ticks down the moment they sell.
               </p>
             </div>
             <span className="font-mono text-[10px] text-muted-foreground">
@@ -170,11 +174,12 @@ export default async function RecipesPage({
         <section className="space-y-2 rounded-2xl border border-violet-500/30 bg-violet-500/[0.04] p-4">
           <div>
             <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-700 dark:text-violet-300">
-              POS items still need a recipe
+              Drinks that need a recipe
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Catalog synced these variants but they don&apos;t deplete
-              inventory yet — draft each recipe with StockBuddy.
+              These are on your till but we don&apos;t know what&apos;s
+              actually in them. Tap one — StockBuddy drafts the ingredients,
+              you approve.
             </p>
           </div>
           <ul className="grid gap-2 sm:grid-cols-2">
@@ -203,25 +208,25 @@ export default async function RecipesPage({
       {archivedCount > 0 ? (
         <div className="flex items-center justify-between rounded-xl border border-muted-foreground/20 bg-muted/30 px-4 py-2 text-xs">
           <span className="text-muted-foreground">
-            {archivedCount} recipe{archivedCount === 1 ? "" : "s"} archived by
-            previous merges (reversible for 30 days).
+            {archivedCount} old version
+            {archivedCount === 1 ? "" : "s"} tucked away from past merges.
+            Still restorable for 30 days.
           </span>
           <Link
             href={showArchived ? "/recipes" : "/recipes?archived=1"}
             className="font-medium text-violet-600 hover:underline dark:text-violet-400"
           >
-            {showArchived ? "Hide archived" : "Show archived"}
+            {showArchived ? "Hide them" : "Show them"}
           </Link>
         </div>
       ) : null}
 
       {recipes.length === 0 ? (
-        <section className="brutal-card p-8 text-center">
-          <p className="text-base font-medium">No recipes yet.</p>
+        <section className="rounded-2xl border border-dashed border-border/60 bg-card/40 p-10 text-center">
+          <p className="text-lg font-semibold">Your menu is empty</p>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            Recipes appear here once you sync a POS catalog, or tap{" "}
-            <span className="font-semibold">New recipe</span> to start from
-            scratch.
+            Connect Square and we&apos;ll import your drinks, or add the
+            first one by hand — StockBuddy drafts the recipe, you tweak.
           </p>
         </section>
       ) : (
@@ -235,20 +240,13 @@ export default async function RecipesPage({
                 href={`/recipes/${recipe.id}`}
                 className="group overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
               >
-                <div className="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-amber-50 to-orange-100 dark:from-stone-800 dark:to-stone-900">
-                  {image ? (
-                    // Plain img so we don't need Next image loader config for arbitrary URLs.
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={image}
-                      alt={name}
-                      className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-4xl font-bold text-amber-500/40">
-                      {name.charAt(0).toUpperCase()}
-                    </div>
-                  )}
+                <div className="relative aspect-square w-full overflow-hidden">
+                  <MenuImage
+                    src={image}
+                    alt={name}
+                    size="lg"
+                    className="!size-full !rounded-none transition-transform group-hover:scale-105"
+                  />
                   {recipe.status !== "APPROVED" ? (
                     <div className="absolute left-2 top-2">
                       <StatusBadge

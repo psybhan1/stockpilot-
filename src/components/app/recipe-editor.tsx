@@ -13,6 +13,46 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { computeRecipeCost, formatCents } from "@/modules/recipes/cost";
 
+function shortUnit(displayUnit: string): string {
+  switch (displayUnit) {
+    case "GRAM":
+      return "g";
+    case "KILOGRAM":
+      return "kg";
+    case "MILLILITER":
+      return "ml";
+    case "LITER":
+      return "l";
+    case "COUNT":
+      return "ea";
+    case "OUNCE":
+      return "oz";
+    default:
+      return displayUnit.toLowerCase();
+  }
+}
+
+function categoryLabel(category: string): string {
+  switch (category) {
+    case "COFFEE":
+      return "Coffee & tea";
+    case "DAIRY":
+      return "Dairy";
+    case "ALT_DAIRY":
+      return "Non-dairy milks";
+    case "SYRUP":
+      return "Syrups";
+    case "BAKERY_INGREDIENT":
+      return "Bakery";
+    case "PACKAGING":
+      return "Packaging";
+    case "PAPER_GOODS":
+      return "Cups & paper";
+    default:
+      return category;
+  }
+}
+
 type InventoryOption = {
   id: string;
   name: string;
@@ -145,7 +185,7 @@ export function RecipeEditor({
             onChange={(e) => setSummary(e.target.value)}
             maxLength={500}
             rows={2}
-            placeholder="One-line description of the drink"
+            placeholder="One line you'd tell a new barista, e.g. Double espresso, steamed oat milk, vanilla."
             className="mt-2 w-full resize-none rounded-xl border border-border/60 bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30"
           />
         ) : (
@@ -156,15 +196,22 @@ export function RecipeEditor({
       <section className="rounded-2xl border border-border/60 bg-card shadow-sm">
         <div className="flex items-baseline justify-between border-b border-border/60 px-5 py-3">
           <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Components · {costSummary.rows.length}
+            What goes in it
+            {costSummary.rows.length > 0
+              ? ` · ${costSummary.rows.length}`
+              : ""}
           </p>
-          <p className="font-mono text-sm font-semibold tabular-nums">
-            Total {formatCents(costSummary.totalCostCents)}
+          <p className="font-mono text-sm tabular-nums">
+            <span className="text-muted-foreground">Costs you </span>
+            <span className="font-semibold">
+              {formatCents(costSummary.totalCostCents)}
+            </span>
           </p>
         </div>
         {costSummary.rows.length === 0 ? (
           <p className="px-5 py-6 text-sm text-muted-foreground">
-            No components yet. Add one below.
+            Nothing in here yet. Add a milk, a shot, a cup — whatever this
+            drink uses.
           </p>
         ) : (
           <ul className="divide-y divide-border/60">
@@ -179,13 +226,12 @@ export function RecipeEditor({
                   </p>
                   <p className="text-[11px] text-muted-foreground">
                     {row.costPerUnitCents !== null ? (
-                      <>
-                        {formatCents(Math.round(row.costPerUnitCents * 100) / 100)}
-                        <span className="mx-1">per</span>
-                        {row.displayUnit.toLowerCase()}
-                      </>
+                      `${formatCents(Math.round(row.costPerUnitCents * 100) / 100)} / ${shortUnit(row.displayUnit)}`
                     ) : (
-                      <span className="text-amber-600">No supplier cost yet</span>
+                      <span className="text-amber-600">
+                        No supplier cost — add a bill so StockPilot knows the
+                        price
+                      </span>
                     )}
                   </p>
                 </div>
@@ -223,7 +269,7 @@ export function RecipeEditor({
                         <Plus className="size-3" />
                       </button>
                       <span className="ml-1 text-[11px] text-muted-foreground">
-                        {row.displayUnit.toLowerCase()}
+                        {shortUnit(row.displayUnit)}
                       </span>
                     </>
                   ) : (
@@ -254,8 +300,11 @@ export function RecipeEditor({
         )}
         {costSummary.missingCostCount > 0 ? (
           <p className="border-t border-border/60 px-5 py-2 text-[11px] text-amber-600">
-            {costSummary.missingCostCount} component(s) are missing supplier
-            cost — total is under-counted. Add a supplier + invoice to fix.
+            {costSummary.missingCostCount}{" "}
+            {costSummary.missingCostCount === 1
+              ? "ingredient has"
+              : "ingredients have"}{" "}
+            no supplier price yet — the total is light until you add a bill.
           </p>
         ) : null}
       </section>
@@ -263,7 +312,7 @@ export function RecipeEditor({
       {canEdit ? (
         <section className="rounded-2xl border border-border/60 bg-card p-5 shadow-sm">
           <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Add component
+            Add something
           </p>
           <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px_auto]">
             <select
@@ -271,17 +320,28 @@ export function RecipeEditor({
               onChange={(e) => setAddingInventoryId(e.target.value)}
               className="h-10 rounded-xl border border-input bg-background px-3 text-sm"
             >
-              <option value="">Pick inventory item…</option>
-              {inventoryOptions
-                .filter(
-                  (i) =>
-                    !initialComponents.some((c) => c.inventoryItem.id === i.id),
-                )
-                .map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.name}
-                  </option>
-                ))}
+              <option value="">What goes in the drink?</option>
+              {Object.entries(
+                inventoryOptions
+                  .filter(
+                    (i) =>
+                      !initialComponents.some(
+                        (c) => c.inventoryItem.id === i.id,
+                      ),
+                  )
+                  .reduce<Record<string, InventoryOption[]>>((acc, i) => {
+                    (acc[i.category] ??= []).push(i);
+                    return acc;
+                  }, {}),
+              ).map(([cat, items]) => (
+                <optgroup key={cat} label={categoryLabel(cat)}>
+                  {items.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
             </select>
             <Input
               type="number"
@@ -308,8 +368,7 @@ export function RecipeEditor({
       {canEdit ? (
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            {message ??
-              "Changes to quantities save as a batch. Remove uses single-click delete."}
+            {message ?? " "}
           </p>
           <Button
             type="button"
@@ -322,7 +381,11 @@ export function RecipeEditor({
             ) : (
               <Save className="size-4" />
             )}
-            {isPending ? "Saving…" : "Save changes"}
+            {isPending
+              ? "Saving…"
+              : message === "Saved."
+                ? "Saved"
+                : "Save changes"}
           </Button>
         </div>
       ) : null}

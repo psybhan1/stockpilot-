@@ -11,10 +11,10 @@ import { Input } from "@/components/ui/input";
 type Turn = { role: "user" | "assistant"; content: string };
 
 const EXAMPLES = [
-  "Make it 2× bigger",
-  "Swap oat milk for almond",
-  "Remove the vanilla",
-  "Add 10g chocolate powder",
+  "Make it bigger",
+  "Swap the milk for oat",
+  "Add a shot of vanilla",
+  "What's my profit on this?",
 ];
 
 export function RecipeChatPanel({ recipeId }: { recipeId: string }) {
@@ -61,7 +61,7 @@ export function RecipeChatPanel({ recipeId }: { recipeId: string }) {
       <div className="flex items-center gap-2">
         <Sparkles className="size-4 text-violet-600 dark:text-violet-300" />
         <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-700 dark:text-violet-300">
-          Ask StockBuddy to edit this recipe
+          Tell StockBuddy how to change this drink
         </p>
       </div>
 
@@ -111,7 +111,7 @@ export function RecipeChatPanel({ recipeId }: { recipeId: string }) {
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="e.g. add 20 ml vanilla syrup"
+          placeholder="Add a shot, swap the milk, change the size…"
           disabled={isPending}
           className="h-10 flex-1 rounded-xl"
         />

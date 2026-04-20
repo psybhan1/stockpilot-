@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 
 import { approveRecipeAction } from "@/app/actions/operations";
+import { MenuImage } from "@/components/app/menu-image";
 import { RecipeChatPanel } from "@/components/app/recipe-chat-panel";
 import { RecipeEditor } from "@/components/app/recipe-editor";
 import { RecipePricing } from "@/components/app/recipe-pricing";
@@ -55,33 +56,24 @@ export default async function RecipeDetailPage({
         Back to menu
       </Link>
 
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex items-center gap-4">
-          <div className="relative size-20 overflow-hidden rounded-2xl bg-gradient-to-br from-amber-50 to-orange-100 dark:from-stone-800 dark:to-stone-900">
-            {recipe.menuItemVariant.menuItem.imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={recipe.menuItemVariant.menuItem.imageUrl}
-                alt={recipe.menuItemVariant.name}
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-3xl font-bold text-amber-500/40">
-                {recipe.menuItemVariant.name.charAt(0).toUpperCase()}
-              </div>
-            )}
-          </div>
-          <div>
+      <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-start gap-5">
+          <MenuImage
+            src={recipe.menuItemVariant.menuItem.imageUrl}
+            alt={recipe.menuItemVariant.name}
+            size="lg"
+          />
+          <div className="pt-1">
             <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-500 dark:text-amber-300">
-              Recipe
+              On your menu
             </p>
-            <h1 className="mt-1 text-3xl font-semibold tracking-tight">
+            <h1 className="mt-1 text-4xl font-semibold tracking-tight">
               {recipe.menuItemVariant.name}
             </h1>
             {recipe.menuItemVariant.menuItem.name !==
             recipe.menuItemVariant.name ? (
-              <p className="text-sm text-muted-foreground">
-                {recipe.menuItemVariant.menuItem.name}
+              <p className="mt-1 text-sm text-muted-foreground">
+                Variant of {recipe.menuItemVariant.menuItem.name}
               </p>
             ) : null}
           </div>
@@ -90,10 +82,10 @@ export default async function RecipeDetailPage({
           <StatusBadge
             label={
               recipe.status === "APPROVED"
-                ? "Approved"
+                ? "Live"
                 : recipe.status === "ARCHIVED"
                   ? "Archived"
-                  : "Draft"
+                  : "Needs your eyes"
             }
             tone={
               recipe.status === "APPROVED"
@@ -137,7 +129,6 @@ export default async function RecipeDetailPage({
         locationDefaultMarginPercent={location?.defaultMarginPercent ?? 70}
         canEdit={canEdit}
         approvedSalePriceCents={recipe.salePriceCents ?? null}
-        stockPilotOwnsPrice={recipe.stockPilotOwnsPrice}
         hasSquareMapping={recipe.mappings.some(
           (m) => m.posVariation !== null,
         )}
